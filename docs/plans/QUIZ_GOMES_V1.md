@@ -18,6 +18,7 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 - [x] 2026-08-10 — Milestone 6: pools, recentes 200, bitmap, fixtures e import foundation.
 - [x] 2026-08-10 — Milestone 7: scoring, projeção segura e interface local isolada de partida.
 - [x] 2026-08-10 — publicação pública autorizada pelo proprietário e auditoria específica de segredos concluída antes dos commits.
+- [x] 2026-08-10 — 107 arquivos publicados em commits lógicos na `main`; árvore remota comparada byte a byte e auditoria pós-push sem secrets.
 - [ ] Milestone 8 — Durable Objects: presença/fila/sala/reconexão têm fundação; entrega autoritativa de perguntas e finalização persistente ainda pendem.
 - [ ] Milestone 9 — social e desafio direto.
 - [ ] Milestone 10 — assíncrono selado e revelação progressiva.
@@ -98,6 +99,14 @@ Autorização e segurança de publicação:
 - a revisão pré-publicação não encontrou chaves privadas, Service Accounts, tokens GitHub/Cloudflare, secrets do Worker, credenciais ou arquivos reais de ambiente na árvore versionável;
 - `.gitignore`, `.env.example` e `.dev.vars.example` separam configuração pública, desenvolvimento local e secrets remotos;
 - R2 e qualquer produto/plano pago permanecem desabilitados.
+
+### 2026-08-10 — publicação pública concluída
+
+- a `main` pública foi criada e avançada somente por commits fast-forward, sem force push;
+- 107 arquivos foram publicados e a árvore Git remota coincidiu exatamente com a árvore local validada;
+- `.gitignore`, exemplos de ambiente, configuração Firebase Web, Wrangler e documentação de deployment foram relidos diretamente do GitHub;
+- buscas pós-push por assinaturas de chaves privadas, Service Accounts e tokens de provedores retornaram zero resultados;
+- próximo trabalho: Milestone 8, com entrega autoritativa de cada pergunta no Durable Object e finalização transacional/idempotente da partida.
 
 ## Critério de saída desta execução
 
