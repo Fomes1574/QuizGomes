@@ -1,0 +1,37 @@
+{
+  "name": "quiz-gomes",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Quiz competitivo mobile-first com React, Cloudflare Workers, D1 e Durable Objects.",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "workspaces": [
+    "packages/domain",
+    "apps/web",
+    "apps/worker"
+  ],
+  "scripts": {
+    "build": "npm run build -w @quiz-gomes/domain && npm run build -w @quiz-gomes/web && npm run build -w @quiz-gomes/worker",
+    "check": "npm run lint && npm run typecheck && npm run test && npm run build",
+    "dev:web": "npm run dev -w @quiz-gomes/web",
+    "dev:worker": "npm run dev -w @quiz-gomes/worker",
+    "lint": "eslint . --max-warnings=0",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "npm run typecheck -w @quiz-gomes/domain && npm run typecheck -w @quiz-gomes/web && npm run typecheck -w @quiz-gomes/worker",
+    "db:migrate:local": "npm run db:migrate:local -w @quiz-gomes/worker",
+    "db:seed:local": "npm run db:seed:local -w @quiz-gomes/worker"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "eslint": "10.8.1",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "globals": "17.9.0",
+    "jsdom": "29.1.1",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.67.0",
+    "vitest": "4.1.10"
+  }
+}
