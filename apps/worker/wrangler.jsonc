@@ -1,0 +1,45 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "quiz-gomes",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-10",
+  "workers_dev": true,
+  "assets": {
+    "directory": "../web/dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "vars": {
+    "FIREBASE_PROJECT_ID": "quizgomes-cbc48",
+    "ALLOWED_ORIGINS": "http://localhost:5173"
+  },
+  "d1_databases": [
+    {
+      "binding": "CORE_DB",
+      "database_name": "quiz-gomes-core",
+      "database_id": "00000000-0000-0000-0000-000000000001",
+      "migrations_dir": "migrations/core"
+    },
+    {
+      "binding": "QUESTIONS_DB",
+      "database_name": "quiz-gomes-questions-01",
+      "database_id": "00000000-0000-0000-0000-000000000002",
+      "migrations_dir": "migrations/questions"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "MATCH_ROOM", "class_name": "MatchRoom" },
+      { "name": "MATCHMAKING_QUEUE", "class_name": "MatchmakingQueue" },
+      { "name": "PRESENCE_HUB", "class_name": "PresenceHub" },
+      { "name": "TICKET_BROKER", "class_name": "TicketBroker" }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["MatchRoom", "MatchmakingQueue", "PresenceHub", "TicketBroker"]
+    }
+  ]
+}

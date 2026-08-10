@@ -1,0 +1,259 @@
+import { z } from 'zod';
+import { discoveredCount } from '@quiz-gomes/domain';
+import { bootstrapAdminUids, hasAdminAccess, requireAdmin, requireUser } from './auth/authorize.js';
+import { MatchRoom } from './durable-objects/match-room.js';
+import { MatchmakingQueue } from './durable-objects/matchmaking-queue.js';
+import { PresenceHub } from './durable-objects/presence-hub.js';
+import { TicketBroker } from './durable-objects/ticket-broker.js';
+import type { Env } from './env.js';
+import { ApiError } from './http/api-error.js';
+import { readJson } from './http/body.js';
+import { apiErrorResponse, applyCors, corsHeaders, json, withSecurityHeaders } from './http/response.js';
+import { importBatchSchema, profileInputSchema, themeSubmissionSchema } from './http/schemas.js';
+import { QuestionRepository } from './repositories/question-repository.js';
+import { PoolStateRepository } from './repositories/pool-state-repository.js';
+import { ThemeRepository } from './repositories/theme-repository.js';
+import { UserRepository } from './repositories/user-repository.js';
+import { QuestionImportService } from './services/question-import-service.js';
+
+export { MatchRoom, MatchmakingQueue, PresenceHub, TicketBroker };
+
+const ticketSchema = z.object({
+  resource: z.string().min(1).max(256),
+  scope: z.enum(['matchmaking', 'presence', 'room']),
+}).strict();
+
+function validationError(error: z.ZodError): ApiError {
+  return new ApiError(400, 'VALIDATION_ERROR', 'Revise os campos enviados.', error.issues.map((issue) => ({
+    field: issue.path.join('.'),
+    message: issue.message,
+  })));
+}
+
+function ticketBroker(env: Env): DurableObjectStub {
+  return env.TICKET_BROKER.get(env.TICKET_BROKER.idFromName('global'));
+}
+
+async function createRealtimeTicket(request: Request, env: Env): Promise<Response> {
+  const user = await requireUser(request, env);
+  const profile = await new UserRepository(env.CORE_DB).findByFirebaseUid(user.uid);
+  if (profile === null) throw new ApiError(409, 'PROFILE_REQUIRED', 'Conclua seu perfil antes de jogar.');
+  const parsed = ticketSchema.safeParse(await readJson(request));
+  if (!parsed.success) throw validationError(parsed.error);
+  const resource = parsed.data.scope === 'presence' ? user.uid : parsed.data.resource;
+  return ticketBroker(env).fetch('https://tickets.internal/create', {
+    body: JSON.stringify({ expiresAt: 0, resource, scope: parsed.data.scope, uid: user.uid }),
+    headers: { 'X-QG-Authenticated-Uid': user.uid },
+    method: 'POST',
+  });
+}
+
+async function consumeRealtimeTicket(
+  env: Env,
+  ticket: string,
+  scope: 'matchmaking' | 'presence' | 'room',
+  resource: string,
+): Promise<string> {
+  const response = await ticketBroker(env).fetch('https://tickets.internal/consume', {
+    body: JSON.stringify({ resource, scope, ticket }),
+    method: 'POST',
+  });
+  if (!response.ok) throw new ApiError(401, 'INVALID_REALTIME_TICKET', 'O acesso em tempo real expirou.');
+  const result = await response.json<{ uid: string }>();
+  return result.uid;
+}
+
+async function realtimeRoute(request: Request, env: Env, url: URL): Promise<Response> {
+  if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
+    throw new ApiError(426, 'WEBSOCKET_REQUIRED', 'Esta rota exige WebSocket.');
+  }
+  const ticket = url.searchParams.get('ticket');
+  if (ticket === null || ticket.length > 128) throw new ApiError(401, 'REALTIME_TICKET_REQUIRED', 'Acesso em tempo real inválido.');
+
+  if (url.pathname === '/api/realtime/presence') {
+    const resource = url.searchParams.get('resource') ?? '';
+    const uid = await consumeRealtimeTicket(env, ticket, 'presence', resource);
+    const stub = env.PRESENCE_HUB.get(env.PRESENCE_HUB.idFromName(uid));
+    return stub.fetch(new Request('https://presence.internal/socket', { headers: { Upgrade: 'websocket' } }));
+  }
+
+  if (url.pathname === '/api/realtime/matchmaking') {
+    const resource = url.searchParams.get('resource') ?? '';
+    const [themeId, difficulty, mode, extra] = resource.split(':');
+    if (themeId === undefined || difficulty === undefined || mode === undefined || extra !== undefined ||
+      !['EASY', 'MEDIUM', 'HARD'].includes(difficulty) || !['CASUAL', 'RANKED'].includes(mode)) {
+      throw new ApiError(400, 'INVALID_QUEUE', 'A fila escolhida é inválida.');
+    }
+    const uid = await consumeRealtimeTicket(env, ticket, 'matchmaking', resource);
+    const userRow = await env.CORE_DB.prepare('SELECT id FROM users WHERE firebase_uid = ?1 AND disabled_at IS NULL')
+      .bind(uid).first<{ id: string }>();
+    if (userRow === null) throw new ApiError(409, 'PROFILE_REQUIRED', 'Conclua seu perfil antes de jogar.');
+    const ranking = await env.CORE_DB.prepare(
+      'SELECT knowledge FROM theme_rankings WHERE user_id = ?1 AND theme_id = ?2',
+    ).bind(userRow.id, themeId).first<{ knowledge: number }>();
+    const presence = env.PRESENCE_HUB.get(env.PRESENCE_HUB.idFromName(uid));
+    const reserved = await presence.fetch('https://presence.internal/transition', {
+      body: JSON.stringify({ from: 'idle', resource, to: 'matchmaking' }),
+      method: 'POST',
+    });
+    if (!reserved.ok) throw new ApiError(409, 'PLAYER_BUSY', 'Você já está em outra atividade.');
+    const queue = env.MATCHMAKING_QUEUE.get(env.MATCHMAKING_QUEUE.idFromName(resource));
+    const response = await queue.fetch(new Request('https://queue.internal/socket', {
+      headers: {
+        Upgrade: 'websocket',
+        'X-QG-Authenticated-Uid': uid,
+        'X-QG-Theme-Knowledge': String(ranking?.knowledge ?? 0),
+      },
+    }));
+    if (response.status !== 101) {
+      await presence.fetch('https://presence.internal/transition', {
+        body: JSON.stringify({ from: 'matchmaking', resource: null, to: 'idle' }),
+        method: 'POST',
+      });
+    }
+    return response;
+  }
+
+  const roomMatch = /^\/api\/realtime\/rooms\/([a-f0-9-]{36})$/i.exec(url.pathname);
+  if (roomMatch?.[1] !== undefined) {
+    const roomId = roomMatch[1];
+    const uid = await consumeRealtimeTicket(env, ticket, 'room', roomId);
+    const presence = env.PRESENCE_HUB.get(env.PRESENCE_HUB.idFromName(uid));
+    const reserved = await presence.fetch('https://presence.internal/transition', {
+      body: JSON.stringify({ from: ['idle', 'invite', 'preparing'], resource: roomId, to: 'preparing' }),
+      method: 'POST',
+    });
+    if (!reserved.ok) throw new ApiError(409, 'PLAYER_BUSY', 'Você já está em outra atividade.');
+    const room = env.MATCH_ROOM.get(env.MATCH_ROOM.idFromName(roomId));
+    return room.fetch(new Request('https://room.internal/socket', {
+      headers: { Upgrade: 'websocket', 'X-QG-Authenticated-Uid': uid },
+    }));
+  }
+
+  throw new ApiError(404, 'NOT_FOUND', 'Rota em tempo real não encontrada.');
+}
+
+async function profileRoute(request: Request, env: Env): Promise<Response> {
+  const identity = await requireUser(request, env);
+  const repository = new UserRepository(env.CORE_DB);
+  if (request.method === 'GET') {
+    const profile = await repository.findByFirebaseUid(identity.uid);
+    if (profile === null) throw new ApiError(404, 'PROFILE_NOT_FOUND', 'Perfil ainda não criado.');
+    return json({ profile, role: await hasAdminAccess(identity, env) ? 'ADMIN' : 'PLAYER' });
+  }
+  if (request.method === 'POST' || request.method === 'PATCH') {
+    const parsed = profileInputSchema.safeParse(await readJson(request));
+    if (!parsed.success) throw validationError(parsed.error);
+    const profile = request.method === 'POST'
+      ? await repository.ensureProfile(identity, parsed.data.displayName, bootstrapAdminUids(env).has(identity.uid))
+      : await repository.updateDisplayName(identity.uid, parsed.data.displayName);
+    if (profile === null) throw new ApiError(404, 'PROFILE_NOT_FOUND', 'Crie o perfil antes de editá-lo.');
+    return json({ profile, role: await hasAdminAccess(identity, env) ? 'ADMIN' : 'PLAYER' }, { status: request.method === 'POST' ? 201 : 200 });
+  }
+  throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Método não permitido.');
+}
+
+async function adminImportRoute(request: Request, env: Env): Promise<Response> {
+  if (request.method !== 'POST') throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Método não permitido.');
+  const identity = await requireUser(request, env);
+  await requireAdmin(identity, env);
+  const profile = await new UserRepository(env.CORE_DB).findByFirebaseUid(identity.uid);
+  if (profile === null) throw new ApiError(409, 'PROFILE_REQUIRED', 'Conclua seu perfil.');
+  const parsed = importBatchSchema.safeParse(await readJson(request));
+  if (!parsed.success) throw validationError(parsed.error);
+  const idempotencyKey = request.headers.get('Idempotency-Key') ?? '';
+  const result = await new QuestionImportService(env.CORE_DB, env.QUESTIONS_DB)
+    .import(profile.userId, idempotencyKey, parsed.data.questions);
+  return json(result, { status: result.status === 'APPLIED' ? 201 : 200 });
+}
+
+async function apiRoute(request: Request, env: Env, url: URL): Promise<Response> {
+  if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: corsHeaders(request, env.ALLOWED_ORIGINS) });
+  if (url.pathname === '/api/health' && request.method === 'GET') {
+    return json({ name: 'QUIZ GOMES', status: 'ok', version: '0.1.0' });
+  }
+  if (url.pathname === '/api/profile/me') return profileRoute(request, env);
+  if (url.pathname === '/api/realtime/tickets' && request.method === 'POST') return createRealtimeTicket(request, env);
+  if (url.pathname.startsWith('/api/realtime/') && request.headers.get('Upgrade') !== null) return realtimeRoute(request, env, url);
+  if (url.pathname === '/api/admin/questions/import') return adminImportRoute(request, env);
+
+  const themes = new ThemeRepository(env.CORE_DB);
+  if (url.pathname === '/api/categories' && request.method === 'GET') return json({ categories: await themes.listCategories() });
+  if (url.pathname === '/api/themes' && request.method === 'GET') {
+    const search = (url.searchParams.get('search') ?? '').trim().slice(0, 80);
+    const categoryId = url.searchParams.get('category');
+    return json({ themes: await themes.listThemes(search, categoryId) });
+  }
+  if (url.pathname === '/api/themes' && request.method === 'POST') {
+    const identity = await requireUser(request, env);
+    const profile = await new UserRepository(env.CORE_DB).findByFirebaseUid(identity.uid);
+    if (profile === null) throw new ApiError(409, 'PROFILE_REQUIRED', 'Conclua seu perfil antes de criar um tema.');
+    const parsed = themeSubmissionSchema.safeParse(await readJson(request));
+    if (!parsed.success) throw validationError(parsed.error);
+    try {
+      return json({ theme: await themes.submitTheme({ ...parsed.data, userId: profile.userId }) }, { status: 201 });
+    } catch (error) {
+      if (error instanceof Error && error.message === 'CATEGORY_NOT_FOUND') {
+        throw new ApiError(400, 'CATEGORY_NOT_FOUND', 'A categoria escolhida não está disponível.');
+      }
+      if (error instanceof Error && /UNIQUE constraint failed: themes\.name/i.test(error.message)) {
+        throw new ApiError(409, 'THEME_ALREADY_EXISTS', 'Já existe um tema com esse nome.');
+      }
+      throw error;
+    }
+  }
+  const themeMatch = /^\/api\/themes\/([^/]+)$/.exec(url.pathname);
+  if (themeMatch?.[1] !== undefined && request.method === 'GET') {
+    const theme = await themes.findTheme(decodeURIComponent(themeMatch[1]));
+    if (theme === null) throw new ApiError(404, 'THEME_NOT_FOUND', 'Tema não encontrado.');
+    const questionRepository = new QuestionRepository(env.QUESTIONS_DB);
+    const [topFive, questionCounts] = await Promise.all([
+      themes.topFive(theme.id),
+      questionRepository.activeCounts(theme.id),
+    ]);
+    let personal: null | {
+      discoveredPercentage: number;
+      knowledge: number;
+      position: number | null;
+      rankedMatches: number;
+    } = null;
+    if (request.headers.get('Authorization') !== null) {
+      const identity = await requireUser(request, env);
+      const profile = await new UserRepository(env.CORE_DB).findByFirebaseUid(identity.uid);
+      if (profile !== null) {
+        const pools = await questionRepository.poolsByTheme(theme.id);
+        const states = await Promise.all(pools.map((pool) => new PoolStateRepository(env.CORE_DB).read(profile.userId, pool.id, pool.version)));
+        const activeTotal = pools.reduce((total, pool) => total + pool.activeCount, 0);
+        const discoveredTotal = pools.reduce((total, pool, index) => {
+          const state = states[index];
+          return total + (state === undefined ? 0 : discoveredCount(state.state, pool.activeCount));
+        }, 0);
+        const ranking = await themes.personalRanking(theme.id, profile.userId);
+        personal = {
+          discoveredPercentage: activeTotal === 0 ? 0 : (discoveredTotal / activeTotal) * 100,
+          ...ranking,
+        };
+      }
+    }
+    return json({ personal, questionCounts, theme, topFive });
+  }
+  throw new ApiError(404, 'NOT_FOUND', 'Rota não encontrada.');
+}
+
+async function handle(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  if (url.pathname.startsWith('/api/')) {
+    try {
+      return applyCors(await apiRoute(request, env, url), request, env.ALLOWED_ORIGINS);
+    } catch (error) {
+      return applyCors(apiErrorResponse(error), request, env.ALLOWED_ORIGINS);
+    }
+  }
+  return env.ASSETS.fetch(request);
+}
+
+export default {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    return withSecurityHeaders(await handle(request, env));
+  },
+} satisfies ExportedHandler<Env>;

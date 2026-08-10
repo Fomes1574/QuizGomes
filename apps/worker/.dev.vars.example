@@ -1,0 +1,3 @@
+# Copie para .dev.vars e substitua localmente. Não commite o arquivo real.
+ADMIN_FIREBASE_UIDS=cole_o_firebase_uid_do_proprietario
+ALLOWED_ORIGINS=http://localhost:5173
