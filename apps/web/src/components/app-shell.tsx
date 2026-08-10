@@ -1,0 +1,47 @@
+import { NavLink, Outlet, useLocation } from 'react-router-dom';
+import { useAuth } from '../features/auth-context.js';
+import { Avatar } from './avatar.js';
+import { Icon, type IconName } from './icons.js';
+import { Logo } from './logo.js';
+
+const destinations: Array<{ icon: IconName; label: string; to: string }> = [
+  { icon: 'themes', label: 'Temas', to: '/' },
+  { icon: 'social', label: 'Social', to: '/social' },
+  { icon: 'create', label: 'Criar', to: '/criar' },
+  { icon: 'profile', label: 'Perfil', to: '/perfil' },
+];
+
+export function AppShell() {
+  const { firebaseUser, profile } = useAuth();
+  const location = useLocation();
+  return (
+    <div className="app-shell">
+      <header className="app-header">
+        <Logo />
+        <NavLink className="header-profile" to="/perfil" aria-label="Abrir perfil">
+          <span className="header-profile__copy">
+            <small>{profile ? `Nível ${1}` : firebaseUser ? 'Complete seu perfil' : 'Visitante'}</small>
+            <strong>{profile?.displayName ?? firebaseUser?.displayName ?? 'Entrar'}</strong>
+          </span>
+          <Avatar name={profile?.displayName ?? firebaseUser?.displayName ?? 'Visitante'} photoUrl={profile?.photoUrl ?? firebaseUser?.photoURL} size="small" />
+        </NavLink>
+      </header>
+      <main className="app-content" id="conteudo-principal" key={location.pathname}>
+        <Outlet />
+      </main>
+      <nav className="bottom-nav" aria-label="Navegação principal">
+        {destinations.map((destination) => (
+          <NavLink
+            className={({ isActive }) => `bottom-nav__item${isActive ? ' bottom-nav__item--active' : ''}`}
+            end={destination.to === '/'}
+            key={destination.to}
+            to={destination.to}
+          >
+            <Icon name={destination.icon} />
+            <span>{destination.label}</span>
+          </NavLink>
+        ))}
+      </nav>
+    </div>
+  );
+}
