@@ -94,6 +94,17 @@ Depois do primeiro login, configure o ADMIN sem terminal:
 
 Para vários administradores, use UIDs separados por vírgula. Nunca use email, nome ou role enviada pelo cliente.
 
+`ADMIN_FIREBASE_UIDS` não participa da verificação do ID Token. O Worker primeiro exige assinatura RS256 válida e confere `kid`, `aud`, `iss`, `exp`, `iat`, `auth_time` e `sub`; somente depois disso consulta o UID autenticado para autorização administrativa.
+
+### 3.4. Diagnóstico seguro da autenticação
+
+Rejeições de Firebase ID Token geram um evento estruturado `firebase_id_token_rejected` com apenas:
+
+- `stage`: `configuration`, `header`, `keys`, `signature` ou `claims`;
+- `reason`: categoria segura como `KEY_UNKNOWN`, `SIGNATURE_INVALID`, `AUDIENCE_INVALID`, `ISSUER_INVALID` ou `EXPIRATION_INVALID`.
+
+O evento nunca contém ID Token, refresh token, cookie, UID, email, payload ou credencial. A resposta pública permanece genérica. No frontend, o primeiro 401 força `getIdToken(true)` e repete a mesma requisição uma única vez; um segundo 401 mostra que a sessão não pôde ser renovada e não entra em loop.
+
 ## 4. Migrations
 
 O pipeline executa, nessa ordem e antes do deploy:
@@ -136,11 +147,12 @@ Depois:
 1. adicione `quiz-gomes.<seu-subdominio>.workers.dev` aos Authorized Domains do Firebase;
 2. abra `https://quiz-gomes.<seu-subdominio>.workers.dev/api/health` e confirme `{"name":"QUIZ GOMES","status":"ok","version":"0.1.0"}`;
 3. faça login Google e configure `ADMIN_FIREBASE_UIDS` pelo Dashboard;
-4. confirme criação do perfil e acesso ADMIN depois de renovar a sessão;
-5. importe somente conteúdo de teste aprovado pela API administrativa; não use seeds;
-6. em dois perfis/navegadores, conclua uma partida Casual e confira pergunta X/Y, timer após os dois READY, bolinha amarela sem segredo, score somente após resolução e empate sem desempate;
-7. teste reconexão abaixo e acima de 7 segundos, dupla queda, desbloqueio de nova partida e idempotência do resultado;
-8. confira métricas D1/DO e logs sem tokens ou PII.
+4. confirme que “Criar meu perfil” conclui o onboarding e que “Sair / trocar conta” volta à autenticação sem criar perfil;
+5. confirme acesso ADMIN depois da autenticação; o secret de UID não deve alterar a aceitação do token;
+6. importe somente conteúdo de teste aprovado pela API administrativa; não use seeds;
+7. em dois perfis/navegadores, conclua uma partida Casual e confira pergunta X/Y, timer após os dois READY, bolinha amarela sem segredo, score somente após resolução e empate sem desempate;
+8. teste reconexão abaixo e acima de 7 segundos, dupla queda, desbloqueio de nova partida e idempotência do resultado;
+9. confira métricas D1/DO e confirme que eventos `firebase_id_token_rejected` não contêm tokens ou PII.
 
 Esses itens só contam como **testes reais Cloudflare** quando executados no hostname implantado. Até lá, permanecem pendentes no ExecPlan.
 
@@ -165,3 +177,7 @@ Não há binding, bucket, script ou permissão de R2 neste deployment. A camada 
 - <https://developers.cloudflare.com/d1/reference/migrations/>
 - <https://developers.cloudflare.com/fundamentals/api/reference/permissions/>
 - <https://developers.cloudflare.com/workers/platform/pricing/>
+- <https://developers.cloudflare.com/workers/runtime-apis/web-crypto/>
+- <https://firebase.google.com/docs/auth/admin/verify-id-tokens>
+- <https://firebase.google.com/docs/reference/js/auth.user>
+- <https://github.com/panva/jose/blob/main/docs/key/import/functions/importX509.md>

@@ -24,7 +24,9 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 - [x] 2026-08-11 — D1 reais criados manualmente no Workers Free; bindings `CORE_DB` e `QUESTIONS_DB` atualizados somente com os UUIDs fornecidos.
 - [x] 2026-08-11 — pipeline de produção Workers Builds, migrations remotas sem seed e origem própria dinâmica preparados e validados localmente.
 - [x] 2026-08-11 — integração GitHub → Workers Builds configurada manualmente no Dashboard pelo proprietário; este commit documental dispara o primeiro build real, cujo resultado ainda aguarda confirmação da Cloudflare.
-- [ ] Milestone 8 — migrations/deploy e smoke tests reais em `workers.dev` aguardam a primeira execução do Workers Builds conectado pelo proprietário.
+- [x] 2026-08-11 — primeiro Workers Build/deploy real confirmado em `quiz-gomes.teteumatheus1062.workers.dev`; `/api/health` respondeu `status: ok`.
+- [x] 2026-08-11 — primeiro incidente real de autenticação/onboarding investigado; correção mantém RS256/audience/issuer e adiciona refresh único, diagnóstico seguro e saída do onboarding.
+- [ ] Milestone 8 — reteste real do primeiro perfil e smoke WebSocket completo aguardam o deploy automático desta correção e validação do proprietário.
 - [ ] Milestone 9 — social e desafio direto.
 - [ ] Milestone 10 — assíncrono selado e revelação progressiva.
 - [ ] Milestone 11 — criação/moderação/import/admin.
@@ -45,6 +47,7 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 11. **Deploy real não é simulado.** A criação manual dos D1 é evidência externa, mas migrations, Worker, Durable Objects, hostname e smoke tests só serão marcados como reais após o Workers Builds terminar na conta do proprietário.
 12. **Workers Builds parte da raiz.** `npm ci` e o gate completo coordenam os três workspaces; o deploy é aceito somente na `main`, aplica migrations pendentes antes do Worker/PWA e nunca referencia seeds.
 13. **Produção é mesma origem.** O Worker deriva sua própria origem de `request.url`; `ALLOWED_ORIGINS` é apenas uma lista adicional explícita de desenvolvimento, sem wildcard e sem hostname `workers.dev` hardcoded.
+14. **401 de Firebase tem uma única recuperação.** O cliente reutiliza o ID Token atual uma vez, força `getIdToken(true)` após o primeiro 401 e repete exatamente uma vez. Uma segunda rejeição encerra o fluxo com mensagem clara; assinatura RS256, `kid`, `aud`, `iss`, `exp`, `iat`, `auth_time` e `sub` continuam obrigatórios no Worker.
 
 ## Descobertas e riscos
 
@@ -55,8 +58,9 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 - Revogação imediata de Firebase tokens não é consultada por request sem Admin API; avaliar em hardening para ações críticas.
 - Bindings D1 precisam de UUIDs distintos; IDs iguais fazem o Wrangler compartilhar o mesmo arquivo SQLite entre shards. Os UUIDs reais configurados em 2026-08-11 foram testados em armazenamento local vazio e permaneceram isolados.
 - O helper de evicção do runtime Vitest bloqueou com WebSockets hibernáveis ativos. O teste simulado comprova estado pausado no storage e reconexão WebSocket pelo mesmo caminho de restauração; evicção/hibernação efetiva permanece parte do smoke test em `workers.dev` e não foi declarada como executada localmente.
-- `wrangler whoami`, executado em 2026-08-10, retornou `You are not authenticated`. Em 2026-08-11 o proprietário criou somente os dois D1 pelo Dashboard; nenhuma migration remota, Durable Object, versão Worker, seed ou smoke test real foi executado ainda.
+- `wrangler whoami`, executado nesta sessão local em 2026-08-10, retornou `You are not authenticated`; por isso nenhum deploy foi feito pelo Codex. Depois, o proprietário conectou Workers Builds e confirmou externamente o primeiro deploy e `/api/health`, sem disponibilizar credenciais à sessão.
 - O token automático documentado do Workers Builds não inclui `D1 Edit` e inclui permissões desnecessárias de KV/R2. A conexão deve selecionar token de usuário restrito a `Workers Scripts: Edit` e `D1: Edit` na conta correta, sem R2 ou Billing.
+- O primeiro erro real era reduzido a uma mensagem genérica depois da etapa criptográfica, portanto a causa específica da rejeição original não pode ser recuperada retroativamente. A investigação confirmou projeto/issuer, bundle, domínio, certificados X.509 atuais e importação/verificação RS256 no `workerd`; novos logs registram somente `stage` e `reason`, sem token, UID, email, cookies ou payload.
 
 ## Testes requeridos por marco
 
@@ -66,8 +70,9 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 - M6: recentes 200/201, união, bitmap round-trip, uniformidade estrutural e pool insuficiente.
 - M7: scoring em limites de ms, timeout, empate, navbar ausente e overflow.
 - M8+: cancelamento, readiness, reconexão 7 s, dupla queda, finalização idempotente e vazamento assíncrono.
-- M8 concluído local/simulado: 5/10/15 rodadas, empate, Casual sem Conhecimento, XP, abandono, dupla queda, lock único, payload estrito, sigilo do adversário, retry idempotente e transação D1; hibernação e smoke HTTP/WebSocket reais continuam pendentes da primeira execução do Workers Builds.
+- M8 concluído local/simulado: 5/10/15 rodadas, empate, Casual sem Conhecimento, XP, abandono, dupla queda, lock único, payload estrito, sigilo do adversário, retry idempotente e transação D1; o health real passou, enquanto hibernação e smoke WebSocket reais continuam pendentes.
 - Preparação de deploy: origem própria, localhost explícito, wildcard/origem externa e bloqueio do script fora do Workers Builds/`main`; migrations vazias devem preservar isolamento core/questions.
+- Incidente de autenticação: retry único após 401 com refresh forçado, segunda falha terminal, saída real do onboarding, ADMIN posterior à autenticação, diagnóstico de algoritmo/chave/assinatura/claims sem token ou PII e fixture X.509 sintética no runtime Workers.
 
 ## Diário de execução
 
@@ -191,6 +196,39 @@ Validação real Cloudflare ainda não executada:
 - o próximo passo externo é conectar `Fomes1574/QuizGomes` ao Workers Builds com os valores de `docs/DEPLOYMENT.md` e iniciar o primeiro build da `main`;
 - Milestone 9 permanece não iniciado.
 
+### 2026-08-11 — primeiro deploy real e correção de autenticação/onboarding
+
+Evidência real confirmada:
+
+- Workers Builds publicou `quiz-gomes.teteumatheus1062.workers.dev` e a PWA real foi recuperada desse hostname;
+- `/api/health` respondeu `{"name":"QUIZ GOMES","status":"ok","version":"0.1.0"}`;
+- domínio autorizado, login Google, criação do Firebase User e secret `ADMIN_FIREBASE_UIDS` foram confirmados pelo proprietário;
+- o POST do primeiro perfil recebeu 401 antes desta correção; o motivo criptográfico específico não ficou disponível porque a versão implantada reduzia todas as falhas posteriores à seleção de chave à mesma mensagem.
+
+Investigação local e no runtime Workers:
+
+- configuração pública, API key, `FIREBASE_PROJECT_ID=quizgomes-cbc48`, issuer e bundle implantado foram comparados;
+- os quatro certificados X.509 publicados pelo Secure Token em 2026-08-11 foram importados com RS256 pelo `workerd` em harness temporário;
+- um JWT RS256 sintético, com X.509 e formato completo de Firebase ID Token, passou pelo verificador no runtime Workers;
+- `ADMIN_FIREBASE_UIDS` permanece fora de `requireUser` e só é consultado depois que o token produz uma identidade válida;
+- a segurança não foi afrouxada: algoritmo, `kid`, assinatura, `aud`, `iss`, `exp`, `iat`, `auth_time` e `sub` continuam obrigatórios.
+
+Correção implementada:
+
+- o Worker classifica falhas por etapa e motivo seguro, sem registrar token, payload, UID, email, cookie ou credencial;
+- toda requisição autenticada pode forçar `getIdToken(true)` após o primeiro 401 e repete no máximo uma vez;
+- uma segunda rejeição encerra com mensagem clara, sem loop;
+- o onboarding mostra o erro de sessão e oferece “Sair / trocar conta” por `signOut()` real do Firebase;
+- nenhuma regra de ranking, XP, matchmaking, partida ou perguntas foi alterada; Milestone 9 não foi iniciado.
+
+Validação executada antes da publicação:
+
+- `npm run check` com realtime habilitado: lint, typecheck, 16 arquivos/96 testes unitários, 3 arquivos/8 testes runtime Workers e builds dos três workspaces aprovados;
+- migrations aplicadas em D1 local vazio: 2 no core e 1 em questions; isolamento confirmado e nenhum seed executado;
+- `npm audit --audit-level=high`: 0 vulnerabilidades;
+- auditoria de secrets: nenhuma chave privada, Service Account, token de provedor, JWT completo, arquivo `.env` ou `.dev.vars`; somente a API key Web pública já autorizada do Firebase;
+- reteste real do perfil e smoke WebSocket completo permanecem pendentes do deploy automático deste commit.
+
 ## Critério de saída desta execução
 
 - código do Milestone 8 completo e Milestone 9 não iniciado;
@@ -198,4 +236,4 @@ Validação real Cloudflare ainda não executada:
 - build Worker/PWA e migrations do zero aprovados;
 - documentação separando evidência local, simulada e real;
 - publicação em commits lógicos na `main` pública, seguida por nova auditoria do conteúdo remoto;
-- deploy real pendente da conexão/primeira execução do Workers Builds pelo proprietário, sem preview de branch, R2 ou produto pago.
+- primeiro deploy e health reais confirmados; correção de autenticação aguardando o novo Workers Build e reteste do proprietário, sem preview de branch, R2 ou produto pago.
