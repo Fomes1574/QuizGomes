@@ -9,8 +9,8 @@
     "deploy:cloudflare": "wrangler deploy --experimental-provision=false",
     "dev": "wrangler dev",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "db:migrate:local": "wrangler d1 migrations apply quiz-gomes-core --local && wrangler d1 migrations apply quiz-gomes-questions-01 --local",
-    "db:migrate:remote": "wrangler d1 migrations apply quiz-gomes-core --remote --experimental-provision=false && wrangler d1 migrations apply quiz-gomes-questions-01 --remote --experimental-provision=false",
+    "db:migrate:local": "wrangler d1 migrations apply quiz-gomes-questions-01 --local && wrangler d1 migrations apply quiz-gomes-core --local",
+    "db:migrate:remote": "wrangler d1 migrations apply quiz-gomes-questions-01 --remote --experimental-provision=false && wrangler d1 migrations apply quiz-gomes-core --remote --experimental-provision=false",
     "db:seed:local": "wrangler d1 execute quiz-gomes-core --local --file seeds/core-development.sql && wrangler d1 execute quiz-gomes-questions-01 --local --file seeds/questions-development.sql"
   },
   "dependencies": {
