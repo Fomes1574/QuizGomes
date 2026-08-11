@@ -8,7 +8,14 @@ import { TicketBroker } from './durable-objects/ticket-broker.js';
 import type { Env } from './env.js';
 import { ApiError } from './http/api-error.js';
 import { readJson } from './http/body.js';
-import { apiErrorResponse, applyCors, corsHeaders, json, withSecurityHeaders } from './http/response.js';
+import {
+  apiErrorResponse,
+  applyCors,
+  corsHeaders,
+  isRequestOriginAllowed,
+  json,
+  withSecurityHeaders,
+} from './http/response.js';
 import { importBatchSchema, profileInputSchema, themeSubmissionSchema } from './http/schemas.js';
 import { QuestionRepository } from './repositories/question-repository.js';
 import { PoolStateRepository } from './repositories/pool-state-repository.js';
@@ -190,6 +197,9 @@ async function adminImportRoute(request: Request, env: Env): Promise<Response> {
 }
 
 async function apiRoute(request: Request, env: Env, url: URL): Promise<Response> {
+  if (!isRequestOriginAllowed(request, env.ALLOWED_ORIGINS)) {
+    throw new ApiError(403, 'ORIGIN_NOT_ALLOWED', 'Origem não autorizada.');
+  }
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: corsHeaders(request, env.ALLOWED_ORIGINS) });
   if (url.pathname === '/api/health' && request.method === 'GET') {
     return json({ name: 'QUIZ GOMES', status: 'ok', version: '0.1.0' });

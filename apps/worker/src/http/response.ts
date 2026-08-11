@@ -44,11 +44,40 @@ export function withSecurityHeaders(response: Response): Response {
   return rebuild(response, headers);
 }
 
-export function corsHeaders(request: Request, allowedOrigins: string): Headers {
+function normalizedOrigin(value: string): string | null {
+  try {
+    const url = new URL(value);
+    if (
+      url.origin === 'null'
+      || url.username !== ''
+      || url.password !== ''
+      || url.pathname !== '/'
+      || url.search !== ''
+      || url.hash !== ''
+    ) return null;
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+
+export function isRequestOriginAllowed(request: Request, allowedOrigins?: string): boolean {
+  const requestOrigin = request.headers.get('Origin');
+  if (requestOrigin === null) return true;
+  const normalizedRequestOrigin = normalizedOrigin(requestOrigin);
+  if (normalizedRequestOrigin === null) return false;
+  if (normalizedRequestOrigin === new URL(request.url).origin) return true;
+  const allowed = (allowedOrigins ?? '')
+    .split(',')
+    .map((value) => normalizedOrigin(value.trim()))
+    .filter((value): value is string => value !== null);
+  return allowed.includes(normalizedRequestOrigin);
+}
+
+export function corsHeaders(request: Request, allowedOrigins?: string): Headers {
   const headers = new Headers();
   const origin = request.headers.get('Origin');
-  const allowed = allowedOrigins.split(',').map((value) => value.trim()).filter(Boolean);
-  if (origin !== null && allowed.includes(origin)) {
+  if (origin !== null && isRequestOriginAllowed(request, allowedOrigins)) {
     headers.set('Access-Control-Allow-Origin', origin);
     headers.set('Vary', 'Origin');
   }
@@ -58,7 +87,7 @@ export function corsHeaders(request: Request, allowedOrigins: string): Headers {
   return headers;
 }
 
-export function applyCors(response: Response, request: Request, allowedOrigins: string): Response {
+export function applyCors(response: Response, request: Request, allowedOrigins?: string): Response {
   const headers = new Headers(response.headers);
   corsHeaders(request, allowedOrigins).forEach((value, name) => headers.set(name, value));
   return rebuild(response, headers);

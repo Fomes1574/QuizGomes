@@ -1,6 +1,6 @@
 export interface Env {
   ADMIN_FIREBASE_UIDS?: string;
-  ALLOWED_ORIGINS: string;
+  ALLOWED_ORIGINS?: string;
   ASSETS: Fetcher;
   CORE_DB: D1Database;
   FIREBASE_PROJECT_ID: string;
