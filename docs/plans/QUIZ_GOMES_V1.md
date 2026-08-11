@@ -19,7 +19,9 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 - [x] 2026-08-10 — Milestone 7: scoring, projeção segura e interface local isolada de partida.
 - [x] 2026-08-10 — publicação pública autorizada pelo proprietário e auditoria específica de segredos concluída antes dos commits.
 - [x] 2026-08-10 — 107 arquivos publicados em commits lógicos na `main`; árvore remota comparada byte a byte e auditoria pós-push sem secrets.
-- [ ] Milestone 8 — Durable Objects: presença/fila/sala/reconexão têm fundação; entrega autoritativa de perguntas e finalização persistente ainda pendem.
+- [x] 2026-08-10 — Milestone 8: motor autoritativo, sala WebSocket, reconexão, resultado transacional e interface realtime concluídos e validados localmente.
+- [x] 2026-08-10 — Milestone 8: runtime Workers simulado validado com WebSockets, D1 e storage real de Durable Object do ambiente de testes.
+- [ ] Milestone 8 — validação real em `workers.dev` bloqueada somente pela autenticação Cloudflare do proprietário; nenhum recurso remoto foi criado ou alterado.
 - [ ] Milestone 9 — social e desafio direto.
 - [ ] Milestone 10 — assíncrono selado e revelação progressiva.
 - [ ] Milestone 11 — criação/moderação/import/admin.
@@ -35,6 +37,9 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 6. **Categoria usa média ordinal fracionária.** Apenas temas com Ranqueada, cap em Desafiante I, sem efeito competitivo.
 7. **R2 adiado.** Adapter local existe; nenhum recurso pago será ativado.
 8. **Repositório público autorizado.** A autorização explícita do proprietário em 2026-08-10 substitui a exigência anterior de repositório privado. Configuração Web Firebase pode ser pública; credenciais de servidor permanecem fora do Git.
+9. **Sala simultânea é autoridade única.** O Durable Object recebe somente READY, opção escolhida e comandos de conexão; deadline, `remainingMs`, correção, score, progressão e resultado são derivados no servidor e persistidos a cada transição.
+10. **Exclusividade e resultado no D1.** `active_match_players` impede duas partidas por usuário; `result_ledger`, `result_version` e um único `D1Database.batch()` tornam resultado, XP, Conhecimento, histórico e liberação do lock transacionais e idempotentes.
+11. **Deploy real não é simulado.** Ausência de login Cloudflare é bloqueio externo; preview temporário, credenciais inventadas, billing e produtos pagos não substituem validação em conta real.
 
 ## Descobertas e riscos
 
@@ -44,6 +49,8 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 - Alterar slots ativos exige versionar/migrar bitmaps; a V1 bloqueará publicação durante migração para preservar descoberta exata.
 - Revogação imediata de Firebase tokens não é consultada por request sem Admin API; avaliar em hardening para ações críticas.
 - Bindings D1 locais também precisam de UUIDs-placeholder distintos; IDs iguais fazem o Wrangler compartilhar o mesmo arquivo SQLite entre shards. A auditoria pré-publicação corrigiu essa colisão.
+- O helper de evicção do runtime Vitest bloqueou com WebSockets hibernáveis ativos. O teste simulado comprova estado pausado no storage e reconexão WebSocket pelo mesmo caminho de restauração; evicção/hibernação efetiva permanece parte do smoke test em `workers.dev` e não foi declarada como executada localmente.
+- `wrangler whoami`, executado em 2026-08-10, retornou `You are not authenticated`. Não foram criados D1, aplicadas migrations remotas, provisionados Durable Objects nem realizado deploy/seed remoto.
 
 ## Testes requeridos por marco
 
@@ -53,6 +60,7 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 - M6: recentes 200/201, união, bitmap round-trip, uniformidade estrutural e pool insuficiente.
 - M7: scoring em limites de ms, timeout, empate, navbar ausente e overflow.
 - M8+: cancelamento, readiness, reconexão 7 s, dupla queda, finalização idempotente e vazamento assíncrono.
+- M8 concluído local/simulado: 5/10/15 rodadas, empate, Casual sem Conhecimento, XP, abandono, dupla queda, lock único, payload estrito, sigilo do adversário, retry idempotente e transação D1; hibernação e smoke HTTP/WebSocket reais continuam pendentes do login Cloudflare.
 
 ## Diário de execução
 
@@ -108,10 +116,49 @@ Autorização e segurança de publicação:
 - buscas pós-push por assinaturas de chaves privadas, Service Accounts e tokens de provedores retornaram zero resultados;
 - próximo trabalho: Milestone 8, com entrega autoritativa de cada pergunta no Durable Object e finalização transacional/idempotente da partida.
 
+### 2026-08-10 — Milestone 8 implementado; deploy real bloqueado por autenticação
+
+Implementação concluída:
+
+- motor de estados puro para lobby, preparação, pergunta entregue, READY por rodada, resposta, resolução, pausa, finalização e anulação;
+- pergunta pública atual projetada sem alternativa correta; perguntas futuras e segredo do adversário permanecem somente no servidor;
+- 10 segundos iniciados apenas depois do READY dos dois jogadores, com deadline/`remainingMs` e score calculados pelo relógio do Durable Object;
+- bolinha cinza/amarela baseada somente em submissão, score adversário congelado até a resolução e nenhuma alternativa/correção do adversário no payload;
+- progressão exata de 5/10/15 perguntas, resultado visível por 1,2 s, empate sem desempate e finalização de Casual/Ranqueada;
+- pausa integral por até 7 s, preservação do tempo, reconexão, restauração pelo storage, abandono individual, readiness desigual, dupla queda e falha sistêmica;
+- locks D1 por jogador, membership server-side e claims de presença impedindo participação concorrente;
+- resultado em batch transacional/idempotente com ledger, ranking, XP, respostas, histórico compacto das perguntas e liberação dos locks;
+- retry de finalização e de limpeza de presença; falha durante inicialização anula sem penalidade e libera locks;
+- cliente realtime em português, sem barra principal durante a partida, com pergunta X/Y, timer, pausa, resolução acessível e tela terminal.
+
+Validação local realmente executada:
+
+- `npm run lint`: aprovado, 0 warnings;
+- `npm run typecheck`: aprovado nos três workspaces;
+- `npm test`: 13 arquivos/85 testes unitários e 1 arquivo/5 testes no runtime Workers, todos aprovados;
+- `npm run build`: aprovado para domínio, PWA e Worker;
+- migrations `0001_core.sql`, `0002_live_matches.sql` e `0001_questions.sql` aplicadas do zero em diretório D1 temporário e tabelas verificadas;
+- nenhum seed foi executado contra ambiente remoto.
+
+Validação simulada no runtime Workers:
+
+- WebSockets reais do runtime local para dois jogadores autenticados diretamente no stub da sala, READY, cinco rodadas, payload malicioso rejeitado, pausa/reconexão e término; emissão/consumo HTTP de ticket não foi classificada como smoke real;
+- D1 do runtime com pergunta pública sem `correctOption`, lock de usuário, respostas, empate, Casual, dupla queda, Conhecimento/XP e retry idempotente;
+- storage do Durable Object inspecionado durante a pausa para confirmar `phaseRemainingMs` preservado;
+- não foi declarada evicção/hibernação local: o helper do Vitest bloqueou com sockets hibernáveis ativos.
+
+Validação real Cloudflare não executada:
+
+- `wrangler whoami` retornou `You are not authenticated`;
+- não houve criação de `quiz-gomes-core`/`quiz-gomes-questions-01`, troca de UUID remoto, migration remota, deploy, domínio `workers.dev`, `/api/health` remoto ou smoke HTTP/WebSocket remoto;
+- o bloqueio depende do proprietário executar `npx wrangler login`; os passos exatos e guardrails Free estão em `docs/DEPLOYMENT.md`;
+- Milestone 9 não foi iniciado.
+
 ## Critério de saída desta execução
 
-- código local dos Milestones 0–7 e fundações do 8–11;
-- suite executável verde;
-- build Worker/PWA;
-- migrations e documentação consistentes;
-- publicação em commits lógicos na `main` pública, seguida por nova auditoria do conteúdo remoto.
+- código do Milestone 8 completo e Milestone 9 não iniciado;
+- suíte unitária e runtime Workers/WebSocket simulada verdes;
+- build Worker/PWA e migrations do zero aprovados;
+- documentação separando evidência local, simulada e real;
+- publicação em commits lógicos na `main` pública, seguida por nova auditoria do conteúdo remoto;
+- deploy real pendente somente do login Cloudflare do proprietário, sem usar preview temporário ou produto pago.

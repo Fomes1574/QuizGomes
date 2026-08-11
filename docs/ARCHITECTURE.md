@@ -32,7 +32,7 @@ Termina autenticação, valida schemas, aplica autorização e oferece APIs HTTP
 
 ### Durable Objects
 
-Um objeto serializa o estado de uma fila ou sala. O backend SQLite é obrigatório para compatibilidade com Workers Free. WebSocket Hibernation evita cobrar duração ociosa. Estado persistido inclui somente o necessário para recuperação e auditoria; presença efêmera não vira escrita constante no D1.
+Um objeto serializa o estado de uma fila ou sala. O backend SQLite é obrigatório para compatibilidade com Workers Free. WebSocket Hibernation evita cobrar duração ociosa. A sala persiste toda transição, usa alarmes para preparação/deadlines/revelação/reconexão e mantém anexos de WebSocket serializados para retomada sem memória global. Presença efêmera não vira escrita constante no D1.
 
 ### D1
 
@@ -68,8 +68,9 @@ Não é usada Service Account para verificar assinatura. Revogação global de t
 
 ## Consistência e idempotência
 
+- `active_match_players.user_id` exclusivo impede o mesmo usuário em duas partidas.
 - `matches.result_version` e chave única no ledger impedem resultado duplicado.
-- Finalização usa transação/batch: trava estado final, calcula score no servidor, grava ledger, ranking e XP.
+- Finalização usa um batch transacional: trava estado final e grava ledger, ranking, XP, respostas, histórico do pool e liberação dos locks; retries observam o resultado já aplicado.
 - Requests mutáveis aceitam `Idempotency-Key` quando repetição de rede é provável.
 - Slots do pool são alterados por swap com o último slot na mesma transação.
 - Estado usuário+pool usa versão otimista para evitar perda concorrente.
@@ -80,9 +81,12 @@ Estados de presença competitiva: `idle`, `matchmaking`, `invite`, `preparing`, 
 
 Cada rodada separa:
 
-- payload público: enunciado, alternativas, imagem e deadline;
-- segredo do servidor: correta e respostas seladas;
-- revelação: apenas após a resposta local ou timeout permitido.
+- payload público atual: enunciado, alternativas, imagem, pergunta X/Y e tempo restante derivado do deadline do servidor;
+- segredo do servidor: alternativa correta, respostas, tempo capturado e score calculado;
+- sinal do adversário: somente cinza/amarelo até a resolução, sem alternativa ou correção;
+- revelação: alternativa correta e score adversário somente quando a rodada está resolvida para ambos.
+
+O cliente envia somente READY, número da rodada, ID da pergunta e opção escolhida. Campos extras (score, tempo, resposta correta ou resultado) invalidam a mensagem. A partida pausa integralmente por uma única queda, preserva `phaseRemainingMs` por até 7 s e diferencia abandono individual de dupla queda/falha sistêmica.
 
 ## Segurança HTTP
 
