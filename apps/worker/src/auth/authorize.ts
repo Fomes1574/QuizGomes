@@ -2,8 +2,14 @@ import type { AuthenticatedUser, Env } from '../env.js';
 import { ApiError } from '../http/api-error.js';
 import { bearerToken, verifyFirebaseIdToken } from './firebase-token.js';
 
-export async function requireUser(request: Request, env: Env): Promise<AuthenticatedUser> {
-  return verifyFirebaseIdToken(bearerToken(request), env.FIREBASE_PROJECT_ID);
+type FirebaseTokenVerifier = (token: string, projectId: string) => Promise<AuthenticatedUser>;
+
+export async function requireUser(
+  request: Request,
+  env: Pick<Env, 'FIREBASE_PROJECT_ID'>,
+  verifier: FirebaseTokenVerifier = verifyFirebaseIdToken,
+): Promise<AuthenticatedUser> {
+  return verifier(bearerToken(request), env.FIREBASE_PROJECT_ID);
 }
 
 export function bootstrapAdminUids(env: Pick<Env, 'ADMIN_FIREBASE_UIDS'>): ReadonlySet<string> {
