@@ -38,7 +38,7 @@ export function useMatchmaking() {
     const resource = `${themeId}:${difficulty}:${mode}`;
     try {
       const ticket = await apiRequest<{ expiresAt: number; ticket: string }>('/api/realtime/tickets', {
-        body: { resource, scope: 'matchmaking' }, method: 'POST', token,
+        body: { resource, scope: 'matchmaking' }, getToken, method: 'POST', token,
       });
       const params = new URLSearchParams({ resource, ticket: ticket.ticket });
       const socket = new WebSocket(websocketUrl(`/api/realtime/matchmaking?${params}`));

@@ -113,7 +113,7 @@ export function LiveMatchPage() {
         if (disposed || currentGeneration !== generation) return;
         if (token === null) throw new Error('Sua sessão expirou. Entre novamente.');
         const ticket = await apiRequest<{ ticket: string }>('/api/realtime/tickets', {
-          body: { resource: roomId, scope: 'room' }, method: 'POST', token,
+          body: { resource: roomId, scope: 'room' }, getToken, method: 'POST', token,
         });
         if (disposed || currentGeneration !== generation) return;
         const socket = new WebSocket(websocketUrl(`/api/realtime/rooms/${roomId}?ticket=${encodeURIComponent(ticket.ticket)}`));

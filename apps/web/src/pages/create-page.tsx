@@ -30,7 +30,7 @@ export function CreatePage() {
       const token = await getToken();
       if (token === null || profile === null) throw new Error('Entre e conclua seu perfil para enviar um tema.');
       const result = await apiRequest<{ theme: ThemeSummary }>('/api/themes', {
-        body: { categoryId, description, name }, method: 'POST', token,
+        body: { categoryId, description, name }, getToken, method: 'POST', token,
       });
       setMessage({ kind: 'success', text: `“${result.theme.name}” foi enviado para revisão.` });
       setName('');

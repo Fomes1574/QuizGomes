@@ -25,7 +25,10 @@ export function ThemeDetailPage() {
   const matchmaking = useMatchmaking();
 
   useEffect(() => {
-    void getToken().then((token) => apiRequest<ThemeDetailResponse>(`/api/themes/${encodeURIComponent(slug)}`, { token }))
+    void getToken().then((token) => apiRequest<ThemeDetailResponse>(`/api/themes/${encodeURIComponent(slug)}`, {
+      getToken,
+      token,
+    }))
       .then((result) => { setData(result); setError(null); })
       .catch((requestError: unknown) => setError(requestError instanceof Error ? requestError.message : 'Não foi possível carregar o tema.'));
   }, [getToken, reload, slug]);

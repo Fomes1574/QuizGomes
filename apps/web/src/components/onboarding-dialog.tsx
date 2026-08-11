@@ -5,15 +5,16 @@ import { Button } from './button.js';
 import { Logo } from './logo.js';
 
 export function OnboardingDialog() {
-  const { firebaseUser, loading, profile } = useAuth();
+  const { error, firebaseUser, loading, profile } = useAuth();
   if (loading || firebaseUser === null || profile !== null) return null;
-  return <OnboardingForm key={firebaseUser.uid} user={firebaseUser} />;
+  return <OnboardingForm authError={error} key={firebaseUser.uid} user={firebaseUser} />;
 }
 
-function OnboardingForm({ user }: { user: User }) {
-  const { createProfile } = useAuth();
+function OnboardingForm({ authError, user }: { authError: string | null; user: User }) {
+  const { createProfile, signOut } = useAuth();
   const [displayName, setDisplayName] = useState(() => user.displayName?.slice(0, 32) ?? '');
   const [saving, setSaving] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function submit(event: FormEvent) {
@@ -26,6 +27,17 @@ function OnboardingForm({ user }: { user: User }) {
       setError(saveError instanceof Error ? saveError.message : 'Não foi possível criar seu perfil.');
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function leaveOnboarding() {
+    setSigningOut(true);
+    setError(null);
+    try {
+      await signOut();
+    } catch {
+      setError('Não foi possível sair da conta. Tente novamente.');
+      setSigningOut(false);
     }
   }
 
@@ -44,10 +56,20 @@ function OnboardingForm({ user }: { user: User }) {
             <input autoFocus maxLength={32} minLength={2} onChange={(event) => setDisplayName(event.target.value)} required value={displayName} />
             <small>Entre 2 e 32 caracteres.</small>
           </label>
-          {error && <p className="form-error" role="alert">{error}</p>}
-          <Button disabled={saving || displayName.trim().length < 2} type="submit">
-            {saving ? 'Criando perfil…' : 'Criar meu perfil'}
-          </Button>
+          {(error ?? authError) && <p className="form-error" role="alert">{error ?? authError}</p>}
+          <div className="dialog__actions">
+            <Button disabled={saving || signingOut || displayName.trim().length < 2} type="submit">
+              {saving ? 'Criando perfil…' : 'Criar meu perfil'}
+            </Button>
+            <Button
+              disabled={saving || signingOut}
+              onClick={() => void leaveOnboarding()}
+              type="button"
+              variant="ghost"
+            >
+              {signingOut ? 'Saindo…' : 'Sair / trocar conta'}
+            </Button>
+          </div>
         </form>
       </section>
     </div>

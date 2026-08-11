@@ -24,7 +24,7 @@ interface AuthValue {
   createProfile: (displayName: string) => Promise<void>;
   error: string | null;
   firebaseUser: User | null;
-  getToken: () => Promise<string | null>;
+  getToken: (forceRefresh?: boolean) => Promise<string | null>;
   loading: boolean;
   profile: QuizProfile | null;
   role: 'ADMIN' | 'PLAYER' | null;
@@ -50,13 +50,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const loadProfile = useCallback(async (user: User) => {
     try {
       const token = await user.getIdToken();
-      const result = await apiRequest<ProfileResponse>('/api/profile/me', { token });
+      const result = await apiRequest<ProfileResponse>('/api/profile/me', {
+        getToken: (forceRefresh) => user.getIdToken(forceRefresh),
+        token,
+      });
       setProfile(result.profile);
       setRole(result.role);
+      setError(null);
     } catch (profileError) {
       if (profileError instanceof ClientApiError && profileError.code === 'PROFILE_NOT_FOUND') {
         setProfile(null);
         setRole(null);
+        setError(null);
       } else {
         setError(profileError instanceof Error ? profileError.message : 'Não foi possível carregar seu perfil.');
       }
@@ -76,18 +81,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void loadProfile(user).finally(() => setLoading(false));
   }), [loadProfile]);
 
-  const getToken = useCallback(async () => firebaseAuth.currentUser?.getIdToken() ?? null, []);
+  const getToken = useCallback(async (forceRefresh = false) => (
+    firebaseAuth.currentUser?.getIdToken(forceRefresh) ?? null
+  ), []);
 
   const saveProfile = useCallback(async (displayName: string, method: 'PATCH' | 'POST') => {
     const token = await getToken();
     if (token === null) throw new Error('Entre com Google para continuar.');
     const result = await apiRequest<ProfileResponse>('/api/profile/me', {
       body: { displayName },
+      getToken,
       method,
       token,
     });
     setProfile(result.profile);
     setRole(result.role);
+    setError(null);
   }, [getToken]);
 
   const value = useMemo<AuthValue>(() => ({
