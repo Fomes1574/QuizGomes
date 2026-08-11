@@ -23,6 +23,7 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 - [x] 2026-08-10 — Milestone 8: runtime Workers simulado validado com WebSockets, D1 e storage real de Durable Object do ambiente de testes.
 - [x] 2026-08-11 — D1 reais criados manualmente no Workers Free; bindings `CORE_DB` e `QUESTIONS_DB` atualizados somente com os UUIDs fornecidos.
 - [x] 2026-08-11 — pipeline de produção Workers Builds, migrations remotas sem seed e origem própria dinâmica preparados e validados localmente.
+- [x] 2026-08-11 — integração GitHub → Workers Builds configurada manualmente no Dashboard pelo proprietário; este commit documental dispara o primeiro build real, cujo resultado ainda aguarda confirmação da Cloudflare.
 - [ ] Milestone 8 — migrations/deploy e smoke tests reais em `workers.dev` aguardam a primeira execução do Workers Builds conectado pelo proprietário.
 - [ ] Milestone 9 — social e desafio direto.
 - [ ] Milestone 10 — assíncrono selado e revelação progressiva.
