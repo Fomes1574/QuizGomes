@@ -3,6 +3,7 @@ import type { Env } from '../env.js';
 interface QueueAttachment {
   joinedAt: number;
   knowledge: number;
+  resource: string;
   uid: string;
 }
 
@@ -19,13 +20,16 @@ export class MatchmakingQueue {
   async fetch(request: Request): Promise<Response> {
     if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') return new Response('Upgrade necessário', { status: 426 });
     const uid = request.headers.get('X-QG-Authenticated-Uid');
+    const resource = request.headers.get('X-QG-Match-Resource');
     const knowledge = Number(request.headers.get('X-QG-Theme-Knowledge') ?? 0);
-    if (uid === null || !Number.isFinite(knowledge)) return new Response('Não autorizado', { status: 401 });
+    if (uid === null || resource === null || resource.length === 0 || resource.length > 256 || !Number.isFinite(knowledge)) {
+      return new Response('Não autorizado', { status: 401 });
+    }
 
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
     if (client === undefined || server === undefined) return new Response('WebSocket indisponível', { status: 500 });
-    const current: QueueAttachment = { joinedAt: Date.now(), knowledge, uid };
+    const current: QueueAttachment = { joinedAt: Date.now(), knowledge, resource, uid };
     server.serializeAttachment(current);
     this.ctx.acceptWebSocket(server);
     const existingAlarm = await this.ctx.storage.getAlarm();
@@ -44,13 +48,58 @@ export class MatchmakingQueue {
     const opponent = candidates[0];
     if (opponent !== undefined) {
       const roomId = crypto.randomUUID();
+      const room = this.env.MATCH_ROOM.get(this.env.MATCH_ROOM.idFromName(roomId));
+      let initialized: boolean;
+      try {
+        const response = await room.fetch('https://room.internal/initialize', {
+          body: JSON.stringify({
+            createdAtMs: Date.now(),
+            firebaseUids: [opponent.value.uid, uid],
+            matchId: roomId,
+            resource,
+          }),
+          method: 'POST',
+        });
+        initialized = response.ok;
+      } catch {
+        initialized = false;
+      }
+      if (!initialized) {
+        const payload = JSON.stringify({ code: 'MATCH_INITIALIZATION_FAILED', type: 'MATCH_FAILED' });
+        server.send(payload);
+        opponent.socket.send(payload);
+        await Promise.all([
+          this.transition(opponent.value.uid, ['matchmaking'], 'idle', null, opponent.value.resource),
+          this.transition(uid, ['matchmaking'], 'idle', null, resource),
+        ]);
+        server.close(4_101, 'Partida indisponível');
+        opponent.socket.close(4_101, 'Partida indisponível');
+        return new Response(null, { status: 101, webSocket: client });
+      }
+      const reservations = await Promise.all([
+        this.transition(opponent.value.uid, ['matchmaking'], 'preparing', roomId, opponent.value.resource),
+        this.transition(uid, ['matchmaking'], 'preparing', roomId, resource),
+      ]);
+      if (!reservations.every(Boolean)) {
+        try {
+          await room.fetch('https://room.internal/system-failure', { method: 'POST' });
+        } catch {
+          // O alarme autoritativo da sala mantém a limpeza como fallback sistêmico.
+        }
+        const payload = JSON.stringify({ code: 'PLAYER_BUSY', type: 'MATCH_FAILED' });
+        server.send(payload);
+        opponent.socket.send(payload);
+        await Promise.all([
+          this.release(opponent.value.uid, opponent.value.resource, roomId),
+          this.release(uid, resource, roomId),
+        ]);
+        server.close(4_101, 'Reserva inválida');
+        opponent.socket.close(4_101, 'Reserva inválida');
+        return new Response(null, { status: 101, webSocket: client });
+      }
       const payload = JSON.stringify({ type: 'MATCH_FOUND', roomId });
       server.send(payload);
       opponent.socket.send(payload);
-      await Promise.all([
-        this.transition(opponent.value.uid, ['matchmaking'], 'preparing', roomId),
-        this.transition(uid, ['matchmaking'], 'preparing', roomId),
-      ]);
       server.close(1000, 'Pareado');
       opponent.socket.close(1000, 'Pareado');
     } else {
@@ -61,7 +110,7 @@ export class MatchmakingQueue {
 
   async webSocketClose(socket: WebSocket): Promise<void> {
     const value = attachment(socket);
-    if (value !== null) await this.transition(value.uid, ['matchmaking'], 'idle', null);
+    if (value !== null) await this.transition(value.uid, ['matchmaking'], 'idle', null, value.resource);
   }
 
   async webSocketError(socket: WebSocket): Promise<void> {
@@ -88,11 +137,18 @@ export class MatchmakingQueue {
     from: string[],
     to: string,
     resource: string | null,
-  ): Promise<void> {
+    fromResource?: string,
+  ): Promise<boolean> {
     const id = this.env.PRESENCE_HUB.idFromName(uid);
-    await this.env.PRESENCE_HUB.get(id).fetch('https://presence.internal/transition', {
-      body: JSON.stringify({ from, resource, to }),
+    const response = await this.env.PRESENCE_HUB.get(id).fetch('https://presence.internal/transition', {
+      body: JSON.stringify({ from, fromResource, resource, to }),
       method: 'POST',
     });
+    return response.ok;
+  }
+
+  private async release(uid: string, queueResource: string, roomId: string): Promise<void> {
+    if (await this.transition(uid, ['matchmaking'], 'idle', null, queueResource)) return;
+    await this.transition(uid, ['preparing'], 'idle', null, roomId);
   }
 }

@@ -14,6 +14,7 @@ import { QuestionRepository } from './repositories/question-repository.js';
 import { PoolStateRepository } from './repositories/pool-state-repository.js';
 import { ThemeRepository } from './repositories/theme-repository.js';
 import { UserRepository } from './repositories/user-repository.js';
+import { LiveMatchRepository, parseMatchResource } from './repositories/live-match-repository.js';
 import { QuestionImportService } from './services/question-import-service.js';
 
 export { MatchRoom, MatchmakingQueue, PresenceHub, TicketBroker };
@@ -40,6 +41,21 @@ async function createRealtimeTicket(request: Request, env: Env): Promise<Respons
   if (profile === null) throw new ApiError(409, 'PROFILE_REQUIRED', 'Conclua seu perfil antes de jogar.');
   const parsed = ticketSchema.safeParse(await readJson(request));
   if (!parsed.success) throw validationError(parsed.error);
+  const matches = new LiveMatchRepository(env.CORE_DB, env.QUESTIONS_DB);
+  if (parsed.data.scope === 'matchmaking') {
+    if (parseMatchResource(parsed.data.resource) === null) {
+      throw new ApiError(400, 'INVALID_QUEUE', 'A fila escolhida é inválida.');
+    }
+    if (await matches.activeMatchForFirebaseUid(user.uid) !== null) {
+      throw new ApiError(409, 'PLAYER_BUSY', 'Você já está em outra partida.');
+    }
+  }
+  if (parsed.data.scope === 'room') {
+    if (!/^[a-f0-9-]{36}$/i.test(parsed.data.resource) ||
+      await matches.membership(user.uid, parsed.data.resource) === null) {
+      throw new ApiError(403, 'MATCH_ACCESS_DENIED', 'Você não pertence a esta partida.');
+    }
+  }
   const resource = parsed.data.scope === 'presence' ? user.uid : parsed.data.resource;
   return ticketBroker(env).fetch('https://tickets.internal/create', {
     body: JSON.stringify({ expiresAt: 0, resource, scope: parsed.data.scope, uid: user.uid }),
@@ -79,15 +95,16 @@ async function realtimeRoute(request: Request, env: Env, url: URL): Promise<Resp
 
   if (url.pathname === '/api/realtime/matchmaking') {
     const resource = url.searchParams.get('resource') ?? '';
-    const [themeId, difficulty, mode, extra] = resource.split(':');
-    if (themeId === undefined || difficulty === undefined || mode === undefined || extra !== undefined ||
-      !['EASY', 'MEDIUM', 'HARD'].includes(difficulty) || !['CASUAL', 'RANKED'].includes(mode)) {
-      throw new ApiError(400, 'INVALID_QUEUE', 'A fila escolhida é inválida.');
-    }
+    const queueConfiguration = parseMatchResource(resource);
+    if (queueConfiguration === null) throw new ApiError(400, 'INVALID_QUEUE', 'A fila escolhida é inválida.');
+    const { themeId } = queueConfiguration;
     const uid = await consumeRealtimeTicket(env, ticket, 'matchmaking', resource);
     const userRow = await env.CORE_DB.prepare('SELECT id FROM users WHERE firebase_uid = ?1 AND disabled_at IS NULL')
       .bind(uid).first<{ id: string }>();
     if (userRow === null) throw new ApiError(409, 'PROFILE_REQUIRED', 'Conclua seu perfil antes de jogar.');
+    if (await new LiveMatchRepository(env.CORE_DB, env.QUESTIONS_DB).activeMatchForFirebaseUid(uid) !== null) {
+      throw new ApiError(409, 'PLAYER_BUSY', 'Você já está em outra partida.');
+    }
     const ranking = await env.CORE_DB.prepare(
       'SELECT knowledge FROM theme_rankings WHERE user_id = ?1 AND theme_id = ?2',
     ).bind(userRow.id, themeId).first<{ knowledge: number }>();
@@ -102,6 +119,7 @@ async function realtimeRoute(request: Request, env: Env, url: URL): Promise<Resp
       headers: {
         Upgrade: 'websocket',
         'X-QG-Authenticated-Uid': uid,
+        'X-QG-Match-Resource': resource,
         'X-QG-Theme-Knowledge': String(ranking?.knowledge ?? 0),
       },
     }));
@@ -118,12 +136,16 @@ async function realtimeRoute(request: Request, env: Env, url: URL): Promise<Resp
   if (roomMatch?.[1] !== undefined) {
     const roomId = roomMatch[1];
     const uid = await consumeRealtimeTicket(env, ticket, 'room', roomId);
+    const membership = await new LiveMatchRepository(env.CORE_DB, env.QUESTIONS_DB).membership(uid, roomId);
+    if (membership === null) throw new ApiError(403, 'MATCH_ACCESS_DENIED', 'Você não pertence a esta partida.');
     const presence = env.PRESENCE_HUB.get(env.PRESENCE_HUB.idFromName(uid));
-    const reserved = await presence.fetch('https://presence.internal/transition', {
-      body: JSON.stringify({ from: ['idle', 'invite', 'preparing'], resource: roomId, to: 'preparing' }),
-      method: 'POST',
-    });
-    if (!reserved.ok) throw new ApiError(409, 'PLAYER_BUSY', 'Você já está em outra atividade.');
+    if (membership.matchStatus === 'PREPARING' || membership.matchStatus === 'PLAYING') {
+      const claimed = await presence.fetch('https://presence.internal/claim', {
+        body: JSON.stringify({ activities: ['preparing', 'playing', 'reconnecting'], resource: roomId }),
+        method: 'POST',
+      });
+      if (!claimed.ok) throw new ApiError(409, 'PLAYER_BUSY', 'Você já está em outra atividade.');
+    }
     const room = env.MATCH_ROOM.get(env.MATCH_ROOM.idFromName(roomId));
     return room.fetch(new Request('https://room.internal/socket', {
       headers: { Upgrade: 'websocket', 'X-QG-Authenticated-Uid': uid },

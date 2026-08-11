@@ -1,4 +1,4 @@
-export type PlayerActivity = 'idle' | 'matchmaking' | 'invite' | 'preparing' | 'playing';
+export type PlayerActivity = 'idle' | 'matchmaking' | 'invite' | 'preparing' | 'playing' | 'reconnecting' | 'finished';
 
 interface ActivityState {
   activity: PlayerActivity;
@@ -19,18 +19,28 @@ export class PresenceHub {
     if (request.method === 'POST' && url.pathname === '/transition') {
       const input = await request.json<{
         from: PlayerActivity | PlayerActivity[];
+        fromResource?: string | null;
         resource: string | null;
         to: PlayerActivity;
       }>();
       const state = await this.state();
       const allowedFrom = Array.isArray(input.from) ? input.from : [input.from];
-      if (!allowedFrom.includes(state.activity)) {
+      if (!allowedFrom.includes(state.activity) ||
+        (input.fromResource !== undefined && input.fromResource !== state.resource)) {
         return Response.json({ error: 'PLAYER_BUSY', state }, { status: 409 });
       }
       const next: ActivityState = { activity: input.to, resource: input.resource, updatedAt: Date.now() };
       await this.ctx.storage.put('activity', next);
       for (const socket of this.ctx.getWebSockets()) socket.send(JSON.stringify({ type: 'PRESENCE', ...next }));
       return Response.json(next);
+    }
+    if (request.method === 'POST' && url.pathname === '/claim') {
+      const input = await request.json<{ activities: PlayerActivity[]; resource: string }>();
+      const state = await this.state();
+      if (!input.activities.includes(state.activity) || state.resource !== input.resource) {
+        return Response.json({ error: 'PLAYER_BUSY', state }, { status: 409 });
+      }
+      return Response.json(state);
     }
     if (request.headers.get('Upgrade')?.toLowerCase() === 'websocket') {
       const pair = new WebSocketPair();

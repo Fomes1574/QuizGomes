@@ -11,7 +11,7 @@ export default tseslint.config(
     languageOptions: {
       globals: { ...globals.browser, ...globals.node },
       parserOptions: {
-        projectService: true,
+        projectService: { allowDefaultProject: ['vitest.worker.config.ts'] },
         tsconfigRootDir: import.meta.dirname,
       },
     },

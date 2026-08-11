@@ -1,21 +1,87 @@
+import {
+  LiveMatchCommandError,
+  LIVE_ROUND_TRANSITION_MS,
+  markLiveMatchFinalized,
+  projectLiveMatchForSeat,
+  transitionLiveMatch,
+  type LiveMatchCommand,
+  type LiveMatchEvent,
+  type LiveMatchState,
+  type LiveSeat,
+} from '@quiz-gomes/domain';
 import type { Env } from '../env.js';
+import {
+  LiveMatchRepository,
+  type FinalizedLiveMatch,
+} from '../repositories/live-match-repository.js';
 
 interface RoomAttachment {
-  ready: boolean;
-  seat: 1 | 2;
+  seat: LiveSeat;
   uid: string;
+  userId: string;
 }
 
-interface RoomState {
-  disconnected: Array<{ deadline: number; uid: string }>;
-  phase: 'WAITING' | 'PREPARING' | 'PLAYING' | 'VOID';
-  startedAt: number | null;
+interface InitializeRoomInput {
+  createdAtMs: number;
+  firebaseUids: [string, string];
+  matchId: string;
+  resource: string;
 }
 
-const INITIAL_STATE: RoomState = { disconnected: [], phase: 'WAITING', startedAt: null };
+interface ClientMessage {
+  questionId?: string;
+  roundNumber?: number;
+  selectedOption?: number;
+  type?: string;
+}
+
+const ROOM_KEY = 'room';
+const RESULT_KEY = 'result';
+const PRESENCE_CLEANUP_KEY = 'presence-cleanup-pending';
+const REPLACED_SOCKET_CODE = 4_000;
+const FINALIZATION_RETRY_MS = 1_000;
 
 function readAttachment(socket: WebSocket): RoomAttachment | null {
   return socket.deserializeAttachment() as RoomAttachment | null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
+  return Object.keys(value).every((key) => allowed.includes(key));
+}
+
+function parseClientMessage(message: string): ClientMessage | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(message);
+  } catch {
+    return null;
+  }
+  if (!isRecord(value) || typeof value.type !== 'string') return null;
+  if (value.type === 'HEARTBEAT' || value.type === 'READY' || value.type === 'CANCEL') {
+    return hasOnlyKeys(value, ['type']) ? { type: value.type } : null;
+  }
+  if (value.type === 'ROUND_READY') {
+    return hasOnlyKeys(value, ['type', 'roundNumber']) && Number.isInteger(value.roundNumber)
+      ? { roundNumber: value.roundNumber as number, type: value.type }
+      : null;
+  }
+  if (value.type === 'ANSWER') {
+    return hasOnlyKeys(value, ['type', 'roundNumber', 'questionId', 'selectedOption']) &&
+      Number.isInteger(value.roundNumber) && typeof value.questionId === 'string' &&
+      Number.isInteger(value.selectedOption)
+      ? {
+          questionId: value.questionId,
+          roundNumber: value.roundNumber as number,
+          selectedOption: value.selectedOption as number,
+          type: value.type,
+        }
+      : null;
+  }
+  return null;
 }
 
 export class MatchRoom {
@@ -25,138 +91,350 @@ export class MatchRoom {
   ) {}
 
   async fetch(request: Request): Promise<Response> {
-    if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') return new Response('Upgrade necessário', { status: 426 });
-    const uid = request.headers.get('X-QG-Authenticated-Uid');
-    if (uid === null) return new Response('Não autorizado', { status: 401 });
-    const sockets = this.ctx.getWebSockets();
-    const sameUser = sockets.find((socket) => readAttachment(socket)?.uid === uid);
-    const occupiedSeats = new Set(sockets.map((socket) => readAttachment(socket)?.seat).filter(Boolean));
-    const seat = sameUser !== undefined ? readAttachment(sameUser)?.seat : (!occupiedSeats.has(1) ? 1 : 2);
-    if (seat === undefined || (sockets.length >= 2 && sameUser === undefined)) return new Response('Sala cheia', { status: 409 });
-    sameUser?.close(4000, 'Reconectado em outra conexão');
-
-    const pair = new WebSocketPair();
-    const [client, server] = Object.values(pair);
-    if (client === undefined || server === undefined) return new Response('WebSocket indisponível', { status: 500 });
-    server.serializeAttachment({ ready: false, seat, uid } satisfies RoomAttachment);
-    this.ctx.acceptWebSocket(server);
-
-    const state = await this.state();
-    const reconnecting = state.disconnected.find((entry) => entry.uid === uid && entry.deadline >= Date.now());
-    if (reconnecting !== undefined) {
-      state.disconnected = state.disconnected.filter((entry) => entry.uid !== uid);
-      await this.save(state);
-      this.broadcast({ type: 'RESUMED' });
+    const url = new URL(request.url);
+    if (request.method === 'POST' && url.pathname === '/initialize') return this.initialize(request);
+    if (request.method === 'POST' && url.pathname === '/system-failure') return this.systemFailure();
+    if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
+      return new Response('Upgrade necessário', { status: 426 });
     }
-    server.send(JSON.stringify({ seat, state, type: 'ROOM_STATE' }));
-    return new Response(null, { status: 101, webSocket: client });
+    return this.connect(request);
   }
 
   async webSocketMessage(socket: WebSocket, message: ArrayBuffer | string): Promise<void> {
-    if (typeof message !== 'string' || message.length > 2_048) return;
-    let input: { type?: string };
-    try {
-      input = JSON.parse(message) as { type?: string };
-    } catch {
-      socket.send(JSON.stringify({ code: 'INVALID_MESSAGE', type: 'ERROR' }));
+    if (typeof message !== 'string' || message.length > 2_048) {
+      this.sendError(socket, 'INVALID_MESSAGE', 'Mensagem inválida.');
+      return;
+    }
+    const input = parseClientMessage(message);
+    if (input === null) {
+      this.sendError(socket, 'INVALID_MESSAGE', 'Mensagem inválida.');
       return;
     }
     if (input.type === 'HEARTBEAT') {
-      socket.send(JSON.stringify({ serverNow: Date.now(), type: 'PONG' }));
+      this.safeSend(socket, { serverNow: Date.now(), type: 'PONG' });
       return;
     }
-    if (input.type === 'CANCEL') {
-      const user = readAttachment(socket);
-      this.broadcast({ by: user?.uid ?? null, type: 'CANCELLED' });
-      await this.setPlayersIdle();
-      for (const active of this.ctx.getWebSockets()) active.close(1000, 'Cancelada');
+    const player = readAttachment(socket);
+    if (player === null) {
+      this.sendError(socket, 'INVALID_CONNECTION', 'Conexão sem jogador.');
       return;
     }
-    if (input.type === 'READY') {
-      const current = readAttachment(socket);
-      if (current === null) return;
-      socket.serializeAttachment({ ...current, ready: true });
-      const players = this.ctx.getWebSockets().map(readAttachment).filter((value): value is RoomAttachment => value !== null);
-      if (players.length === 2 && players.every((player) => player.ready)) {
-        const state: RoomState = { disconnected: [], phase: 'PREPARING', startedAt: Date.now() + 3_000 };
-        await this.save(state);
-        await this.ctx.storage.setAlarm(state.startedAt ?? Date.now());
-        this.broadcast({ startsAt: state.startedAt, type: 'PREPARING' });
+    let command: LiveMatchCommand;
+    if (input.type === 'READY') command = { seat: player.seat, type: 'LOBBY_READY' };
+    else if (input.type === 'ROUND_READY' && input.roundNumber !== undefined) {
+      command = { roundNumber: input.roundNumber, seat: player.seat, type: 'ROUND_READY' };
+    } else if (input.type === 'ANSWER' && input.questionId !== undefined &&
+      input.roundNumber !== undefined && input.selectedOption !== undefined) {
+      command = {
+        questionId: input.questionId,
+        roundNumber: input.roundNumber,
+        seat: player.seat,
+        selectedOption: input.selectedOption,
+        type: 'ANSWER',
+      };
+    } else if (input.type === 'CANCEL') command = { seat: player.seat, type: 'CANCEL' };
+    else {
+      this.sendError(socket, 'INVALID_MESSAGE', 'Mensagem inválida.');
+      return;
+    }
+    try {
+      await this.applyCommand(command, Date.now(), socket);
+    } catch (error) {
+      if (error instanceof LiveMatchCommandError) {
+        this.sendError(socket, error.code, error.message);
+        return;
       }
+      throw error;
     }
   }
 
   async webSocketClose(socket: WebSocket, code: number): Promise<void> {
-    if (code === 4000) return;
+    if (code === REPLACED_SOCKET_CODE) return;
     const player = readAttachment(socket);
-    const state = await this.state();
     if (player === null) return;
-    if (state.phase === 'WAITING' || state.phase === 'PREPARING') {
-      this.broadcast({ by: player.uid, type: 'CANCELLED' });
-      await this.setPlayersIdle();
-      return;
-    }
-    if (state.phase !== 'PLAYING') return;
-    state.disconnected = [...state.disconnected.filter((entry) => entry.uid !== player.uid), { deadline: Date.now() + 7_000, uid: player.uid }];
-    if (state.disconnected.length >= 2) {
-      state.phase = 'VOID';
-      await this.save(state);
-      await this.setPlayersIdle();
-      return;
-    }
-    await this.save(state);
-    const deadline = state.disconnected[0]?.deadline ?? Date.now() + 7_000;
-    await this.ctx.storage.setAlarm(deadline);
-    this.broadcast({ deadline, type: 'PAUSED_FOR_RECONNECT' });
+    const state = await this.state();
+    if (state === null || ['FINALIZING', 'FINISHED', 'VOID'].includes(state.phase)) return;
+    await this.applyCommand({ seat: player.seat, type: 'DISCONNECT' }, Date.now());
   }
 
   async webSocketError(socket: WebSocket): Promise<void> {
-    await this.webSocketClose(socket, 1006);
+    await this.webSocketClose(socket, 1_006);
   }
 
   async alarm(): Promise<void> {
     const state = await this.state();
-    if (state.phase === 'PREPARING' && (state.startedAt ?? Infinity) <= Date.now()) {
-      state.phase = 'PLAYING';
-      await this.save(state);
-      await this.setPlayersActivity('playing');
-      this.broadcast({ serverNow: Date.now(), type: 'STARTED' });
+    if (state === null) return;
+    if (state.phase === 'FINISHED' || state.phase === 'VOID') {
+      if (await this.ctx.storage.get<boolean>(PRESENCE_CLEANUP_KEY) === true) {
+        await this.finishPresenceCleanup();
+      }
       return;
     }
-    const expired = state.disconnected.filter((entry) => entry.deadline <= Date.now());
-    if (expired.length > 0) {
-      state.phase = 'VOID';
+    if (state.phase === 'FINALIZING') {
+      await this.finalize(state);
+      return;
+    }
+    await this.applyCommand({ type: 'ALARM' }, Date.now());
+  }
+
+  private repository(): LiveMatchRepository {
+    return new LiveMatchRepository(this.env.CORE_DB, this.env.QUESTIONS_DB);
+  }
+
+  private async initialize(request: Request): Promise<Response> {
+    const existing = await this.state();
+    if (existing !== null) return Response.json({ matchId: existing.matchId, status: existing.phase });
+    let input: InitializeRoomInput;
+    try {
+      input = await request.json<InitializeRoomInput>();
+    } catch {
+      return Response.json({ error: 'invalid_initialization' }, { status: 400 });
+    }
+    if (!Array.isArray(input.firebaseUids) || input.firebaseUids.length !== 2 ||
+      input.firebaseUids.some((uid) => typeof uid !== 'string' || uid.length === 0 || uid.length > 128) ||
+      typeof input.matchId !== 'string' || typeof input.resource !== 'string' ||
+      !Number.isFinite(input.createdAtMs)) {
+      return Response.json({ error: 'invalid_initialization' }, { status: 400 });
+    }
+    const repository = this.repository();
+    const state = await repository.initialize(input);
+    try {
       await this.save(state);
-      this.broadcast({ disconnectedUid: expired[0]?.uid ?? null, type: 'VOID_DISCONNECT' });
-      await this.setPlayersIdle();
+      await this.syncAlarm(state);
+    } catch (initializationError) {
+      const failed = transitionLiveMatch(state, { type: 'SYSTEM_FAILURE' }, Date.now()).state;
+      try {
+        await this.persistFinalized(failed, await repository.finalize(failed), false);
+      } catch (cleanupError) {
+        throw new AggregateError(
+          [initializationError, cleanupError],
+          'A sala falhou ao persistir e ao liberar sua inicialização.',
+          { cause: cleanupError },
+        );
+      }
+      throw initializationError;
+    }
+    return Response.json({ matchId: state.matchId, status: state.phase }, { status: 201 });
+  }
+
+  private async systemFailure(): Promise<Response> {
+    const state = await this.state();
+    if (state === null) return Response.json({ status: 'missing' }, { status: 404 });
+    if (state.phase === 'FINISHED' || state.phase === 'VOID') return Response.json({ status: state.phase });
+    await this.applyCommand({ type: 'SYSTEM_FAILURE' }, Date.now());
+    return Response.json({ status: 'VOID' });
+  }
+
+  private async connect(request: Request): Promise<Response> {
+    const uid = request.headers.get('X-QG-Authenticated-Uid');
+    if (uid === null) return new Response('Não autorizado', { status: 401 });
+    const state = await this.state();
+    if (state === null) return new Response('Sala não encontrada', { status: 404 });
+    const player = state.players.find((entry) => entry.firebaseUid === uid);
+    if (player === undefined) return new Response('Jogador não pertence à sala', { status: 403 });
+
+    const sameUser = this.ctx.getWebSockets().find((socket) => readAttachment(socket)?.uid === uid);
+    sameUser?.close(REPLACED_SOCKET_CODE, 'Reconectado em outra conexão');
+    const pair = new WebSocketPair();
+    const [client, server] = Object.values(pair);
+    if (client === undefined || server === undefined) return new Response('WebSocket indisponível', { status: 500 });
+    server.serializeAttachment({ seat: player.seat, uid, userId: player.userId } satisfies RoomAttachment);
+    this.ctx.acceptWebSocket(server);
+
+    if (state.phase === 'FINISHED' || state.phase === 'VOID') {
+      const summary = await this.ctx.storage.get<FinalizedLiveMatch>(RESULT_KEY);
+      if (summary !== undefined) this.sendTerminal(server, state, summary);
+      else this.sendState(server, 'ROOM_STATE', state);
+    } else if (state.phase === 'FINALIZING') {
+      this.sendState(server, 'ROOM_STATE', state);
+    } else {
+      const transition = transitionLiveMatch(state, { seat: player.seat, type: 'CONNECT' }, Date.now());
+      await this.save(transition.state);
+      await this.syncAlarm(transition.state);
+      if (transition.event.type === 'RESUMED') {
+        await this.setPlayersActivity(transition.state.startedAtMs === null ? 'preparing' : 'playing');
+        this.broadcastState('RESUMED', transition.state);
+      } else {
+        if (transition.event.type === 'CONNECTED' && transition.state.phase === 'LOBBY') {
+          await this.setPlayersActivity('preparing');
+        }
+        this.sendState(server, 'ROOM_STATE', transition.state);
+        this.broadcastState('MATCH_STATE', transition.state, server);
+      }
+    }
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  private async applyCommand(command: LiveMatchCommand, nowMs: number, source?: WebSocket): Promise<void> {
+    const current = await this.state();
+    if (current === null) throw new LiveMatchCommandError('ROOM_NOT_FOUND', 'Sala não encontrada.');
+    const transition = transitionLiveMatch(current, command, nowMs);
+    if (transition.event.type === 'QUESTION_AVAILABLE' && current.startedAtMs === null) {
+      await this.repository().markStarted(current.matchId);
+    }
+    await this.save(transition.state);
+    await this.syncAlarm(transition.state);
+    await this.publishEvent(transition.event, transition.state, source);
+    if (transition.event.type === 'FINALIZE') await this.finalize(transition.state);
+  }
+
+  private async publishEvent(event: LiveMatchEvent, state: LiveMatchState, source?: WebSocket): Promise<void> {
+    if (event.type === 'NOOP') {
+      if (source !== undefined) this.sendState(source, 'MATCH_STATE', state);
+      return;
+    }
+    if (event.type === 'PREPARING') {
+      this.broadcastState('PREPARING', state);
+      return;
+    }
+    if (event.type === 'QUESTION_AVAILABLE') {
+      await this.setPlayersActivity('playing');
+      this.broadcastState('ROUND_QUESTION', state, undefined, { transitionMs: LIVE_ROUND_TRANSITION_MS });
+      return;
+    }
+    if (event.type === 'ROUND_STARTED') {
+      this.broadcastState('ROUND_STARTED', state);
+      return;
+    }
+    if (event.type === 'ANSWER_ACCEPTED' || event.type === 'ROUND_RESOLVED' || event.type === 'LOBBY_READY') {
+      this.broadcastState(event.type === 'ROUND_RESOLVED' ? 'ROUND_RESOLVED' : 'MATCH_STATE', state);
+      return;
+    }
+    if (event.type === 'PAUSED') {
+      await this.setPlayersActivity('reconnecting');
+      this.broadcastState('PAUSED_FOR_RECONNECT', state);
+      return;
+    }
+    if (event.type === 'RESUMED') {
+      await this.setPlayersActivity(state.startedAtMs === null ? 'preparing' : 'playing');
+      this.broadcastState('RESUMED', state);
+      return;
+    }
+    if (event.type === 'CONNECTED') {
+      if (source !== undefined) this.sendState(source, 'ROOM_STATE', state);
+      return;
     }
   }
 
-  private broadcast(payload: object): void {
-    const encoded = JSON.stringify(payload);
-    for (const socket of this.ctx.getWebSockets()) socket.send(encoded);
+  private async finalize(state: LiveMatchState): Promise<void> {
+    const summary = await this.repository().finalize(state);
+    await this.persistFinalized(state, summary, true);
   }
 
-  private async state(): Promise<RoomState> {
-    return await this.ctx.storage.get<RoomState>('room') ?? { ...INITIAL_STATE };
+  private async persistFinalized(
+    state: LiveMatchState,
+    summary: FinalizedLiveMatch,
+    notifyPlayers: boolean,
+  ): Promise<void> {
+    const finalized = markLiveMatchFinalized(state);
+    await this.ctx.storage.put({
+      [PRESENCE_CLEANUP_KEY]: true,
+      [RESULT_KEY]: summary,
+      [ROOM_KEY]: finalized,
+    });
+    if (notifyPlayers) {
+      for (const socket of this.ctx.getWebSockets()) this.sendTerminal(socket, finalized, summary);
+    }
+    await this.finishPresenceCleanup();
   }
 
-  private async save(state: RoomState): Promise<void> {
-    await this.ctx.storage.put('room', state);
+  private async finishPresenceCleanup(): Promise<void> {
+    try {
+      await this.setPlayersActivity('idle');
+      await this.ctx.storage.delete(PRESENCE_CLEANUP_KEY);
+      await this.ctx.storage.deleteAlarm();
+    } catch {
+      await this.ctx.storage.put(PRESENCE_CLEANUP_KEY, true);
+      await this.ctx.storage.setAlarm(Date.now() + FINALIZATION_RETRY_MS);
+    }
   }
 
-  private async setPlayersActivity(to: 'idle' | 'playing'): Promise<void> {
-    const players = this.ctx.getWebSockets().map(readAttachment).filter((value): value is RoomAttachment => value !== null);
-    await Promise.all(players.map(async (player) => {
-      const id = this.env.PRESENCE_HUB.idFromName(player.uid);
+  private sendTerminal(socket: WebSocket, state: LiveMatchState, summary: FinalizedLiveMatch): void {
+    const attachment = readAttachment(socket);
+    if (attachment === null) return;
+    const viewer = summary.players[attachment.seat - 1];
+    const opponent = summary.players[attachment.seat === 1 ? 1 : 0];
+    if (viewer === undefined || opponent === undefined) return;
+    this.safeSend(socket, {
+      match: projectLiveMatchForSeat(state, attachment.seat, Date.now()),
+      result: {
+        opponent: { result: opponent.result, score: opponent.score },
+        viewer: {
+          knowledgeAfter: viewer.knowledgeAfter,
+          knowledgeBefore: viewer.knowledgeBefore,
+          knowledgeDelta: viewer.knowledgeDelta,
+          result: viewer.result,
+          score: viewer.score,
+          xpDelta: viewer.xpDelta,
+        },
+      },
+      type: summary.status === 'FINISHED' ? 'MATCH_FINISHED' : 'MATCH_VOID',
+      voidReason: summary.status === 'VOID' ? summary.reason : undefined,
+    });
+  }
+
+  private sendState(socket: WebSocket, type: string, state: LiveMatchState, extra: object = {}): void {
+    const attachment = readAttachment(socket);
+    if (attachment === null) return;
+    this.safeSend(socket, {
+      ...extra,
+      match: projectLiveMatchForSeat(state, attachment.seat, Date.now()),
+      type,
+    });
+  }
+
+  private broadcastState(type: string, state: LiveMatchState, except?: WebSocket, extra: object = {}): void {
+    for (const socket of this.ctx.getWebSockets()) {
+      if (socket !== except) this.sendState(socket, type, state, extra);
+    }
+  }
+
+  private safeSend(socket: WebSocket, payload: object): void {
+    try {
+      socket.send(JSON.stringify(payload));
+    } catch {
+      // A confirmação de conexão virá pelo callback de close/error; nunca altera resultado aqui.
+    }
+  }
+
+  private sendError(socket: WebSocket, code: string, message: string): void {
+    this.safeSend(socket, { code, message, type: 'ERROR' });
+  }
+
+  private async state(): Promise<LiveMatchState | null> {
+    return await this.ctx.storage.get<LiveMatchState>(ROOM_KEY) ?? null;
+  }
+
+  private async save(state: LiveMatchState): Promise<void> {
+    await this.ctx.storage.put(ROOM_KEY, state);
+  }
+
+  private async syncAlarm(state: LiveMatchState): Promise<void> {
+    if (state.phase === 'FINISHED' || state.phase === 'VOID') {
+      await this.ctx.storage.deleteAlarm();
+      return;
+    }
+    if (state.phase === 'FINALIZING') {
+      await this.ctx.storage.setAlarm(Date.now() + FINALIZATION_RETRY_MS);
+      return;
+    }
+    if (state.phaseDeadlineMs !== null) await this.ctx.storage.setAlarm(state.phaseDeadlineMs);
+  }
+
+  private async setPlayersActivity(to: 'idle' | 'playing' | 'preparing' | 'reconnecting'): Promise<void> {
+    const state = await this.state();
+    if (state === null) return;
+    await Promise.all(state.players.map(async (player) => {
+      const id = this.env.PRESENCE_HUB.idFromName(player.firebaseUid);
       await this.env.PRESENCE_HUB.get(id).fetch('https://presence.internal/transition', {
-        body: JSON.stringify({ from: ['preparing', 'playing'], resource: null, to }),
+        body: JSON.stringify({
+          from: ['preparing', 'playing', 'reconnecting'],
+          fromResource: state.matchId,
+          resource: to === 'idle' ? null : state.matchId,
+          to,
+        }),
         method: 'POST',
       });
     }));
-  }
-
-  private async setPlayersIdle(): Promise<void> {
-    await this.setPlayersActivity('idle');
   }
 }

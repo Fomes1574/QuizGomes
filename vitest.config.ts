@@ -1,4 +1,4 @@
-import { defineConfig } from 'vitest/config';
+import { configDefaults, defineConfig } from 'vitest/config';
 import { fileURLToPath } from 'node:url';
 
 export default defineConfig({
@@ -13,6 +13,7 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text', 'html'],
     },
+    exclude: [...configDefaults.exclude, 'apps/worker/src/**/*.worker.test.ts'],
     include: ['{apps,packages}/**/*.{test,spec}.{ts,tsx}'],
     restoreMocks: true,
   },
