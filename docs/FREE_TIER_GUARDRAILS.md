@@ -1,11 +1,12 @@
 # Guardrails do free tier
 
-Revisado em 10 de agosto de 2026. Limites mudam; confirmar no painel e nas fontes oficiais antes de produção.
+Revisado em 11 de agosto de 2026. Limites mudam; confirmar no painel e nas fontes oficiais antes de produção.
 
 ## Serviços usados
 
 | Serviço | Uso | Limite gratuito relevante | Proteção arquitetural |
 |---|---|---:|---|
+| Workers Builds | CI/CD do GitHub | 3.000 min/mês, 1 build simultâneo, timeout de 20 min | uma pipeline de produção na `main`, previews desativados, `npm ci` e cache opcional |
 | Workers | API + assets | 100.000 requests/dia | assets estáticos não invocam Worker quando possível; endpoints enxutos |
 | D1 | core + shard inicial | 5 milhões rows lidas/dia, 100.000 escritas/dia, 5 GB | índices, paginação, ausência de scans aleatórios, agregação compacta |
 | Durable Objects SQLite | filas, presença e salas | 100.000 requests/dia, 13.000 GB-s/dia; storage com limites equivalentes ao D1 | WebSocket Hibernation, sem polling/heartbeat agressivo, objetos encerram estado ocioso |
@@ -14,6 +15,7 @@ Revisado em 10 de agosto de 2026. Limites mudam; confirmar no painel e nas fonte
 Fontes Cloudflare atuais:
 
 - <https://developers.cloudflare.com/workers/platform/pricing/>
+- <https://developers.cloudflare.com/workers/ci-cd/builds/limits-and-pricing/>
 - <https://developers.cloudflare.com/d1/platform/pricing/>
 - <https://developers.cloudflare.com/durable-objects/platform/pricing/>
 
@@ -27,6 +29,8 @@ Fontes Cloudflare atuais:
 - `ORDER BY RANDOM()` ou scans integrais de perguntas;
 - polling de presença/matchmaking;
 - OpenAI API ou outro gerador pago.
+
+As únicas permissões de escrita do token do Workers Builds são Workers Scripts e D1 na conta do projeto. O token não recebe R2, KV ou Billing; migrations remotas exigem explicitamente `D1 Edit`.
 
 ## Orçamento por operação
 

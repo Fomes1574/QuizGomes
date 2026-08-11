@@ -7,8 +7,8 @@ Aplicativo de quiz competitivo, mobile-first e instalável, construído com Reac
 ## Pré-requisitos
 
 - Node.js 22.12 ou superior
-- npm 11 ou superior
-- Conta gratuita Cloudflare para provisionamento futuro
+- npm 10.9 ou superior
+- Conta Cloudflare no Workers Free
 - Projeto Firebase `quizgomes-cbc48` com Google Authentication habilitado
 
 ## Desenvolvimento
@@ -28,6 +28,17 @@ O Vite roda em `http://localhost:5173` e encaminha `/api` ao Worker local em `ht
 ```bash
 npm run check
 ```
+
+## Workers Builds
+
+O deployment conectado ao GitHub parte da raiz do monorepo:
+
+```bash
+npm run build:cloudflare
+npm run deploy:cloudflare
+```
+
+O primeiro script instala pelo lockfile e valida os três workspaces. O segundo é restrito ao Workers Builds na branch `main`, aplica migrations D1 remotas e publica Worker + PWA. Veja os campos exatos e o token de menor privilégio em [Deployment](docs/DEPLOYMENT.md). Seeds nunca integram o pipeline remoto.
 
 ## Documentação
 

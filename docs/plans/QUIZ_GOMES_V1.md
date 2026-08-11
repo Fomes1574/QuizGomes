@@ -21,7 +21,9 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 - [x] 2026-08-10 — 107 arquivos publicados em commits lógicos na `main`; árvore remota comparada byte a byte e auditoria pós-push sem secrets.
 - [x] 2026-08-10 — Milestone 8: motor autoritativo, sala WebSocket, reconexão, resultado transacional e interface realtime concluídos e validados localmente.
 - [x] 2026-08-10 — Milestone 8: runtime Workers simulado validado com WebSockets, D1 e storage real de Durable Object do ambiente de testes.
-- [ ] Milestone 8 — validação real em `workers.dev` bloqueada somente pela autenticação Cloudflare do proprietário; nenhum recurso remoto foi criado ou alterado.
+- [x] 2026-08-11 — D1 reais criados manualmente no Workers Free; bindings `CORE_DB` e `QUESTIONS_DB` atualizados somente com os UUIDs fornecidos.
+- [x] 2026-08-11 — pipeline de produção Workers Builds, migrations remotas sem seed e origem própria dinâmica preparados e validados localmente.
+- [ ] Milestone 8 — migrations/deploy e smoke tests reais em `workers.dev` aguardam a primeira execução do Workers Builds conectado pelo proprietário.
 - [ ] Milestone 9 — social e desafio direto.
 - [ ] Milestone 10 — assíncrono selado e revelação progressiva.
 - [ ] Milestone 11 — criação/moderação/import/admin.
@@ -39,7 +41,9 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 8. **Repositório público autorizado.** A autorização explícita do proprietário em 2026-08-10 substitui a exigência anterior de repositório privado. Configuração Web Firebase pode ser pública; credenciais de servidor permanecem fora do Git.
 9. **Sala simultânea é autoridade única.** O Durable Object recebe somente READY, opção escolhida e comandos de conexão; deadline, `remainingMs`, correção, score, progressão e resultado são derivados no servidor e persistidos a cada transição.
 10. **Exclusividade e resultado no D1.** `active_match_players` impede duas partidas por usuário; `result_ledger`, `result_version` e um único `D1Database.batch()` tornam resultado, XP, Conhecimento, histórico e liberação do lock transacionais e idempotentes.
-11. **Deploy real não é simulado.** Ausência de login Cloudflare é bloqueio externo; preview temporário, credenciais inventadas, billing e produtos pagos não substituem validação em conta real.
+11. **Deploy real não é simulado.** A criação manual dos D1 é evidência externa, mas migrations, Worker, Durable Objects, hostname e smoke tests só serão marcados como reais após o Workers Builds terminar na conta do proprietário.
+12. **Workers Builds parte da raiz.** `npm ci` e o gate completo coordenam os três workspaces; o deploy é aceito somente na `main`, aplica migrations pendentes antes do Worker/PWA e nunca referencia seeds.
+13. **Produção é mesma origem.** O Worker deriva sua própria origem de `request.url`; `ALLOWED_ORIGINS` é apenas uma lista adicional explícita de desenvolvimento, sem wildcard e sem hostname `workers.dev` hardcoded.
 
 ## Descobertas e riscos
 
@@ -48,9 +52,10 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 - A logo oficial não foi anexada. A UI usará slot técnico claramente substituível, sem redesenho artístico.
 - Alterar slots ativos exige versionar/migrar bitmaps; a V1 bloqueará publicação durante migração para preservar descoberta exata.
 - Revogação imediata de Firebase tokens não é consultada por request sem Admin API; avaliar em hardening para ações críticas.
-- Bindings D1 locais também precisam de UUIDs-placeholder distintos; IDs iguais fazem o Wrangler compartilhar o mesmo arquivo SQLite entre shards. A auditoria pré-publicação corrigiu essa colisão.
+- Bindings D1 precisam de UUIDs distintos; IDs iguais fazem o Wrangler compartilhar o mesmo arquivo SQLite entre shards. Os UUIDs reais configurados em 2026-08-11 foram testados em armazenamento local vazio e permaneceram isolados.
 - O helper de evicção do runtime Vitest bloqueou com WebSockets hibernáveis ativos. O teste simulado comprova estado pausado no storage e reconexão WebSocket pelo mesmo caminho de restauração; evicção/hibernação efetiva permanece parte do smoke test em `workers.dev` e não foi declarada como executada localmente.
-- `wrangler whoami`, executado em 2026-08-10, retornou `You are not authenticated`. Não foram criados D1, aplicadas migrations remotas, provisionados Durable Objects nem realizado deploy/seed remoto.
+- `wrangler whoami`, executado em 2026-08-10, retornou `You are not authenticated`. Em 2026-08-11 o proprietário criou somente os dois D1 pelo Dashboard; nenhuma migration remota, Durable Object, versão Worker, seed ou smoke test real foi executado ainda.
+- O token automático documentado do Workers Builds não inclui `D1 Edit` e inclui permissões desnecessárias de KV/R2. A conexão deve selecionar token de usuário restrito a `Workers Scripts: Edit` e `D1: Edit` na conta correta, sem R2 ou Billing.
 
 ## Testes requeridos por marco
 
@@ -60,7 +65,8 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 - M6: recentes 200/201, união, bitmap round-trip, uniformidade estrutural e pool insuficiente.
 - M7: scoring em limites de ms, timeout, empate, navbar ausente e overflow.
 - M8+: cancelamento, readiness, reconexão 7 s, dupla queda, finalização idempotente e vazamento assíncrono.
-- M8 concluído local/simulado: 5/10/15 rodadas, empate, Casual sem Conhecimento, XP, abandono, dupla queda, lock único, payload estrito, sigilo do adversário, retry idempotente e transação D1; hibernação e smoke HTTP/WebSocket reais continuam pendentes do login Cloudflare.
+- M8 concluído local/simulado: 5/10/15 rodadas, empate, Casual sem Conhecimento, XP, abandono, dupla queda, lock único, payload estrito, sigilo do adversário, retry idempotente e transação D1; hibernação e smoke HTTP/WebSocket reais continuam pendentes da primeira execução do Workers Builds.
+- Preparação de deploy: origem própria, localhost explícito, wildcard/origem externa e bloqueio do script fora do Workers Builds/`main`; migrations vazias devem preservar isolamento core/questions.
 
 ## Diário de execução
 
@@ -151,8 +157,38 @@ Validação real Cloudflare não executada:
 
 - `wrangler whoami` retornou `You are not authenticated`;
 - não houve criação de `quiz-gomes-core`/`quiz-gomes-questions-01`, troca de UUID remoto, migration remota, deploy, domínio `workers.dev`, `/api/health` remoto ou smoke HTTP/WebSocket remoto;
-- o bloqueio depende do proprietário executar `npx wrangler login`; os passos exatos e guardrails Free estão em `docs/DEPLOYMENT.md`;
+- naquele checkpoint, o bloqueio dependia de autenticação do proprietário; o fluxo atual foi substituído pela conexão via Workers Builds documentada na seção de 2026-08-11;
 - Milestone 9 não foi iniciado.
+
+### 2026-08-11 — D1 reais e Workers Builds preparados
+
+Configuração concluída:
+
+- `CORE_DB` aponta para `quiz-gomes-core` (`3260deba-54ab-4e47-8c7f-a4d088dad728`);
+- `QUESTIONS_DB` aponta para `quiz-gomes-questions-01` (`40ea8ac4-9dd6-40a8-b032-89cb3cede229`);
+- nomes, bindings, migrations, regras de jogo e Durable Objects não foram alterados;
+- root scripts `build:cloudflare` e `deploy:cloudflare` coordenam os workspaces npm;
+- o deploy remoto é bloqueado fora de `WORKERS_CI=1` + branch `main`, aplica migrations antes de `wrangler deploy` e usa `--experimental-provision=false`;
+- nenhum comando remoto referencia seeds, R2, billing ou produto pago;
+- produção aceita dinamicamente a própria origem; `localhost:5173` ficou somente em `.dev.vars` e CORS não aceita `*`.
+
+Validação local realmente executada:
+
+- `npm run build:cloudflare` partiu de dependências limpas, executou `npm ci` e concluiu todo o gate;
+- lint e typecheck passaram nos três workspaces;
+- 14 arquivos/89 testes unitários passaram;
+- 2 arquivos/7 testes no runtime Workers passaram, incluindo origem própria e bloqueio de origem externa;
+- builds de domínio, PWA e Worker passaram; o bundle PWA também foi gerado com `VITE_ENABLE_REALTIME_MATCHES=true`;
+- o guard de deploy recusou execução local antes de qualquer chamada D1/Cloudflare;
+- migrations aplicaram do zero usando os UUIDs reais: 2 no core e 1 em questions; core não contém tabela `questions` e questions não contém tabela `users`;
+- nenhum seed foi usado nessa validação.
+
+Validação real Cloudflare ainda não executada:
+
+- a criação manual dos dois D1 foi informada pelo proprietário e não é classificada como execução desta sessão;
+- não foram aplicadas migrations remotas, provisionadas classes Durable Objects, criada versão Worker, gerado hostname `workers.dev`, chamado `/api/health` remoto ou aberto WebSocket remoto;
+- o próximo passo externo é conectar `Fomes1574/QuizGomes` ao Workers Builds com os valores de `docs/DEPLOYMENT.md` e iniciar o primeiro build da `main`;
+- Milestone 9 permanece não iniciado.
 
 ## Critério de saída desta execução
 
@@ -161,4 +197,4 @@ Validação real Cloudflare não executada:
 - build Worker/PWA e migrations do zero aprovados;
 - documentação separando evidência local, simulada e real;
 - publicação em commits lógicos na `main` pública, seguida por nova auditoria do conteúdo remoto;
-- deploy real pendente somente do login Cloudflare do proprietário, sem usar preview temporário ou produto pago.
+- deploy real pendente da conexão/primeira execução do Workers Builds pelo proprietário, sem preview de branch, R2 ou produto pago.

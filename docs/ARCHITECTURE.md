@@ -91,7 +91,7 @@ O cliente envia somente READY, número da rodada, ID da pergunta e opção escol
 ## Segurança HTTP
 
 - CSP, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy` e HSTS em produção;
-- CORS restrito a origens configuradas;
+- origem própria derivada de `request.url`, CORS externo restrito a origens explícitas e wildcard rejeitado;
 - JSON com limite de tamanho;
 - Zod para input;
 - IDs do recurso sempre combinados com UID autorizado para evitar IDOR;

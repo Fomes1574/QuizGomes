@@ -1,121 +1,167 @@
 # Deployment
 
-O destino é Cloudflare Workers com static assets, D1 e Durable Objects SQLite, inicialmente em `workers.dev`. Este documento não ativa billing. Em 2026-08-10, o provisionamento real ficou bloqueado porque `wrangler whoami` retornou `You are not authenticated`.
+Atualizado em 11 de agosto de 2026. O destino é um único Cloudflare Worker que serve API, PWA e Durable Objects em `workers.dev`, usando somente **Workers Free**.
 
-Use somente **Workers Free**. Se painel ou CLI solicitar cartão, upgrade, Workers Paid, billing ou produto pago, cancele e pare. Não use `wrangler deploy --temporary`: uma conta preview não valida o ambiente real do proprietário.
+Se o painel solicitar cartão, billing, Workers Paid, upgrade ou qualquer produto pago, cancele e pare. Não use deploy temporário, não crie R2 e não habilite recursos ausentes deste documento.
 
 ## 1. Firebase
 
 No console do projeto `quizgomes-cbc48`:
 
 1. habilite Authentication → Sign-in method → Google;
-2. mantenha `localhost` em Authorized Domains;
-3. após obter o domínio `*.workers.dev`, adicione o **hostname sem `https://` e sem caminho** em Authentication → Settings → Authorized Domains;
+2. mantenha `localhost` em Authorized Domains para desenvolvimento;
+3. após o primeiro deploy, adicione o hostname `quiz-gomes.<seu-subdominio>.workers.dev`, sem `https://` e sem caminho, em Authentication → Settings → Authorized Domains;
 4. faça o primeiro login e copie o Firebase UID do proprietário em Authentication → Users → selecione a conta → User UID;
-5. configure esse UID em `ADMIN_FIREBASE_UIDS` no Worker.
+5. grave esse UID como o secret de runtime `ADMIN_FIREBASE_UIDS` no Worker.
 
 A configuração Web existente é pública e está no bundle, como previsto pelo Firebase. A API key deve permanecer restrita no Google Cloud às APIs Firebase necessárias e aos domínios autorizados. Nunca adicione JSON de Service Account, chave privada ou credencial do Firebase Admin SDK.
 
-## 2. Desbloquear e criar os recursos Cloudflare Free
+## 2. Recursos D1 existentes
+
+Os dois bancos foram criados manualmente no Dashboard e permanecem no Workers Free. Seus UUIDs não são secrets e estão versionados no `wrangler.jsonc`:
+
+| Binding | Banco | ID |
+|---|---|---|
+| `CORE_DB` | `quiz-gomes-core` | `3260deba-54ab-4e47-8c7f-a4d088dad728` |
+| `QUESTIONS_DB` | `quiz-gomes-questions-01` | `40ea8ac4-9dd6-40a8-b032-89cb3cede229` |
+
+Não execute `wrangler d1 create`, não altere esses nomes e não crie outros bancos. Os comandos remotos usam `--experimental-provision=false` para impedir provisionamento inferido; o deploy ainda aplica normalmente as classes Durable Objects SQLite declaradas explicitamente na migration `v1`.
+
+## 3. Workers Builds conectado ao GitHub
+
+### 3.1. Token de build com menor privilégio
+
+O token automático padrão do Workers Builds não serve para este pipeline: segundo a documentação atual, ele não inclui `D1 Edit` e inclui permissões de KV/R2 desnecessárias. Crie um token de usuário personalizado, limitado somente à conta do QUIZ GOMES, com:
+
+| Escopo | Permissão |
+|---|---|
+| Account | Account Settings: Read |
+| Account | Workers Scripts: Edit |
+| Account | D1: Edit |
+| User | User Details: Read |
+| User | Memberships: Read |
+
+Não conceda R2, KV, Billing, zone routes ou acesso a outras contas. As permissões de leitura acima servem apenas para identificar usuário, associação e conta; as únicas permissões de escrita são Workers Scripts e D1.
+
+Selecione esse token no campo **API token** da configuração do Workers Builds. Não copie seu valor para o GitHub, para Build variables, para `wrangler.jsonc` ou para qualquer arquivo do repositório.
+
+### 3.2. Valores exatos da conexão
+
+Em Workers & Pages, conecte o repositório `Fomes1574/QuizGomes` com estes valores:
+
+| Campo | Valor |
+|---|---|
+| Worker name | `quiz-gomes` |
+| Production branch | `main` |
+| Root directory | `/` |
+| Build command | `npm run build:cloudflare` |
+| Deploy command | `npm run deploy:cloudflare` |
+| Non-production branch builds | **Desativado** |
+| Non-production branch deploy command | Não se aplica; deixe o padrão sem uso |
+
+Em **Build variables and secrets**, adicione somente variáveis públicas:
+
+| Variável | Valor | Motivo |
+|---|---|---|
+| `SKIP_DEPENDENCY_INSTALL` | `1` | impede a instalação automática duplicada; o script executa `npm ci` |
+| `VITE_ENABLE_REALTIME_MATCHES` | `true` | libera a interface do Milestone 8 no bundle de teste |
+
+Não adicione `CLOUDFLARE_API_TOKEN` manualmente: o token selecionado no campo próprio do Workers Builds é a credencial do pipeline. O arquivo `.node-version` fixa Node 22, suportado pela imagem oficial.
+
+O root `/` é intencional. É nele que ficam `package-lock.json`, o `package.json` com os workspaces e os scripts que coordenam:
+
+- `packages/domain`;
+- `apps/web`;
+- `apps/worker`.
+
+O build executa `npm ci` e depois `npm run check`, que inclui lint, typecheck, todos os testes e os três builds. O deploy só é liberado quando `WORKERS_CI=1` e `WORKERS_CI_BRANCH=main`; em seguida aplica migrations D1 remotas pendentes e executa `wrangler deploy`. Nenhum script de produção referencia a pasta `seeds`.
+
+Desative builds de branches não produtivas. Uma versão de preview usaria os mesmos bindings D1 reais e não existe um ambiente D1 separado autorizado para isso.
+
+### 3.3. Variáveis de runtime
+
+`FIREBASE_PROJECT_ID=quizgomes-cbc48` permanece em `vars` no `wrangler.jsonc`.
+
+`ALLOWED_ORIGINS` não é definido em produção. O Worker reconhece dinamicamente a origem do próprio `request.url`, cobrindo o hostname `workers.dev` ainda desconhecido e futuros domínios próprios sem CORS aberto. Origens externas só entram por lista explícita; `*` é rejeitado. `http://localhost:5173` permanece somente em `apps/worker/.dev.vars` durante desenvolvimento.
+
+Depois do primeiro login, configure o ADMIN sem terminal:
+
+1. Firebase Console → Authentication → Users → abra sua conta → copie `User UID`;
+2. Cloudflare → Workers & Pages → `quiz-gomes` → Settings → Variables & Secrets;
+3. adicione uma variável do tipo **Secret**, nome `ADMIN_FIREBASE_UIDS`, valor igual ao UID;
+4. salve e aguarde a nova versão/configuração ficar ativa;
+5. saia e entre novamente no QUIZ GOMES ou atualize a sessão.
+
+Para vários administradores, use UIDs separados por vírgula. Nunca use email, nome ou role enviada pelo cliente.
+
+## 4. Migrations
+
+O pipeline executa, nessa ordem e antes do deploy:
 
 ```bash
-npm install
-cd apps/worker
-npx wrangler login
-npx wrangler whoami
-npx wrangler d1 create quiz-gomes-core
-npx wrangler d1 create quiz-gomes-questions-01
+npm run db:migrate:remote
+npm run deploy:cloudflare -w @quiz-gomes/worker
 ```
 
-O login abre a autorização OAuth da Cloudflare; ele não exige token inventado. Confirme no painel que a conta continua em Workers Free antes de criar qualquer recurso.
+O primeiro comando aplica somente migrations pendentes:
 
-Copie apenas os dois IDs retornados para os `database_id` correspondentes em `apps/worker/wrangler.jsonc`:
+- `CORE_DB`: `0001_core.sql` e `0002_live_matches.sql`;
+- `QUESTIONS_DB`: `0001_questions.sql`.
 
-- ID de `quiz-gomes-core` substitui somente `00000000-0000-0000-0000-000000000001`;
-- ID de `quiz-gomes-questions-01` substitui somente `00000000-0000-0000-0000-000000000002`.
+Wrangler registra o histórico em `d1_migrations`; retries não reaplicam versões concluídas. Se uma migration falhar, o deploy não começa. Migrations são forward-only e arquivos aplicados nunca devem ser reescritos.
 
-Não altere nomes/bindings e não commite `.dev.vars`. UUID de D1 não é secret, mas a troca deve ser revisada como configuração antes do próximo commit.
+Os únicos comandos de seed contêm `:local` no nome e não fazem parte de `build:cloudflare` nem de `deploy:cloudflare`. Não cole SQL de fixture no Dashboard D1.
 
-Crie `apps/worker/.dev.vars` localmente:
+## 5. Validação local
 
-```dotenv
-ADMIN_FIREBASE_UIDS=uid_do_proprietario
-ALLOWED_ORIGINS=http://localhost:5173
-```
-
-Depois do primeiro login no aplicativo implantado, abra Firebase Console → `quizgomes-cbc48` → Authentication → Users, clique na sua conta e copie **User UID**. No diretório `apps/worker`, grave-o como secret criptografado:
-
-```bash
-npx wrangler secret put ADMIN_FIREBASE_UIDS
-```
-
-Cole apenas o UID e confirme; para mais de um administrador, use UIDs separados por vírgula. Não coloque esse valor em `wrangler.jsonc`, `.env`, issue, log ou commit. Atualize a página após a nova versão do Worker ficar ativa.
-
-`FIREBASE_PROJECT_ID` e `ALLOWED_ORIGINS` são configurações públicas e podem permanecer em `vars`. Tokens da Cloudflare, credenciais de CI e qualquer futuro segredo de servidor devem ficar no provedor de secrets do ambiente, sem arquivos versionados.
-
-## 3. Migrations
-
-Desenvolvimento local, quando necessário:
-
-```bash
-npm run db:migrate:local
-npm run db:seed:local
-```
-
-Produção, a partir da raiz e somente depois de substituir os UUIDs:
-
-```bash
-npm run db:migrate:remote -w @quiz-gomes/worker
-```
-
-Seeds são somente desenvolvimento e **nunca** devem rodar em produção. O comando remoto aplica `0001_core.sql`, `0002_live_matches.sql` e `0001_questions.sql`; migrations já aplicadas não são reescritas.
-
-## 4. Validar antes de publicar
+Antes de publicar mudanças de deployment:
 
 ```bash
 npm run check
+npm run db:migrate:local
 ```
 
-O build do Worker usa `apps/web/dist` como static assets e `not_found_handling: single-page-application`. `/api/**` executa o Worker primeiro; assets são servidos diretamente.
+O build do Worker usa `apps/web/dist` como static assets e `not_found_handling: single-page-application`. `/api/**` executa o Worker primeiro; o restante serve a PWA.
 
-## 5. Deploy
+## 6. Primeiro deploy e smoke tests reais
 
-```bash
-npm run deploy -w @quiz-gomes/worker
+O primeiro push/build bem-sucedido cria o Worker `quiz-gomes`, aplica a migration Durable Objects SQLite `v1` e publica uma URL semelhante a:
+
+```text
+https://quiz-gomes.<seu-subdominio>.workers.dev
 ```
-
-O Wrangler solicitará confirmação/autenticação da conta Cloudflare se ainda não configurada. Não adicione cartão e não aceite upgrade. Se Durable Objects/D1 não estiverem disponíveis no plano gratuito da conta, interrompa o provisionamento e revise os limites.
-
-O primeiro deploy aplica a migration Durable Objects `v1` de `wrangler.jsonc` e cria as classes SQLite `MatchRoom`, `MatchmakingQueue`, `PresenceHub` e `TicketBroker`; não há comando separado e não deve ser escolhida uma classe paga.
-
-O Wrangler imprimirá uma URL semelhante a `https://quiz-gomes.<seu-subdominio>.workers.dev`. Esse valor ainda não existe nesta execução. Assim que existir:
-
-```bash
-curl --fail-with-body https://quiz-gomes.<seu-subdominio>.workers.dev/api/health
-```
-
-O JSON esperado é `{"name":"QUIZ GOMES","status":"ok","version":"0.1.0"}`. Em Firebase Authentication → Settings → Authorized Domains, adicione exatamente `quiz-gomes.<seu-subdominio>.workers.dev`, sem protocolo ou caminho.
 
 Depois:
 
-- faça login Google;
-- obtenha/configure o UID pelo procedimento da seção 2;
-- confirme criação do perfil e acesso ADMIN após atualizar a página;
-- importe apenas conteúdo de teste aprovado pela API administrativa; não use os seeds de desenvolvimento;
-- em dois perfis/navegadores, rode uma partida Casual completa, confirme pergunta X/Y, timer após os dois READY, bolinha amarela sem segredo, score após resolução e empate sem desempate;
-- durante outra partida Casual, desconecte um navegador por menos de 7 s, confirme pausa integral/restauração e depois repita por mais de 7 s;
-- confirme dupla queda/falha sem Conhecimento/XP e que cada perfil consegue buscar nova partida depois do término;
-- confira métricas D1/DO e logs sem tokens/PII.
+1. adicione `quiz-gomes.<seu-subdominio>.workers.dev` aos Authorized Domains do Firebase;
+2. abra `https://quiz-gomes.<seu-subdominio>.workers.dev/api/health` e confirme `{"name":"QUIZ GOMES","status":"ok","version":"0.1.0"}`;
+3. faça login Google e configure `ADMIN_FIREBASE_UIDS` pelo Dashboard;
+4. confirme criação do perfil e acesso ADMIN depois de renovar a sessão;
+5. importe somente conteúdo de teste aprovado pela API administrativa; não use seeds;
+6. em dois perfis/navegadores, conclua uma partida Casual e confira pergunta X/Y, timer após os dois READY, bolinha amarela sem segredo, score somente após resolução e empate sem desempate;
+7. teste reconexão abaixo e acima de 7 segundos, dupla queda, desbloqueio de nova partida e idempotência do resultado;
+8. confira métricas D1/DO e logs sem tokens ou PII.
 
-Registre esses itens como **testes reais Cloudflare** somente quando forem executados no hostname implantado. Até lá, eles permanecem pendentes no ExecPlan.
+Esses itens só contam como **testes reais Cloudflare** quando executados no hostname implantado. Até lá, permanecem pendentes no ExecPlan.
 
 ## Rollback
 
-- código: deploy de commit anterior validado;
-- schema: migrations são forward-only; criar migration corretiva, nunca editar uma aplicada;
-- conteúdo: status permite desativar pergunta/tema sem exclusão destrutiva;
-- resultados: ledger idempotente evita reprocessamento durante retry.
+- código: implantar um commit anterior validado;
+- schema: criar migration corretiva forward-only, nunca editar uma aplicada;
+- conteúdo: desativar pergunta/tema por status, sem exclusão destrutiva;
+- resultados: preservar o ledger idempotente durante retries.
 
 ## R2
 
-Não há binding R2 na V1 inicial. Quando houver decisão explícita, criar bucket gratuito, binding e adapter `R2ImageStorage`; impor `<100 KB` antes de persistir.
+Não há binding, bucket, script ou permissão de R2 neste deployment. A camada de imagens continua abstrata e R2 só poderá ser considerado com autorização explícita futura.
+
+## Fontes oficiais consultadas
+
+- <https://developers.cloudflare.com/workers/ci-cd/builds/configuration/>
+- <https://developers.cloudflare.com/workers/ci-cd/builds/advanced-setups/>
+- <https://developers.cloudflare.com/workers/ci-cd/builds/build-image/>
+- <https://developers.cloudflare.com/workers/ci-cd/builds/build-branches/>
+- <https://developers.cloudflare.com/workers/ci-cd/builds/limits-and-pricing/>
+- <https://developers.cloudflare.com/d1/reference/migrations/>
+- <https://developers.cloudflare.com/fundamentals/api/reference/permissions/>
+- <https://developers.cloudflare.com/workers/platform/pricing/>
