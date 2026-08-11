@@ -3,6 +3,7 @@ export * from './match/scoring.js';
 export * from './match/projection.js';
 export * from './match/connection.js';
 export * from './match/result-ledger.js';
+export * from './match/live-match.js';
 export * from './progression/ranking.js';
 export * from './progression/xp.js';
 export * from './questions/pool-state.js';
