@@ -422,6 +422,10 @@ h1, h2, h3, .brand-lockup__name, .hero-stat strong, .level-card > strong, .count
 .answer-option:hover:not(:disabled) { border-color: var(--brand); transform: translateY(-1px); }
 .answer-option:active:not(:disabled) { transform: scale(.99); }
 .answer-option--selected { border-color: var(--brand); background: var(--surface-soft); }
+.answer-option--correct { border-color: var(--correct); background: var(--correct-soft); }
+.answer-option--correct > span { color: var(--correct); background: color-mix(in srgb, var(--correct) 13%, transparent); }
+.answer-option--incorrect { border-color: var(--incorrect); background: var(--incorrect-soft); }
+.answer-option--incorrect > span { color: var(--incorrect); background: color-mix(in srgb, var(--incorrect) 13%, transparent); }
 .answer-option:disabled { cursor: default; }
 .match-timer { position: relative; height: calc(28px + env(safe-area-inset-bottom)); overflow: hidden; background: var(--background-subtle); }
 .match-timer__bar { position: absolute; inset: 0; background: linear-gradient(90deg, var(--brand-strong), var(--brand-active)); transform-origin: left; will-change: transform; }
@@ -429,6 +433,23 @@ h1, h2, h3, .brand-lockup__name, .hero-stat strong, .level-card > strong, .count
 .match-lobby-screen { position: fixed; inset: 0; display: grid; place-items: center; align-content: center; gap: 24px; padding: 28px; text-align: center; background: radial-gradient(circle at 50% 45%, color-mix(in srgb, var(--brand) 12%, transparent), transparent 30rem), var(--background); }
 .match-lobby-screen h1 { max-width: 620px; margin: 0; font-size: clamp(1.5rem, 6vw, 3rem); letter-spacing: -.045em; }
 .countdown { color: var(--brand); font-size: clamp(4rem, 20vw, 9rem); line-height: 1; }
+.round-counter { position: absolute; left: 50%; color: var(--text-secondary); font-size: .64rem; font-weight: 800; letter-spacing: .09em; transform: translateX(-50%); }
+.round-transition { display: grid; min-width: 112px; min-height: 112px; place-items: center; padding: 16px; border: 1px solid var(--border); border-radius: 50%; color: var(--brand); background: var(--surface); box-shadow: var(--shadow-md); font: 700 .76rem/1.35 Sora, sans-serif; letter-spacing: .06em; }
+.match-pause-overlay { position: fixed; z-index: 240; inset: 0; display: grid; place-items: center; align-content: center; gap: 10px; padding: 24px; text-align: center; background: color-mix(in srgb, var(--background) 82%, transparent); backdrop-filter: blur(12px); }
+.match-pause-overlay strong { color: var(--brand); font: 750 clamp(1.4rem, 6vw, 2.7rem)/1.1 Sora, sans-serif; }
+.match-pause-overlay span { color: var(--text-secondary); font-size: .82rem; }
+.match-result-screen { position: fixed; inset: 0; display: grid; overflow-y: auto; place-items: center; align-content: center; gap: 22px; padding: 30px max(20px, env(safe-area-inset-right)) max(30px, env(safe-area-inset-bottom)); text-align: center; background: radial-gradient(circle at 50% 35%, color-mix(in srgb, var(--brand) 13%, transparent), transparent 30rem), var(--background); }
+.match-result-badge { padding: 9px 16px; border-radius: 999px; color: var(--text-primary); background: var(--surface-soft); font: 750 .78rem/1 Sora, sans-serif; letter-spacing: .08em; text-transform: uppercase; }
+.match-result-badge--win { color: var(--correct); background: var(--correct-soft); }
+.match-result-badge--loss, .match-result-badge--void { color: var(--incorrect); background: var(--incorrect-soft); }
+.match-result-scores { display: flex; align-items: center; gap: 18px; }
+.match-result-scores strong { font: 750 clamp(3rem, 16vw, 7rem)/1 Sora, sans-serif; }
+.match-result-scores span { color: var(--text-secondary); font-size: 1.4rem; }
+.match-result-screen > p { max-width: 480px; margin: 0; color: var(--text-secondary); line-height: 1.55; }
+.match-result-progress { display: grid; width: min(100%, 520px); grid-template-columns: repeat(3, 1fr); gap: 9px; }
+.match-result-progress span { display: grid; gap: 5px; padding: 14px 10px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); }
+.match-result-progress small { color: var(--text-secondary); font-size: .62rem; }
+.match-result-progress strong { font: 700 1rem/1 Sora, sans-serif; }
 
 @keyframes content-in { from { opacity: 0; transform: translateY(5px); } }
 @keyframes fade-in { from { opacity: 0; } }
