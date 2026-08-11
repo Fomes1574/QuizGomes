@@ -26,7 +26,9 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 - [x] 2026-08-11 — integração GitHub → Workers Builds configurada manualmente no Dashboard pelo proprietário; este commit documental dispara o primeiro build real, cujo resultado ainda aguarda confirmação da Cloudflare.
 - [x] 2026-08-11 — primeiro Workers Build/deploy real confirmado em `quiz-gomes.teteumatheus1062.workers.dev`; `/api/health` respondeu `status: ok`.
 - [x] 2026-08-11 — primeiro incidente real de autenticação/onboarding investigado; correção mantém RS256/audience/issuer e adiciona refresh único, diagnóstico seguro e saída do onboarding.
-- [ ] Milestone 8 — reteste real do primeiro perfil e smoke WebSocket completo aguardam o deploy automático desta correção e validação do proprietário.
+- [x] 2026-08-11 — reteste real aprovado: Google Authentication, onboarding, perfil persistido, `JOGADOR · ADMIN`, secret ADMIN e PWA no `workers.dev`.
+- [x] 2026-08-11 — dataset temporário `SYNTHETIC_SMOKE_TEST` preparado em migrations próprias, com limpeza futura versionada e inativa.
+- [ ] Milestone 8 — smoke WebSocket real com dois usuários, reconexões e liberação de locks ainda pendente.
 - [ ] Milestone 9 — social e desafio direto.
 - [ ] Milestone 10 — assíncrono selado e revelação progressiva.
 - [ ] Milestone 11 — criação/moderação/import/admin.
@@ -48,6 +50,7 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 12. **Workers Builds parte da raiz.** `npm ci` e o gate completo coordenam os três workspaces; o deploy é aceito somente na `main`, aplica migrations pendentes antes do Worker/PWA e nunca referencia seeds.
 13. **Produção é mesma origem.** O Worker deriva sua própria origem de `request.url`; `ALLOWED_ORIGINS` é apenas uma lista adicional explícita de desenvolvimento, sem wildcard e sem hostname `workers.dev` hardcoded.
 14. **401 de Firebase tem uma única recuperação.** O cliente reutiliza o ID Token atual uma vez, força `getIdToken(true)` após o primeiro 401 e repete exatamente uma vez. Uma segunda rejeição encerra o fluxo com mensagem clara; assinatura RS256, `kid`, `aud`, `iss`, `exp`, `iat`, `auth_time` e `sub` continuam obrigatórios no Worker.
+15. **Conteúdo de smoke real é isolado e temporário.** Categoria, tema, pool e 30 perguntas usam IDs reservados, texto inequívoco e a flag `SYNTHETIC_SMOKE_TEST`; Questions migra antes de Core. A limpeza fica fora do pipeline até autorização posterior, remove apenas o conteúdo marcado e preserva referências históricas com tombstones desativados.
 
 ## Descobertas e riscos
 
@@ -61,6 +64,7 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 - `wrangler whoami`, executado nesta sessão local em 2026-08-10, retornou `You are not authenticated`; por isso nenhum deploy foi feito pelo Codex. Depois, o proprietário conectou Workers Builds e confirmou externamente o primeiro deploy e `/api/health`, sem disponibilizar credenciais à sessão.
 - O token automático documentado do Workers Builds não inclui `D1 Edit` e inclui permissões desnecessárias de KV/R2. A conexão deve selecionar token de usuário restrito a `Workers Scripts: Edit` e `D1: Edit` na conta correta, sem R2 ou Billing.
 - O primeiro erro real era reduzido a uma mensagem genérica depois da etapa criptográfica, portanto a causa específica da rejeição original não pode ser recuperada retroativamente. A investigação confirmou projeto/issuer, bundle, domínio, certificados X.509 atuais e importação/verificação RS256 no `workerd`; novos logs registram somente `stage` e `reason`, sem token, UID, email, cookies ou payload.
+- O tema sintético será referenciado pelas partidas reais de smoke. Por isso, a limpeza futura não pode apagar o tema quando houver histórico: perguntas/pool são removidos, catálogo é desativado e o registro mínimo permanece como tombstone para não tocar em partidas, usuários ou resultados.
 
 ## Testes requeridos por marco
 
@@ -73,6 +77,7 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 - M8 concluído local/simulado: 5/10/15 rodadas, empate, Casual sem Conhecimento, XP, abandono, dupla queda, lock único, payload estrito, sigilo do adversário, retry idempotente e transação D1; o health real passou, enquanto hibernação e smoke WebSocket reais continuam pendentes.
 - Preparação de deploy: origem própria, localhost explícito, wildcard/origem externa e bloqueio do script fora do Workers Builds/`main`; migrations vazias devem preservar isolamento core/questions.
 - Incidente de autenticação: retry único após 401 com refresh forçado, segunda falha terminal, saída real do onboarding, ADMIN posterior à autenticação, diagnóstico de algoritmo/chave/assinatura/claims sem token ou PII e fixture X.509 sintética no runtime Workers.
+- Dataset de smoke: uma categoria interna, um tema, somente EASY, 30 slots densos, quatro opções, distribuição 8/8/7/7, nenhuma imagem/fonte/trivia e flag editorial exata; limpeza deve preservar todo histórico.
 
 ## Diário de execução
 
@@ -229,6 +234,34 @@ Validação executada antes da publicação:
 - auditoria de secrets: nenhuma chave privada, Service Account, token de provedor, JWT completo, arquivo `.env` ou `.dev.vars`; somente a API key Web pública já autorizada do Firebase;
 - reteste real do perfil e smoke WebSocket completo permanecem pendentes do deploy automático deste commit.
 
+### 2026-08-11 — autenticação real aprovada e dataset do smoke WebSocket preparado
+
+Evidência real confirmada pelo proprietário:
+
+- Google Authentication, onboarding e persistência do primeiro perfil passaram em produção;
+- a conta foi reconhecida como `JOGADOR · ADMIN`, comprovando o secret `ADMIN_FIREBASE_UIDS` após autenticação válida;
+- a aplicação carregou normalmente em `quiz-gomes.teteumatheus1062.workers.dev`;
+- o incidente de autenticação/onboarding está resolvido.
+
+Preparação temporária:
+
+- `QUESTIONS_DB/0002` cria somente o pool EASY com 30 perguntas artificiais, slots 1..30, alternativas A/B/C/D e flag `SYNTHETIC_SMOKE_TEST`;
+- `CORE_DB/0003` publica a categoria interna e o tema `Teste Multiplayer` somente depois do shard de perguntas;
+- não há trivia, imagens, fontes, seed de desenvolvimento ou alteração de regra competitiva;
+- a estratégia de limpeza está versionada fora das migrations ativas e não será executada neste deploy;
+- o smoke WebSocket real com duas contas permanece o último gate do Milestone 8; o Milestone 9 não foi iniciado.
+
+Validação executada antes da publicação:
+
+- lint e typecheck dos três workspaces aprovados;
+- 16 arquivos/96 testes unitários e 4 arquivos/10 testes no runtime Workers aprovados;
+- builds do domínio, PWA com realtime ativado e Worker aprovados;
+- migrations aplicadas em bancos locais vazios: 2 em Questions e 3 em Core, sem seed e com isolamento preservado;
+- dataset conferido com 30 perguntas, 30 slots distintos de 1 a 30, nenhuma imagem/fonte e distribuição correta 8/8/7/7;
+- limpeza aplicada duas vezes num banco descartável com histórico sintético: perguntas/pool removidos, enquanto usuário, perfil, partida, jogador, snapshot, resposta, ledger, ranking e estado de pool permaneceram; catálogo virou tombstone desativado;
+- `npm audit --audit-level=high`: 0 vulnerabilidades;
+- auditoria de secrets: nenhuma credencial, chave privada, Service Account, token, JWT, arquivo real de ambiente ou URL autenticada; somente a configuração Web pública já autorizada do Firebase.
+
 ## Critério de saída desta execução
 
 - código do Milestone 8 completo e Milestone 9 não iniciado;
@@ -236,4 +269,4 @@ Validação executada antes da publicação:
 - build Worker/PWA e migrations do zero aprovados;
 - documentação separando evidência local, simulada e real;
 - publicação em commits lógicos na `main` pública, seguida por nova auditoria do conteúdo remoto;
-- primeiro deploy e health reais confirmados; correção de autenticação aguardando o novo Workers Build e reteste do proprietário, sem preview de branch, R2 ou produto pago.
+- deploy, health, autenticação, onboarding e ADMIN reais confirmados; smoke WebSocket real ainda pendente, sem preview de branch, R2 ou produto pago.

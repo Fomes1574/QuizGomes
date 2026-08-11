@@ -116,12 +116,12 @@ npm run deploy:cloudflare -w @quiz-gomes/worker
 
 O primeiro comando aplica somente migrations pendentes:
 
-- `CORE_DB`: `0001_core.sql` e `0002_live_matches.sql`;
-- `QUESTIONS_DB`: `0001_questions.sql`.
+- `QUESTIONS_DB`: `0001_questions.sql` e `0002_synthetic_smoke_test.sql`;
+- `CORE_DB`: `0001_core.sql`, `0002_live_matches.sql` e `0003_synthetic_smoke_test.sql`.
 
-Wrangler registra o histórico em `d1_migrations`; retries não reaplicam versões concluídas. Se uma migration falhar, o deploy não começa. Migrations são forward-only e arquivos aplicados nunca devem ser reescritos.
+Questions é aplicado primeiro para que o tema temporário só fique visível depois que seu pool estiver pronto. Wrangler registra o histórico em `d1_migrations`; retries não reaplicam versões concluídas. Se uma migration falhar, o deploy não começa. Migrations são forward-only e arquivos aplicados nunca devem ser reescritos.
 
-Os únicos comandos de seed contêm `:local` no nome e não fazem parte de `build:cloudflare` nem de `deploy:cloudflare`. Não cole SQL de fixture no Dashboard D1.
+Os únicos comandos de seed contêm `:local` no nome e não fazem parte de `build:cloudflare` nem de `deploy:cloudflare`. O conteúdo temporário de produção usa migrations próprias, IDs reservados e a flag `SYNTHETIC_SMOKE_TEST`; ele não reutiliza os seeds de desenvolvimento. Não cole SQL de fixture no Dashboard D1.
 
 ## 5. Validação local
 
@@ -149,12 +149,18 @@ Depois:
 3. faça login Google e configure `ADMIN_FIREBASE_UIDS` pelo Dashboard;
 4. confirme que “Criar meu perfil” conclui o onboarding e que “Sair / trocar conta” volta à autenticação sem criar perfil;
 5. confirme acesso ADMIN depois da autenticação; o secret de UID não deve alterar a aceitação do token;
-6. importe somente conteúdo de teste aprovado pela API administrativa; não use seeds;
-7. em dois perfis/navegadores, conclua uma partida Casual e confira pergunta X/Y, timer após os dois READY, bolinha amarela sem segredo, score somente após resolução e empate sem desempate;
-8. teste reconexão abaixo e acima de 7 segundos, dupla queda, desbloqueio de nova partida e idempotência do resultado;
-9. confira métricas D1/DO e confirme que eventos `firebase_id_token_rejected` não contêm tokens ou PII.
+6. selecione a categoria **INTERNO · TESTE SINTÉTICO TEMPORÁRIO**, abra o tema **Teste Multiplayer** e mantenha **Fácil + Casual** nas duas contas;
+7. em dois perfis/navegadores, conclua uma partida e confira pergunta X/Y, timer após os dois READY, bolinha amarela sem segredo e score adversário somente após resolução;
+8. inicie uma nova partida para confirmar a liberação dos locks;
+9. repita com reconexão abaixo de 7 segundos, queda individual acima de 7 segundos e dupla queda, sempre confirmando que uma partida terminada/anulada libera ambos os usuários;
+10. confirme que o Conhecimento do tema continua em 0 nas duas contas e que os frames WebSocket nunca expõem `correctOption`, perguntas futuras ou a alternativa do adversário antes da resolução;
+11. confira métricas D1/DO e confirme que eventos `firebase_id_token_rejected` não contêm tokens ou PII.
 
 Esses itens só contam como **testes reais Cloudflare** quando executados no hostname implantado. Até lá, permanecem pendentes no ExecPlan.
+
+As respostas corretas do dataset seguem o ciclo A/B/C/D pelo número da pergunta: 01=A, 02=B, 03=C, 04=D e então reinicia. Todas as 30 perguntas têm quatro opções, nenhuma imagem ou trivia real e a flag editorial exata `SYNTHETIC_SMOKE_TEST`.
+
+A limpeza já está preparada em `apps/worker/maintenance/synthetic-smoke-test`, mas não faz parte do pipeline e não deve ser executada antes da autorização posterior do proprietário. Quando promovida a migrations novas, ela remove apenas o conteúdo marcado e preserva todo histórico de usuário/partida por meio de tombstones desativados quando houver referências.
 
 ## Rollback
 
