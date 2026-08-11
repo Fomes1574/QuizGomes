@@ -11,20 +11,19 @@
     "run_worker_first": ["/api/*"]
   },
   "vars": {
-    "FIREBASE_PROJECT_ID": "quizgomes-cbc48",
-    "ALLOWED_ORIGINS": "http://localhost:5173"
+    "FIREBASE_PROJECT_ID": "quizgomes-cbc48"
   },
   "d1_databases": [
     {
       "binding": "CORE_DB",
       "database_name": "quiz-gomes-core",
-      "database_id": "00000000-0000-0000-0000-000000000001",
+      "database_id": "3260deba-54ab-4e47-8c7f-a4d088dad728",
       "migrations_dir": "migrations/core"
     },
     {
       "binding": "QUESTIONS_DB",
       "database_name": "quiz-gomes-questions-01",
-      "database_id": "00000000-0000-0000-0000-000000000002",
+      "database_id": "40ea8ac4-9dd6-40a8-b032-89cb3cede229",
       "migrations_dir": "migrations/questions"
     }
   ],

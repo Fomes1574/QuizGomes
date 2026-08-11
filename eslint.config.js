@@ -11,7 +11,7 @@ export default tseslint.config(
     languageOptions: {
       globals: { ...globals.browser, ...globals.node },
       parserOptions: {
-        projectService: { allowDefaultProject: ['vitest.worker.config.ts'] },
+        projectService: { allowDefaultProject: ['vitest.worker.config.ts', 'scripts/*.mjs'] },
         tsconfigRootDir: import.meta.dirname,
       },
     },
@@ -23,7 +23,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ['**/*.config.{js,ts}', '**/vite.config.ts', '**/vitest.config.ts'],
+    files: ['**/*.config.{js,ts}', '**/vite.config.ts', '**/vitest.config.ts', 'scripts/*.mjs'],
     rules: {
       '@typescript-eslint/no-unsafe-assignment': 'off',
       '@typescript-eslint/no-unsafe-call': 'off',
