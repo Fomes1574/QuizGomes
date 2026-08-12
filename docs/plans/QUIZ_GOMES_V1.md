@@ -28,7 +28,10 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 - [x] 2026-08-11 — primeiro incidente real de autenticação/onboarding investigado; correção mantém RS256/audience/issuer e adiciona refresh único, diagnóstico seguro e saída do onboarding.
 - [x] 2026-08-11 — reteste real aprovado: Google Authentication, onboarding, perfil persistido, `JOGADOR · ADMIN`, secret ADMIN e PWA no `workers.dev`.
 - [x] 2026-08-11 — dataset temporário `SYNTHETIC_SMOKE_TEST` preparado em migrations próprias, com limpeza futura versionada e inativa.
-- [ ] Milestone 8 — smoke WebSocket real com dois usuários, reconexões e liberação de locks ainda pendente.
+- [x] 2026-08-11 — fluxo principal WebSocket real aprovado com dois usuários: matchmaking Casual, cinco perguntas EASY, respostas, pontuação e resultado.
+- [ ] Milestone 8 — cenários reais de queda/reconexão e liberação de locks ainda não foram declarados como aprovados.
+- [x] 2026-08-11 — Milestone 8.5 — Gameplay Presentation Polish implementado e validado localmente, sem alteração de gameplay ou rede.
+- [ ] Milestone 8.5 — repetir uma partida real no desktop e no celular após o deploy automático.
 - [ ] Milestone 9 — social e desafio direto.
 - [ ] Milestone 10 — assíncrono selado e revelação progressiva.
 - [ ] Milestone 11 — criação/moderação/import/admin.
@@ -51,6 +54,7 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 13. **Produção é mesma origem.** O Worker deriva sua própria origem de `request.url`; `ALLOWED_ORIGINS` é apenas uma lista adicional explícita de desenvolvimento, sem wildcard e sem hostname `workers.dev` hardcoded.
 14. **401 de Firebase tem uma única recuperação.** O cliente reutiliza o ID Token atual uma vez, força `getIdToken(true)` após o primeiro 401 e repete exatamente uma vez. Uma segunda rejeição encerra o fluxo com mensagem clara; assinatura RS256, `kid`, `aud`, `iss`, `exp`, `iat`, `auth_time` e `sub` continuam obrigatórios no Worker.
 15. **Conteúdo de smoke real é isolado e temporário.** Categoria, tema, pool e 30 perguntas usam IDs reservados, texto inequívoco e a flag `SYNTHETIC_SMOKE_TEST`; Questions migra antes de Core. A limpeza fica fora do pipeline até autorização posterior, remove apenas o conteúdo marcado e preserva referências históricas com tombstones desativados.
+16. **Polimento da partida não muda autoridade.** O deadline e `remainingMs` do Durable Object continuam sendo a única referência; CSS anima apenas a barra, React atualiza o número inteiro isoladamente e o cliente envia `ROUND_READY` somente após a apresentação local, sem calcular score, resposta ou timeout.
 
 ## Descobertas e riscos
 
@@ -65,6 +69,7 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 - O token automático documentado do Workers Builds não inclui `D1 Edit` e inclui permissões desnecessárias de KV/R2. A conexão deve selecionar token de usuário restrito a `Workers Scripts: Edit` e `D1: Edit` na conta correta, sem R2 ou Billing.
 - O primeiro erro real era reduzido a uma mensagem genérica depois da etapa criptográfica, portanto a causa específica da rejeição original não pode ser recuperada retroativamente. A investigação confirmou projeto/issuer, bundle, domínio, certificados X.509 atuais e importação/verificação RS256 no `workerd`; novos logs registram somente `stage` e `reason`, sem token, UID, email, cookies ou payload.
 - O tema sintético será referenciado pelas partidas reais de smoke. Por isso, a limpeza futura não pode apagar o tema quando houver histórico: perguntas/pool são removidos, catálogo é desativado e o registro mínimo permanece como tombstone para não tocar em partidas, usuários ou resultados.
+- A projeção simultânea não expõe a alternativa errada do adversário nem após a resolução. O polimento preserva esse contrato: o avatar só aparece na alternativa correta quando o aumento do score já torna o acerto inferível; nenhum novo dado foi adicionado ao WebSocket.
 
 ## Testes requeridos por marco
 
@@ -78,6 +83,7 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 - Preparação de deploy: origem própria, localhost explícito, wildcard/origem externa e bloqueio do script fora do Workers Builds/`main`; migrations vazias devem preservar isolamento core/questions.
 - Incidente de autenticação: retry único após 401 com refresh forçado, segunda falha terminal, saída real do onboarding, ADMIN posterior à autenticação, diagnóstico de algoritmo/chave/assinatura/claims sem token ou PII e fixture X.509 sintética no runtime Workers.
 - Dataset de smoke: uma categoria interna, um tema, somente EASY, 30 slots densos, quatro opções, distribuição 8/8/7/7, nenhuma imagem/fonte/trivia e flag editorial exata; limpeza deve preservar todo histórico.
+- M8.5: timer sem rerender de alta frequência, segundo inteiro sincronizado, pausa por `phaseRemainingMs`, retomada por `remainingMs`, READY após 900 ms, título de rodada único, feedback acessível, resultado com dois perfis e `prefers-reduced-motion`.
 
 ## Diário de execução
 
@@ -262,6 +268,34 @@ Validação executada antes da publicação:
 - `npm audit --audit-level=high`: 0 vulnerabilidades;
 - auditoria de secrets: nenhuma credencial, chave privada, Service Account, token, JWT, arquivo real de ambiente ou URL autenticada; somente a configuração Web pública já autorizada do Firebase.
 
+### 2026-08-11 — Milestone 8.5 — Gameplay Presentation Polish
+
+Evidência real confirmada pelo proprietário:
+
+- a primeira partida Casual em produção completou matchmaking, cinco perguntas EASY, respostas, pontuação e resultado com dois usuários;
+- esta evidência aprova o fluxo principal, mas não declara como executados os cenários separados de queda abaixo/acima de 7 segundos, dupla queda e liberação de locks.
+
+Implementação concluída:
+
+- o timer deixou de rerenderizar a tela 20 vezes por segundo: uma animação linear de `transform: scaleX()` desenha a barra no compositor e um subcomponente atualiza apenas o número inteiro;
+- pausa usa diretamente `phaseRemainingMs`; reconexão recria o deadline com o `remainingMs` autoritativo; o timeout visual apenas bloqueia interação local e não finaliza a rodada;
+- a transição de rodada dura 900 ms, mostra uma única composição `PERGUNTA` + `N / TOTAL` e só então envia um único `ROUND_READY`;
+- pergunta, respostas, resolução, ✓/×, indicador adversário, scores e `+N` receberam movimento curto baseado principalmente em opacity/transform;
+- desktop acima de 1024 px ganhou palco mais largo, tipografia e respostas proporcionais, placar nos cantos e melhor uso vertical, preservando o grid mobile;
+- o resultado mostra os dois perfis, nomes, scores, vencedor/empate/anulação, halo discreto, XP e Conhecimento em revelação progressiva e mantém apenas “Voltar aos temas”; o contêiner de ações admite futura rematch sem expor função inexistente;
+- molduras já equipadas recebem somente um contorno estrutural a partir do `frameId` existente; nenhum cosmético ou catálogo foi inventado;
+- `prefers-reduced-motion` remove movimentos não essenciais, mantém a resolução legível e troca a barra contínua por passos de um segundo;
+- nenhuma alteração foi feita em domínio, Worker, Durable Objects, WebSockets, D1, matchmaking, scoring, ranking, XP, Conhecimento, perguntas ou sigilo.
+
+Validação executada antes da publicação:
+
+- lint e typecheck dos três workspaces aprovados;
+- 18 arquivos/103 testes unitários aprovados, incluindo timer isolado, pausa, timeout visual, transição sem duplicidade, READY único aos 900 ms e tela final;
+- 4 arquivos/10 testes no runtime Workers/WebSocket aprovados sem alteração;
+- builds do domínio, PWA com realtime ativado e Worker aprovados;
+- `npm audit --audit-level=high`: 0 vulnerabilidades; auditoria dos arquivos alterados sem credenciais, chaves privadas, tokens ou JWTs;
+- o reteste visual real no desktop e no celular permanece pendente do deploy automático; Milestone 9 não foi iniciado.
+
 ## Critério de saída desta execução
 
 - código do Milestone 8 completo e Milestone 9 não iniciado;
@@ -269,4 +303,4 @@ Validação executada antes da publicação:
 - build Worker/PWA e migrations do zero aprovados;
 - documentação separando evidência local, simulada e real;
 - publicação em commits lógicos na `main` pública, seguida por nova auditoria do conteúdo remoto;
-- deploy, health, autenticação, onboarding e ADMIN reais confirmados; smoke WebSocket real ainda pendente, sem preview de branch, R2 ou produto pago.
+- deploy, health, autenticação, onboarding, ADMIN e fluxo principal WebSocket reais confirmados; cenários de reconexão/locks e aprovação visual desktop/mobile ainda pendentes, sem preview de branch, R2 ou produto pago.
