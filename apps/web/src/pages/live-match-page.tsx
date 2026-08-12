@@ -3,6 +3,8 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Button } from '../components/button.js';
 import { Logo } from '../components/logo.js';
+import { MatchResultScreen } from '../components/match-result-screen.js';
+import { MatchRoundTransition, roundPresentationDelay } from '../components/match-round-transition.js';
 import { MatchScreen } from '../components/match-screen.js';
 import { useAuth } from '../features/auth-context.js';
 import { apiRequest, websocketUrl } from '../lib/api.js';
@@ -29,21 +31,6 @@ interface RoomMessage {
   voidReason?: string;
 }
 
-const RESULT_LABELS: Record<MatchResult, string> = {
-  DRAW: 'Empate',
-  LOSS: 'Derrota',
-  VOID: 'Partida anulada',
-  WIN: 'Vitória',
-};
-
-const VOID_LABELS: Record<string, string> = {
-  CANCELLED: 'A partida foi cancelada antes do início.',
-  INDIVIDUAL_ABANDONMENT: 'A partida foi anulada por abandono.',
-  INDIVIDUAL_DISCONNECT: 'A partida foi anulada por perda de conexão.',
-  READINESS_TIMEOUT: 'Um jogador não ficou pronto dentro do prazo.',
-  SYSTEM_FAILURE: 'A partida foi anulada sem penalidade por falha da sala.',
-};
-
 export function LiveMatchPage() {
   const { roomId = '' } = useParams();
   const { getToken } = useAuth();
@@ -51,7 +38,7 @@ export function LiveMatchPage() {
   const socketRef = useRef<WebSocket | null>(null);
   const [projection, setProjection] = useState<LiveMatchProjection | null>(null);
   const [deadlineMs, setDeadlineMs] = useState<number | null>(null);
-  const [transitioning, setTransitioning] = useState(false);
+  const [roundIntro, setRoundIntro] = useState<{ number: number; total: number } | null>(null);
   const [statusMessage, setStatusMessage] = useState('Conectando à sala');
   const [error, setError] = useState<string | null>(null);
   const [terminal, setTerminal] = useState<{ result: TerminalResult; voidReason?: string } | null>(null);
@@ -82,11 +69,19 @@ export function LiveMatchPage() {
       update();
       countdownTimer = window.setInterval(update, 100);
     };
-    const acknowledgeRound = (socket: WebSocket, match: LiveMatchProjection, delayMs: number) => {
+    const acknowledgeRound = (
+      socket: WebSocket,
+      match: LiveMatchProjection,
+      delayMs: number,
+      showPresentation = false,
+    ) => {
       if (match.round === undefined) return;
       clearRoundReady();
-      setTransitioning(true);
+      setRoundIntro(showPresentation ? match.round : null);
       roundReadyTimer = window.setTimeout(() => {
+        roundReadyTimer = null;
+        setRoundIntro(null);
+        if (showPresentation) setStatusMessage('Sincronizando jogadores');
         if (socket.readyState === WebSocket.OPEN) {
           socket.send(JSON.stringify({ roundNumber: match.round?.number, type: 'ROUND_READY' }));
         }
@@ -97,11 +92,11 @@ export function LiveMatchPage() {
       updateCountdown(match);
       if (match.phase === 'ANSWERING' && match.remainingMs !== undefined) {
         setDeadlineMs(Date.now() + match.remainingMs);
-        setTransitioning(false);
+        setRoundIntro(null);
       }
       if (match.phase === 'ROUND_RESULT') {
         setDeadlineMs(Date.now());
-        setTransitioning(false);
+        setRoundIntro(null);
       }
       if (match.phase === 'PAUSED') setStatusMessage('AGUARDANDO JOGADOR');
     };
@@ -143,8 +138,7 @@ export function LiveMatchPage() {
           }
           if (payload.type === 'PREPARING') setStatusMessage('PREPARE-SE PARA A PARTIDA');
           if (payload.type === 'ROUND_QUESTION' && payload.match !== undefined) {
-            setStatusMessage(`PERGUNTA ${payload.match.round?.number ?? 1} / ${payload.match.round?.total ?? 1}`);
-            acknowledgeRound(socket, payload.match, payload.transitionMs ?? 0);
+            acknowledgeRound(socket, payload.match, roundPresentationDelay(payload.transitionMs), true);
           }
           if (payload.type === 'RESUMED') {
             setStatusMessage('Partida restaurada');
@@ -153,6 +147,7 @@ export function LiveMatchPage() {
           if ((payload.type === 'MATCH_FINISHED' || payload.type === 'MATCH_VOID') && payload.result !== undefined) {
             terminalReached = true;
             clearRoundReady();
+            setRoundIntro(null);
             setTerminal(payload.voidReason === undefined
               ? { result: payload.result }
               : { result: payload.result, voidReason: payload.voidReason });
@@ -162,6 +157,7 @@ export function LiveMatchPage() {
           if (disposed || socketRef.current !== socket || terminalReached) return;
           socketRef.current = null;
           clearRoundReady();
+          setRoundIntro(null);
           setStatusMessage('Reconectando à partida');
           const now = Date.now();
           retryStartedAt ??= now;
@@ -202,19 +198,27 @@ export function LiveMatchPage() {
   if (terminal !== null) {
     const { viewer, opponent } = terminal.result;
     return (
-      <main className="match-result-screen">
-        <Logo />
-        <span className={`match-result-badge match-result-badge--${viewer.result.toLocaleLowerCase()}`}>{RESULT_LABELS[viewer.result]}</span>
-        <div className="match-result-scores"><strong>{viewer.score}</strong><span>×</span><strong>{opponent.score}</strong></div>
-        {viewer.result === 'VOID'
-          ? <p>{VOID_LABELS[terminal.voidReason ?? 'SYSTEM_FAILURE'] ?? 'A partida foi anulada.'}</p>
-          : <div className="match-result-progress">
-              <span><small>XP</small><strong>+{viewer.xpDelta}</strong></span>
-              <span><small>Conhecimento</small><strong>{viewer.knowledgeDelta >= 0 ? '+' : ''}{viewer.knowledgeDelta}</strong></span>
-              <span><small>Total no tema</small><strong>{viewer.knowledgeAfter}</strong></span>
-            </div>}
-        <Button onClick={() => { void navigate('/'); }}>Voltar aos temas</Button>
-      </main>
+      <MatchResultScreen
+        knowledgeAfter={viewer.knowledgeAfter}
+        knowledgeDelta={viewer.knowledgeDelta}
+        onBack={() => { void navigate('/'); }}
+        opponent={{
+          frameId: projection?.opponent.frameId ?? null,
+          name: projection?.opponent.displayName ?? 'Adversário',
+          photoUrl: projection?.opponent.photoUrl ?? null,
+          result: opponent.result,
+          score: opponent.score,
+        }}
+        viewer={{
+          frameId: projection?.viewer.frameId ?? null,
+          name: projection?.viewer.displayName ?? 'Você',
+          photoUrl: projection?.viewer.photoUrl ?? null,
+          result: viewer.result,
+          score: viewer.score,
+        }}
+        voidReason={terminal.voidReason}
+        xpDelta={viewer.xpDelta}
+      />
     );
   }
 
@@ -235,11 +239,29 @@ export function LiveMatchPage() {
               type: 'ANSWER',
             }));
           }}
-          opponent={{ name: projection.opponent.displayName, photoUrl: projection.opponent.photoUrl }}
+          opponent={{
+            frameId: projection.opponent.frameId,
+            name: projection.opponent.displayName,
+            photoUrl: projection.opponent.photoUrl,
+          }}
           opponentAnswered={projection.opponent.answered}
           opponentScore={projection.opponent.score}
+          paused={projection.phase === 'PAUSED'}
+          pausedRemainingMs={projection.phase === 'PAUSED' && projection.paused?.phase === 'ANSWERING'
+            ? projection.paused.phaseRemainingMs
+            : undefined}
+          player={{
+            frameId: projection.viewer.frameId,
+            name: projection.viewer.displayName,
+            photoUrl: projection.viewer.photoUrl,
+          }}
           playerScore={projection.viewer.score}
           question={activeQuestion}
+          remainingMs={projection.phase === 'ANSWERING'
+            ? projection.remainingMs ?? 0
+            : projection.phase === 'PAUSED' && projection.paused?.phase === 'ANSWERING'
+              ? projection.paused.phaseRemainingMs
+              : 0}
           resolution={projection.resolution}
           round={projection.round}
           selectedOption={projection.selectedOption}
@@ -253,10 +275,16 @@ export function LiveMatchPage() {
   return (
     <main className="match-lobby-screen">
       <Logo />
-      {transitioning || projection?.phase === 'ROUND_READY'
-        ? <span className="round-transition">{statusMessage}</span>
-        : <span className="matchmaking-radar"><span /><span /><i /></span>}
-      <h1>{error ?? statusMessage}</h1>
+      {error !== null
+        ? <h1>{error}</h1>
+        : roundIntro !== null
+          ? <MatchRoundTransition number={roundIntro.number} total={roundIntro.total} />
+          : (
+            <>
+              <span className="matchmaking-radar"><span /><span /><i /></span>
+              <h1>{statusMessage}</h1>
+            </>
+          )}
       {countdown !== null && <strong className="countdown">{countdown}</strong>}
       {canCancel && <Button onClick={() => {
         socketRef.current?.send(JSON.stringify({ type: 'CANCEL' }));
