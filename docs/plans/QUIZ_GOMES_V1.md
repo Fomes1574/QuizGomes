@@ -36,6 +36,8 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 - [x] 2026-08-11 — reteste real da cadência `2.000 / 1.600` melhorou novamente a partida e motivou uma última calibração pequena.
 - [x] 2026-08-11 — calibração `2.400 / 1.900` e revelação autoritativa das duas escolhas implementadas e validadas localmente.
 - [ ] Milestone 8.5 — repetir uma partida Fácil real em dois usuários após o deploy de `2.400 / 1.900`, cobrindo acerto, erro e timeout.
+- [x] 2026-08-12 — sistema unificado de arte dos temas implementado e validado localmente, com ícones próprios, upload ADMIN em D1 e auditoria de carregamento.
+- [ ] Milestone 8.5 — smoke real do sistema de arte após o deploy: ícone, imagem, iniciais, troca/remoção, claro/escuro, catálogo, tema e matchmaking.
 - [ ] Milestone 9 — social e desafio direto.
 - [ ] Milestone 10 — assíncrono selado e revelação progressiva.
 - [ ] Milestone 11 — criação/moderação/import/admin.
@@ -61,6 +63,7 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 16. **Polimento da partida não muda autoridade.** O deadline e `remainingMs` do Durable Object continuam sendo a única referência; CSS anima apenas a barra, React atualiza o número inteiro isoladamente e o cliente envia `ROUND_READY` somente após a apresentação local, sem calcular score, resposta ou timeout.
 17. **Cadência local respeita o piso do servidor.** `roundPresentationDelay()` usa o maior valor entre `MATCH_ROUND_TRANSITION_MS` e `payload.transitionMs`; a calibração atual usa `ROUND_RESULT` de 2.400 ms e apresentação de 1.900 ms. `QUESTION_DURATION_MS` permanece em 10.000 ms e só começa depois do READY dos dois jogadores.
 18. **Escolhas são reveladas somente após resolução autoritativa.** Durante `ANSWERING`, a projeção informa apenas se o adversário respondeu. Em `ROUND_RESULT` ou estado equivalente já resolvido, `resolution` recebe do estado do MatchRoom as opções selecionadas por ambos, inclusive erro ou `null` por timeout; o cliente nunca deriva a escolha adversária pelo score.
+19. **Arte de tema é uma união exclusiva e versionada.** `ICON`, `CUSTOM` e `NONE` não coexistem. SVG padrão é estático/reutilizável; WebP personalizado ocupa uma única row BLOB separada no Core D1. Catálogo nunca lê o BLOB, URL pública contém versão, alteração exige versão esperada e somente ADMIN pode gravar.
 
 ## Descobertas e riscos
 
@@ -76,6 +79,7 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 - O primeiro erro real era reduzido a uma mensagem genérica depois da etapa criptográfica, portanto a causa específica da rejeição original não pode ser recuperada retroativamente. A investigação confirmou projeto/issuer, bundle, domínio, certificados X.509 atuais e importação/verificação RS256 no `workerd`; novos logs registram somente `stage` e `reason`, sem token, UID, email, cookies ou payload.
 - O tema sintético será referenciado pelas partidas reais de smoke. Por isso, a limpeza futura não pode apagar o tema quando houver histórico: perguntas/pool são removidos, catálogo é desativado e o registro mínimo permanece como tombstone para não tocar em partidas, usuários ou resultados.
 - A projeção simultânea continua sem expor `opponent.selectedOption`, correção ou resposta correta durante `ANSWERING`. A revelação das escolhas certa ou errada existe exclusivamente dentro de `resolution`, depois que `resolveRound()` já produziu o estado autoritativo; score não é usado para inferir alternativa.
+- `coverImageKey` existia no modelo, mas não possuía resolução HTTP ligada aos temas: migrations/seeds atuais usam `NULL` e `LocalImageStorage` atende somente fixtures de perguntas. A arte dinâmica passou a ter endpoint próprio; `coverImageKey` permanece apenas como ponte compatível, sem URL inventada.
 
 ## Testes requeridos por marco
 
@@ -90,6 +94,7 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 - Incidente de autenticação: retry único após 401 com refresh forçado, segunda falha terminal, saída real do onboarding, ADMIN posterior à autenticação, diagnóstico de algoritmo/chave/assinatura/claims sem token ou PII e fixture X.509 sintética no runtime Workers.
 - Dataset de smoke: uma categoria interna, um tema, somente EASY, 30 slots densos, quatro opções, distribuição 8/8/7/7, nenhuma imagem/fonte/trivia e flag editorial exata; limpeza deve preservar todo histórico.
 - M8.5: timer sem rerender de alta frequência, segundo inteiro sincronizado, pausa por `phaseRemainingMs`, retomada por `remainingMs`, resultado por 2.400 ms, READY após apresentação de 1.900 ms, título de rodada único, escolhas autoritativas com dois avatares, resultado com dois perfis e `prefers-reduced-motion`.
+- Arte de tema: união exclusiva, 16 chaves/SVGs, fallback, imagem quebrada, crop/reencode/cap, magic bytes/chunks/dimensões, autorização ADMIN, conflito de versão, replace/remove, URL/ETag/cache, ausência de BLOB no catálogo, migration vazia e chunks lazy fora do precache.
 
 ## Diário de execução
 
@@ -359,6 +364,36 @@ Validação executada antes da publicação:
 - 4 arquivos/10 testes no runtime Workers/WebSocket aprovados, inclusive projeções reais antes e depois de `ROUND_RESOLVED`;
 - builds do domínio, PWA com realtime ativado e Worker aprovados;
 - o smoke real Fácil em dois usuários com `2.400 / 1.900`, acerto, erro e timeout permanece pendente do deploy automático.
+
+### 2026-08-12 — sistema de arte dos temas
+
+Implementação concluída:
+
+- cada tema passou a ter exatamente uma apresentação ativa: ícone padrão, imagem personalizada ou fallback pelas iniciais; a resolução fica centralizada em `ThemeArtwork`, sem regras paralelas nas telas;
+- foi criada uma biblioteca interna reutilizável com 16 símbolos vetoriais próprios em um único sprite SVG leve, sem emoji e sem dependência de ícones; catálogo, busca, detalhe, matchmaking e ADMIN usam o mesmo asset;
+- `ThemeArtwork` mantém dimensões quadradas conhecidas, usa `object-fit: cover`, preserva o fallback durante o carregamento e memoriza URLs carregadas; o matchmaking recebe o objeto de tema já disponível e não repete a consulta;
+- a rota Criar e o editor de arte são chunks lazy. O ADMIN escolhe claramente `Ícone padrão`, `Imagem personalizada` ou `Sem imagem`, vê a grade visual e pode substituir ou remover a escolha depois;
+- o processamento local aceita apenas PNG/JPEG/WebP/AVIF, rejeita SVG, permite crop quadrado com zoom e deslocamento, reencoda por Canvas em WebP, remove metadata, tenta 512 px com redução progressiva até 256 px e busca até 55 KB, respeitando o hard cap de 60 KB; o original nunca é enviado nem armazenado;
+- a migration imutável `core/0004_theme_artwork.sql` mantém somente metadados nas linhas de tema e guarda no máximo um WebP ativo por tema em `theme_artwork_blobs`; consultas textuais não selecionam o BLOB e R2 não foi provisionado;
+- o Worker expõe URL pública própria e versionada `/api/theme-artwork/:themeId/v<versão>.webp`, com ETag, `HEAD`, `304` e cache imutável; versões antigas deixam de resolver depois da troca;
+- gravações de arte exigem Firebase válido, role `ADMIN`, versão esperada e validação autoritativa. A leitura em streaming é interrompida ao ultrapassar 60 KB; o parser WebP verifica contêiner, chunks, dimensões e metadata proibida antes da transação, e um token único impede upload concorrente atrasado de tocar no BLOB vencedor;
+- `coverImageKey` permanece apenas como ponte compatível para imagens personalizadas e não contém o BLOB; ícone e fallback usam a nova representação tipada;
+- foram atualizadas a arquitetura, as proteções de free tier e os testes de domínio, UI, processamento, API, repository/runtime, migration e contrato do sprite. Nenhuma regra de partida foi alterada e o Milestone 9 não foi iniciado.
+
+Auditoria de performance:
+
+- baseline anterior: JS inicial 372,97 KB / 115,84 KB gzip e CSS 41,86 KB / 9,11 KB gzip;
+- build final com realtime: JS comum dividido em 362,86 KB + 9,86 KB, total 372,72 KB / 116,70 KB gzip; variação aproximada de -0,25 KB bruto e +0,86 KB gzip;
+- CSS final: 47,63 KB / 9,96 KB gzip; variação aproximada de +5,77 KB bruto e +0,85 KB gzip;
+- o chunk de gestão `create-page` tem 8,53 KB / 3,08 KB gzip, o editor 6,46 KB / 2,61 KB gzip e o sprite 5,36 KB / 1,37 KB gzip; os três ficaram fora do precache do service worker;
+- imagens personalizadas adicionam zero byte ao startup: só são requisitadas pelo componente nas telas que efetivamente as exibem. O sprite também só é requisitado quando um tema com ícone padrão é renderizado.
+
+Validação executada antes da publicação:
+
+- `npm run check` com realtime ativado aprovou lint sem warnings, typecheck dos três workspaces, 25 arquivos/127 testes unitários, 5 arquivos/14 testes no runtime Workers/WebSocket e builds de domínio, PWA e Worker;
+- todas as migrations de Questions `0001–0002` e Core `0001–0004` foram aplicadas do zero em bancos D1 locais separados; o Core contém a tabela de arte e não contém perguntas, e o Questions contém perguntas e não contém arte;
+- a seleção de ícone/fallback, substituição e remoção de imagem, concorrência de versão, cache/ETag, ausência de BLOB no catálogo, bloqueio sem ADMIN, rejeição de arquivo inválido/metadata/SVG e fallback de imagem quebrada têm cobertura automatizada;
+- o smoke real autenticado de upload, troca de arte e renderização após deploy permanece pendente porque exige Firebase/D1/Worker reais. Esse ponto não é declarado como evidência local.
 
 ## Critério de saída desta execução
 
