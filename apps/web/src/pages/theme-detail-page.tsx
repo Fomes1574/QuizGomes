@@ -7,6 +7,7 @@ import { ErrorState, LoadingState } from '../components/async-state.js';
 import { Icon } from '../components/icons.js';
 import { MatchmakingDialog } from '../components/matchmaking-dialog.js';
 import { RankBadge } from '../components/rank-badge.js';
+import { ThemeArtwork } from '../components/theme-artwork.js';
 import { useAuth } from '../features/auth-context.js';
 import { useMatchmaking } from '../hooks/use-matchmaking.js';
 import { apiRequest } from '../lib/api.js';
@@ -45,7 +46,7 @@ export function ThemeDetailPage() {
     <section className="page page--theme-detail">
       <Link className="back-link" to="/"><Icon name="back" />Temas</Link>
       <div className="theme-hero">
-        <span className="theme-hero__art" aria-hidden="true">{data.theme.name.slice(0, 2).toLocaleUpperCase('pt-BR')}</span>
+        <ThemeArtwork artwork={data.theme.artwork} className="theme-hero__art" eager name={data.theme.name} />
         <div><span className="eyebrow">{data.theme.categoryName}</span><h1>{data.theme.name}</h1><p>{data.theme.description}</p><span className="question-count"><Icon name="bolt" />{data.theme.activeQuestionCount.toLocaleString('pt-BR')} perguntas ativas</span></div>
       </div>
 
@@ -78,7 +79,7 @@ export function ThemeDetailPage() {
 
       <article className="personal-theme-card"><div><span className="eyebrow">Seu cartão</span><h2>{profile?.displayName ?? 'Entre para acompanhar'}</h2><p>{profile ? (data.personal?.rankedMatches ? 'Seu histórico neste tema é calculado apenas pelas partidas Ranqueadas.' : 'Sua história competitiva neste tema começa na primeira Ranqueada.') : 'Ranking, descoberta histórica e Conhecimento ficam reunidos aqui.'}</p></div><div className="personal-theme-card__stats"><RankBadge knowledge={data.personal?.knowledge ?? 0} showKnowledge /><span><strong>{(data.personal?.discoveredPercentage ?? 0).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%</strong><small>descoberto</small></span><span><strong>{data.personal?.position ? `#${data.personal.position}` : '—'}</strong><small>posição</small></span></div></article>
 
-      {matchmaking.status !== 'idle' && <MatchmakingDialog onCancel={matchmaking.cancel} onClose={matchmaking.cancel} status={matchmaking.status} themeName={data.theme.name} />}
+      {matchmaking.status !== 'idle' && <MatchmakingDialog onCancel={matchmaking.cancel} onClose={matchmaking.cancel} status={matchmaking.status} theme={data.theme} />}
     </section>
   );
 }

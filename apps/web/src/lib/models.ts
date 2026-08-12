@@ -1,3 +1,5 @@
+import type { ThemeArtwork } from '@quiz-gomes/domain';
+
 export interface Category {
   id: string;
   name: string;
@@ -6,6 +8,7 @@ export interface Category {
 
 export interface ThemeSummary {
   activeQuestionCount: number;
+  artwork: ThemeArtwork;
   categoryId: string;
   categoryName: string;
   coverImageKey: string | null;
@@ -13,6 +16,10 @@ export interface ThemeSummary {
   id: string;
   name: string;
   slug: string;
+}
+
+export interface AdminThemeSummary extends ThemeSummary {
+  status: 'ACTIVE' | 'DISABLED' | 'PENDING' | 'REJECTED';
 }
 
 export interface LeaderboardEntry {

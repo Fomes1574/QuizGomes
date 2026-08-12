@@ -16,6 +16,12 @@ export interface ApiRequestOptions extends Omit<RequestInit, 'body'> {
   token?: string | null;
 }
 
+export interface ApiUploadOptions extends Omit<RequestInit, 'body'> {
+  body: Blob;
+  getToken?: (forceRefresh: boolean) => Promise<string | null>;
+  token?: string | null;
+}
+
 const AUTH_RETRY_MESSAGE = 'Não foi possível renovar sua sessão. Saia e entre novamente.';
 
 async function sendRequest(
@@ -37,6 +43,19 @@ function authRetryError(): ClientApiError {
   return new ClientApiError(401, 'AUTH_RETRY_FAILED', AUTH_RETRY_MESSAGE);
 }
 
+async function responsePayload<T>(response: Response): Promise<T> {
+  const payload = await response.json().catch(() => null) as { error?: { code?: string; details?: unknown; message?: string } } | null;
+  if (!response.ok) {
+    throw new ClientApiError(
+      response.status,
+      payload?.error?.code ?? 'UNKNOWN_ERROR',
+      payload?.error?.message ?? 'Não foi possível concluir a operação.',
+      payload?.error?.details,
+    );
+  }
+  return payload as T;
+}
+
 export async function apiRequest<T>(path: string, options: ApiRequestOptions = {}): Promise<T> {
   const { body, getToken, token, ...requestOptions } = options;
   let currentToken = token;
@@ -54,16 +73,40 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
     response = await sendRequest(path, body, currentToken, requestOptions);
     if (response.status === 401) throw authRetryError();
   }
-  const payload = await response.json().catch(() => null) as { error?: { code?: string; details?: unknown; message?: string } } | null;
-  if (!response.ok) {
-    throw new ClientApiError(
-      response.status,
-      payload?.error?.code ?? 'UNKNOWN_ERROR',
-      payload?.error?.message ?? 'Não foi possível concluir a operação.',
-      payload?.error?.details,
-    );
+  return responsePayload<T>(response);
+}
+
+async function sendUpload(
+  path: string,
+  body: Blob,
+  token: string | null | undefined,
+  options: Omit<ApiUploadOptions, 'body' | 'getToken' | 'token'>,
+): Promise<Response> {
+  const headers = new Headers(options.headers);
+  headers.set('Accept', 'application/json');
+  headers.set('Content-Type', body.type);
+  if (token !== undefined && token !== null) headers.set('Authorization', `Bearer ${token}`);
+  return fetch(path, { ...options, body, headers });
+}
+
+export async function apiUpload<T>(path: string, options: ApiUploadOptions): Promise<T> {
+  const { body, getToken, token, ...requestOptions } = options;
+  let currentToken = token;
+  if ((currentToken === undefined || currentToken === null) && getToken !== undefined) {
+    currentToken = await getToken(false);
   }
-  return payload as T;
+  let response = await sendUpload(path, body, currentToken, requestOptions);
+  if (response.status === 401 && getToken !== undefined) {
+    try {
+      currentToken = await getToken(true);
+    } catch {
+      throw authRetryError();
+    }
+    if (currentToken === null) throw authRetryError();
+    response = await sendUpload(path, body, currentToken, requestOptions);
+    if (response.status === 401) throw authRetryError();
+  }
+  return responsePayload<T>(response);
 }
 
 export function websocketUrl(path: string): string {

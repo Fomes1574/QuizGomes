@@ -27,6 +27,7 @@ export default defineConfig({
       registerType: 'autoUpdate',
       workbox: {
         cleanupOutdatedCaches: true,
+        globIgnores: ['**/create-page-*.js', '**/theme-artwork-editor-*.js'],
         navigateFallbackDenylist: [/^\/api\//],
         runtimeCaching: [
           {

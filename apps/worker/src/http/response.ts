@@ -81,8 +81,8 @@ export function corsHeaders(request: Request, allowedOrigins?: string): Headers 
     headers.set('Access-Control-Allow-Origin', origin);
     headers.set('Vary', 'Origin');
   }
-  headers.set('Access-Control-Allow-Headers', 'Authorization, Content-Type, Idempotency-Key');
-  headers.set('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
+  headers.set('Access-Control-Allow-Headers', 'Authorization, Content-Type, Idempotency-Key, If-Match');
+  headers.set('Access-Control-Allow-Methods', 'GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS');
   headers.set('Access-Control-Max-Age', '600');
   return headers;
 }

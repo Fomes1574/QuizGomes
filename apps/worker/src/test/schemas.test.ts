@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { importBatchSchema, profileInputSchema } from '../http/schemas.js';
+import { importBatchSchema, profileInputSchema, themeArtworkChoiceSchema } from '../http/schemas.js';
 
 describe('schemas de entrada', () => {
   it('normaliza nome e rejeita campos extras', () => {
@@ -36,5 +36,15 @@ describe('schemas de entrada', () => {
     };
     expect(importBatchSchema.safeParse({ questions: [{ ...base, image: { bytes: 102_399, key: 'x.webp', license: 'fixture' } }] }).success).toBe(true);
     expect(importBatchSchema.safeParse({ questions: [{ ...base, image: { bytes: 102_400, key: 'x.webp', license: 'fixture' } }] }).success).toBe(false);
+  });
+
+  it('aceita somente as escolhas exclusivas e ícones internos da arte do tema', () => {
+    expect(themeArtworkChoiceSchema.parse({ expectedVersion: 2, iconKey: 'games', kind: 'ICON' }))
+      .toEqual({ expectedVersion: 2, iconKey: 'games', kind: 'ICON' });
+    expect(themeArtworkChoiceSchema.parse({ expectedVersion: 0, kind: 'NONE' }))
+      .toEqual({ expectedVersion: 0, kind: 'NONE' });
+    expect(themeArtworkChoiceSchema.safeParse({ expectedVersion: 2, iconKey: 'emoji', kind: 'ICON' }).success).toBe(false);
+    expect(themeArtworkChoiceSchema.safeParse({ expectedVersion: 2, iconKey: 'games', kind: 'NONE' }).success).toBe(false);
+    expect(themeArtworkChoiceSchema.safeParse({ expectedVersion: -1, kind: 'NONE' }).success).toBe(false);
   });
 });

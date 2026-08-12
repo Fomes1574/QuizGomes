@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { apiRequest } from '../lib/api.js';
+import { apiRequest, apiUpload } from '../lib/api.js';
 
 function apiErrorResponse(): Response {
   return Response.json({ error: { code: 'INVALID_TOKEN', message: 'A sessão expirou ou é inválida.' } }, {
@@ -48,5 +48,28 @@ describe('cliente HTTP autenticado', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(getToken).toHaveBeenCalledTimes(1);
     expect(getToken).toHaveBeenCalledWith(true);
+  });
+
+  it('envia upload binário sem converter a imagem para JSON e preserva If-Match no retry', async () => {
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(apiErrorResponse())
+      .mockResolvedValueOnce(Response.json({ ok: true }));
+    const getToken = vi.fn().mockResolvedValue('token-renovado');
+    const image = new Blob(['webp-sintetico'], { type: 'image/webp' });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(apiUpload<{ ok: boolean }>('/api/admin/themes/theme/artwork', {
+      body: image,
+      getToken,
+      headers: { 'If-Match': '3' },
+      method: 'PUT',
+      token: 'token-em-cache',
+    })).resolves.toEqual({ ok: true });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0]?.[1]?.body).toBe(image);
+    expect(fetchMock.mock.calls[1]?.[1]?.body).toBe(image);
+    expect(new Headers(fetchMock.mock.calls[1]?.[1]?.headers).get('Content-Type')).toBe('image/webp');
+    expect(new Headers(fetchMock.mock.calls[1]?.[1]?.headers).get('If-Match')).toBe('3');
   });
 });

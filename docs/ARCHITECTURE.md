@@ -36,7 +36,7 @@ Um objeto serializa o estado de uma fila ou sala. O backend SQLite é obrigatór
 
 ### D1
 
-Core DB guarda conta, social, rankings, matches e metadados. Question repositories aceitam um `shardId`; inicialmente o binding `QUESTIONS_DB` pode apontar para o mesmo D1, mas nenhuma UI ou regra depende disso.
+Core DB guarda conta, social, rankings, matches e metadados. Imagens personalizadas pequenas de perfil/tema podem usar tabelas BLOB dedicadas, nunca colunas incorporadas às queries normais dessas entidades. Question repositories aceitam um `shardId`; inicialmente o binding `QUESTIONS_DB` pode apontar para o mesmo D1, mas nenhuma UI ou regra depende disso.
 
 ### Domain
 
@@ -65,6 +65,8 @@ Não é usada Service Account para verificar assinatura. Revogação global de t
 ## Administração
 
 `ADMIN_FIREBASE_UIDS` é uma lista no ambiente do Worker. O bootstrap cria/garante a role no D1 após login válido. Guards administrativos verificam bootstrap e/ou role persistida. Nenhuma role é derivada de email/nome, e a UI oculta é apenas conveniência visual.
+
+A arte de tema é mutável somente por ADMIN autenticado. A versão esperada integra cada escrita; zero rows alteradas representa edição concorrente e retorna conflito, em vez de sobrescrever silenciosamente outra sessão.
 
 ## Consistência e idempotência
 
@@ -100,8 +102,17 @@ O cliente envia somente READY, número da rodada, ID da pergunta e opção escol
 
 ## PWA
 
-O service worker precacheia somente shell/assets versionados. `/api/**`, Firebase auth endpoints e WebSockets usam rede e nunca cache competitivo. O app permanece navegável offline apenas no shell, com estado explícito de indisponibilidade para funções online.
+O service worker precacheia somente shell/assets versionados. `/api/**`, Firebase auth endpoints e WebSockets usam rede e nunca cache competitivo. O app permanece navegável offline apenas no shell, com estado explícito de indisponibilidade para funções online. A rota Criar e o editor de arte ADMIN são chunks lazy excluídos do precache; contas que não abrem essa área não transferem esse código.
 
 ## Armazenamento de imagens
 
-`ImageStorage` expõe leitura de metadata/URL e escrita administrativa futura. `LocalImageStorage` serve fixtures. `R2ImageStorage` é uma futura implementação; não existe binding/provisionamento agora.
+Há duas camadas intencionalmente distintas:
+
+- imagens de pergunta continuam atrás de `ImageStorage`; `LocalImageStorage` serve fixtures e nenhum R2 foi provisionado;
+- arte personalizada de tema é pequena e dinâmica, fica no `CORE_DB.theme_artwork_blobs` e possui exatamente uma linha ativa por tema.
+
+`themes` mantém somente `artwork_kind`, `artwork_icon_key`, `artwork_version` e a ponte compatível `cover_image_key`. Catálogo, detalhe e matchmaking consultam apenas esses metadados. O BLOB só é lido por `GET /api/theme-artwork/:themeId/v:version.webp`, cuja URL imutável muda em toda substituição. Versões anteriores deixam imediatamente de ser servidas e a row anterior é substituída; não existe galeria ou histórico no produto. O Time Travel interno do D1 continua sendo uma capacidade operacional do provedor, não uma restauração exposta ao usuário.
+
+O upload administrativo usa `PUT /api/admin/themes/:themeId/artwork` com WebP binário e versão esperada. O Worker revalida autenticação/role e `Content-Type`, interrompe a leitura em streaming no hard cap de 60 KB e valida RIFF/WEBP, chunks permitidos, ausência de EXIF/XMP/ICC/animação, dimensão quadrada e faixa 256–512 px. Cada tentativa usa também um token de escrita único: uma sessão atrasada não consegue substituir o BLOB de outra gravação que venceu a disputa de versão. SVG ou conteúdo executável não entra nessa rota.
+
+Ícones padrões são 16 símbolos próprios em um único sprite SVG estático. A resolução visual central é `CUSTOM → ICON → NONE/iniciais`; `ThemeArtwork` reserva proporção quadrada, faz fade após decode, usa `object-fit: cover` e retém o fallback se a imagem falhar. Catálogo usa lazy loading; detalhe e matchmaking reutilizam a mesma URL já conhecida pelo cache HTTP/memória, sem request de descoberta adicional.

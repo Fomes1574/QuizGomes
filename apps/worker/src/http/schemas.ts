@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isStandardThemeIconKey } from '@quiz-gomes/domain';
 
 export const profileInputSchema = z.object({
   displayName: z.string().trim().min(2, 'Use pelo menos 2 caracteres.').max(32, 'Use no máximo 32 caracteres.'),
@@ -9,6 +10,22 @@ export const themeSubmissionSchema = z.object({
   description: z.string().trim().min(12).max(240),
   name: z.string().trim().min(2).max(60),
 }).strict();
+
+const standardThemeIconSchema = z.string().refine(isStandardThemeIconKey, {
+  message: 'Escolha um ícone padrão disponível.',
+});
+
+export const themeArtworkChoiceSchema = z.discriminatedUnion('kind', [
+  z.object({
+    expectedVersion: z.number().int().min(0),
+    iconKey: standardThemeIconSchema,
+    kind: z.literal('ICON'),
+  }).strict(),
+  z.object({
+    expectedVersion: z.number().int().min(0),
+    kind: z.literal('NONE'),
+  }).strict(),
+]);
 
 const sourceSchema = z.object({
   kind: z.enum(['PRIMARY', 'WEB', 'BOOK', 'OTHER']).default('WEB'),

@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import type { ThemeSummary } from '../lib/models.js';
 import { Icon } from './icons.js';
+import { ThemeArtwork } from './theme-artwork.js';
 
 const accents = ['ember', 'rose', 'plum', 'copper', 'ruby'] as const;
 
@@ -13,9 +14,7 @@ function accent(theme: ThemeSummary): string {
 export function ThemeCard({ theme }: { theme: ThemeSummary }) {
   return (
     <Link className={`theme-card theme-card--${accent(theme)}`} to={`/temas/${theme.slug}`}>
-      <span className="theme-card__art" aria-hidden="true">
-        <span>{theme.name.slice(0, 2).toLocaleUpperCase('pt-BR')}</span>
-      </span>
+      <ThemeArtwork artwork={theme.artwork} className="theme-card__art" name={theme.name} />
       <span className="theme-card__body">
         <small>{theme.categoryName}</small>
         <strong>{theme.name}</strong>

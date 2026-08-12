@@ -7,7 +7,7 @@ import { PresenceHub } from './durable-objects/presence-hub.js';
 import { TicketBroker } from './durable-objects/ticket-broker.js';
 import type { Env } from './env.js';
 import { ApiError } from './http/api-error.js';
-import { readJson } from './http/body.js';
+import { readBytes, readJson } from './http/body.js';
 import {
   apiErrorResponse,
   applyCors,
@@ -16,13 +16,19 @@ import {
   json,
   withSecurityHeaders,
 } from './http/response.js';
-import { importBatchSchema, profileInputSchema, themeSubmissionSchema } from './http/schemas.js';
+import {
+  importBatchSchema,
+  profileInputSchema,
+  themeArtworkChoiceSchema,
+  themeSubmissionSchema,
+} from './http/schemas.js';
 import { QuestionRepository } from './repositories/question-repository.js';
 import { PoolStateRepository } from './repositories/pool-state-repository.js';
 import { ThemeRepository } from './repositories/theme-repository.js';
 import { UserRepository } from './repositories/user-repository.js';
 import { LiveMatchRepository, parseMatchResource } from './repositories/live-match-repository.js';
 import { QuestionImportService } from './services/question-import-service.js';
+import { inspectWebp, THEME_ARTWORK_MAX_BYTES } from './storage/webp.js';
 
 export { MatchRoom, MatchmakingQueue, PresenceHub, TicketBroker };
 
@@ -196,6 +202,97 @@ async function adminImportRoute(request: Request, env: Env): Promise<Response> {
   return json(result, { status: result.status === 'APPLIED' ? 201 : 200 });
 }
 
+function artworkMutationError(error: unknown): never {
+  if (error instanceof Error && error.message === 'THEME_NOT_FOUND') {
+    throw new ApiError(404, 'THEME_NOT_FOUND', 'Tema não encontrado.');
+  }
+  if (error instanceof Error && error.message === 'ARTWORK_VERSION_CONFLICT') {
+    throw new ApiError(409, 'ARTWORK_VERSION_CONFLICT', 'A arte deste tema foi alterada em outra sessão. Recarregue e tente novamente.');
+  }
+  if (error instanceof Error && error.message === 'INVALID_ARTWORK_ICON') {
+    throw new ApiError(400, 'INVALID_ARTWORK_ICON', 'O ícone padrão escolhido não está disponível.');
+  }
+  throw error;
+}
+
+function expectedArtworkVersion(request: Request): number {
+  const value = request.headers.get('If-Match') ?? '';
+  const match = /^(?:W\/)?"?(\d+)"?$/.exec(value.trim());
+  const version = match?.[1] === undefined ? Number.NaN : Number(match[1]);
+  if (!Number.isSafeInteger(version) || version < 0) {
+    throw new ApiError(428, 'ARTWORK_VERSION_REQUIRED', 'Recarregue o tema antes de salvar a arte.');
+  }
+  return version;
+}
+
+async function adminThemesRoute(request: Request, env: Env, url: URL): Promise<Response> {
+  const identity = await requireUser(request, env);
+  await requireAdmin(identity, env);
+  if (request.method !== 'GET') throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Método não permitido.');
+  const search = (url.searchParams.get('search') ?? '').trim().slice(0, 80);
+  return json({ themes: await new ThemeRepository(env.CORE_DB).listThemesForAdmin(search) });
+}
+
+async function adminThemeArtworkRoute(request: Request, env: Env, themeId: string): Promise<Response> {
+  const identity = await requireUser(request, env);
+  await requireAdmin(identity, env);
+  const themes = new ThemeRepository(env.CORE_DB);
+  try {
+    if (request.method === 'PATCH') {
+      const parsed = themeArtworkChoiceSchema.safeParse(await readJson(request));
+      if (!parsed.success) throw validationError(parsed.error);
+      return json({ theme: await themes.setArtworkChoice({ ...parsed.data, themeId }) });
+    }
+    if (request.method === 'PUT') {
+      if (request.headers.get('Content-Type')?.split(';', 1)[0]?.trim().toLowerCase() !== 'image/webp') {
+        throw new ApiError(415, 'ARTWORK_TYPE_INVALID', 'Envie a imagem reencodada em WebP.');
+      }
+      const data = await readBytes(request, THEME_ARTWORK_MAX_BYTES, new ApiError(
+        413,
+        'ARTWORK_TOO_LARGE',
+        'A imagem do tema deve ter no máximo 60 KB.',
+      ));
+      const dimensions = inspectWebp(data);
+      if (dimensions === null) {
+        throw new ApiError(400, 'ARTWORK_INVALID', 'A imagem precisa ser WebP quadrada, válida, sem metadata e ter de 256 a 512 px.');
+      }
+      const theme = await themes.setCustomArtwork({
+        data,
+        expectedVersion: expectedArtworkVersion(request),
+        height: dimensions.height,
+        themeId,
+        width: dimensions.width,
+      });
+      return json({ theme });
+    }
+    throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Método não permitido.');
+  } catch (error) {
+    artworkMutationError(error);
+  }
+}
+
+async function themeArtworkRoute(
+  request: Request,
+  themes: ThemeRepository,
+  themeId: string,
+  version: number,
+): Promise<Response> {
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Método não permitido.');
+  }
+  const artwork = await themes.readArtwork(themeId, version);
+  if (artwork === null) throw new ApiError(404, 'THEME_ARTWORK_NOT_FOUND', 'Arte do tema não encontrada.');
+  const etag = `"theme-artwork:${themeId}:v${version}"`;
+  const headers = new Headers({
+    'Cache-Control': 'public, max-age=31536000, immutable',
+    'Content-Length': String(artwork.byteLength),
+    'Content-Type': artwork.contentType,
+    ETag: etag,
+  });
+  if (request.headers.get('If-None-Match') === etag) return new Response(null, { headers, status: 304 });
+  return new Response(request.method === 'HEAD' ? null : artwork.data, { headers });
+}
+
 async function apiRoute(request: Request, env: Env, url: URL): Promise<Response> {
   if (!isRequestOriginAllowed(request, env.ALLOWED_ORIGINS)) {
     throw new ApiError(403, 'ORIGIN_NOT_ALLOWED', 'Origem não autorizada.');
@@ -208,8 +305,20 @@ async function apiRoute(request: Request, env: Env, url: URL): Promise<Response>
   if (url.pathname === '/api/realtime/tickets' && request.method === 'POST') return createRealtimeTicket(request, env);
   if (url.pathname.startsWith('/api/realtime/') && request.headers.get('Upgrade') !== null) return realtimeRoute(request, env, url);
   if (url.pathname === '/api/admin/questions/import') return adminImportRoute(request, env);
+  if (url.pathname === '/api/admin/themes') return adminThemesRoute(request, env, url);
+
+  const adminArtworkMatch = /^\/api\/admin\/themes\/([a-z0-9_-]{1,128})\/artwork$/i.exec(url.pathname);
+  if (adminArtworkMatch?.[1] !== undefined) {
+    return adminThemeArtworkRoute(request, env, decodeURIComponent(adminArtworkMatch[1]));
+  }
 
   const themes = new ThemeRepository(env.CORE_DB);
+  const artworkMatch = /^\/api\/theme-artwork\/([a-z0-9_-]{1,128})\/v([1-9]\d*)\.webp$/i.exec(url.pathname);
+  if (artworkMatch?.[1] !== undefined && artworkMatch[2] !== undefined) {
+    const version = Number(artworkMatch[2]);
+    if (!Number.isSafeInteger(version)) throw new ApiError(404, 'NOT_FOUND', 'Rota não encontrada.');
+    return themeArtworkRoute(request, themes, decodeURIComponent(artworkMatch[1]), version);
+  }
   if (url.pathname === '/api/categories' && request.method === 'GET') return json({ categories: await themes.listCategories() });
   if (url.pathname === '/api/themes' && request.method === 'GET') {
     const search = (url.searchParams.get('search') ?? '').trim().slice(0, 80);
