@@ -31,7 +31,9 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 - [x] 2026-08-11 — fluxo principal WebSocket real aprovado com dois usuários: matchmaking Casual, cinco perguntas EASY, respostas, pontuação e resultado.
 - [ ] Milestone 8 — cenários reais de queda/reconexão e liberação de locks ainda não foram declarados como aprovados.
 - [x] 2026-08-11 — Milestone 8.5 — Gameplay Presentation Polish implementado e validado localmente, sem alteração de gameplay ou rede.
-- [ ] Milestone 8.5 — repetir uma partida real no desktop e no celular após o deploy automático.
+- [x] 2026-08-11 — reteste visual real do Milestone 8.5 aprovado pelo proprietário: timer, layout, animações e tela de resultado satisfatórios em produção.
+- [x] 2026-08-11 — calibração final do Milestone 8.5 implementada localmente com resultado em 2.000 ms e apresentação da próxima pergunta em 1.600 ms.
+- [ ] Milestone 8.5 — repetir uma partida real de cinco perguntas após o deploy da calibração `2.000 / 1.600`.
 - [ ] Milestone 9 — social e desafio direto.
 - [ ] Milestone 10 — assíncrono selado e revelação progressiva.
 - [ ] Milestone 11 — criação/moderação/import/admin.
@@ -55,6 +57,7 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 14. **401 de Firebase tem uma única recuperação.** O cliente reutiliza o ID Token atual uma vez, força `getIdToken(true)` após o primeiro 401 e repete exatamente uma vez. Uma segunda rejeição encerra o fluxo com mensagem clara; assinatura RS256, `kid`, `aud`, `iss`, `exp`, `iat`, `auth_time` e `sub` continuam obrigatórios no Worker.
 15. **Conteúdo de smoke real é isolado e temporário.** Categoria, tema, pool e 30 perguntas usam IDs reservados, texto inequívoco e a flag `SYNTHETIC_SMOKE_TEST`; Questions migra antes de Core. A limpeza fica fora do pipeline até autorização posterior, remove apenas o conteúdo marcado e preserva referências históricas com tombstones desativados.
 16. **Polimento da partida não muda autoridade.** O deadline e `remainingMs` do Durable Object continuam sendo a única referência; CSS anima apenas a barra, React atualiza o número inteiro isoladamente e o cliente envia `ROUND_READY` somente após a apresentação local, sem calcular score, resposta ou timeout.
+17. **Cadência local respeita o piso do servidor.** `roundPresentationDelay()` usa o maior valor entre `MATCH_ROUND_TRANSITION_MS` e `payload.transitionMs`; a calibração aumenta somente `ROUND_RESULT` para 2.000 ms e a apresentação para 1.600 ms. `QUESTION_DURATION_MS` permanece em 10.000 ms e só começa depois do READY dos dois jogadores.
 
 ## Descobertas e riscos
 
@@ -83,7 +86,7 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 - Preparação de deploy: origem própria, localhost explícito, wildcard/origem externa e bloqueio do script fora do Workers Builds/`main`; migrations vazias devem preservar isolamento core/questions.
 - Incidente de autenticação: retry único após 401 com refresh forçado, segunda falha terminal, saída real do onboarding, ADMIN posterior à autenticação, diagnóstico de algoritmo/chave/assinatura/claims sem token ou PII e fixture X.509 sintética no runtime Workers.
 - Dataset de smoke: uma categoria interna, um tema, somente EASY, 30 slots densos, quatro opções, distribuição 8/8/7/7, nenhuma imagem/fonte/trivia e flag editorial exata; limpeza deve preservar todo histórico.
-- M8.5: timer sem rerender de alta frequência, segundo inteiro sincronizado, pausa por `phaseRemainingMs`, retomada por `remainingMs`, READY após 900 ms, título de rodada único, feedback acessível, resultado com dois perfis e `prefers-reduced-motion`.
+- M8.5: timer sem rerender de alta frequência, segundo inteiro sincronizado, pausa por `phaseRemainingMs`, retomada por `remainingMs`, resultado por 2.000 ms, READY após apresentação de 1.600 ms, título de rodada único, feedback escalonado, resultado com dois perfis e `prefers-reduced-motion`.
 
 ## Diário de execução
 
@@ -268,7 +271,7 @@ Validação executada antes da publicação:
 - `npm audit --audit-level=high`: 0 vulnerabilidades;
 - auditoria de secrets: nenhuma credencial, chave privada, Service Account, token, JWT, arquivo real de ambiente ou URL autenticada; somente a configuração Web pública já autorizada do Firebase.
 
-### 2026-08-11 — Milestone 8.5 — Gameplay Presentation Polish
+### 2026-08-11 — Milestone 8.5 — Gameplay Presentation Polish inicial
 
 Evidência real confirmada pelo proprietário:
 
@@ -294,7 +297,34 @@ Validação executada antes da publicação:
 - 4 arquivos/10 testes no runtime Workers/WebSocket aprovados sem alteração;
 - builds do domínio, PWA com realtime ativado e Worker aprovados;
 - `npm audit --audit-level=high`: 0 vulnerabilidades; auditoria dos arquivos alterados sem credenciais, chaves privadas, tokens ou JWTs;
-- o reteste visual real no desktop e no celular permanece pendente do deploy automático; Milestone 9 não foi iniciado.
+- naquele checkpoint, o reteste visual real ainda dependia do deploy automático; ele foi posteriormente aprovado pelo proprietário e está registrado na calibração abaixo. Milestone 9 não foi iniciado.
+
+### 2026-08-11 — Milestone 8.5 — calibração final de cadência
+
+Evidência real confirmada pelo proprietário:
+
+- o polimento inicial melhorou consideravelmente a experiência em produção; timer fluido, layout, animações e tela de resultado foram aprovados;
+- o intervalo entre uma resposta e a próxima pergunta ainda não dava tempo suficiente para absorver alternativa correta, escolhas, veredito, pontos e placar;
+- a calibração escolhida para o próximo teste real é `2.000 / 1.600`; a alternativa `2.000 / 2.000` permanece apenas como decisão posterior ao reteste, não como regra implementada.
+
+Implementação concluída:
+
+- `LIVE_ROUND_RESULT_MS` passou de 1.200 para 2.000 ms sem atrasar o cálculo autoritativo já concluído pelo servidor;
+- `MATCH_ROUND_TRANSITION_MS` passou de 900 para 1.600 ms; a mesma constante alimenta o timeout de READY e a duração CSS total, incluindo entrada, permanência e saída;
+- `LIVE_ROUND_TRANSITION_MS` permanece em 450 ms no payload e `roundPresentationDelay()` continua escolhendo `max(1.600, payload.transitionMs)`, sem reduzir uma exigência maior do servidor;
+- veredito local ocupa aproximadamente 0–200 ms, avatar permitido 200–450 ms, placar e `+N` 450–700 ms; de 700 a 2.000 ms o resultado permanece estável e legível;
+- o score exibido é retido localmente até 450 ms, mas cálculo, persistência e payload autoritativos não são atrasados nem alterados;
+- `prefers-reduced-motion` continua removendo movimento não essencial, enquanto os intervalos funcionais de 2.000 e 1.600 ms permanecem para sincronizar os clientes;
+- `QUESTION_DURATION_MS` continua exatamente em 10.000 ms e só nasce no servidor após os dois `ROUND_READY`; nenhum milissegundo da apresentação reduz a janela de resposta;
+- nenhuma alteração foi feita em scoring, XP, Conhecimento, matchmaking, quantidade de perguntas, WebSockets, Durable Objects, reconexão, regra de 7 segundos ou sigilo do adversário.
+
+Validação executada antes da publicação:
+
+- lint e typecheck dos três workspaces aprovados;
+- 18 arquivos/103 testes unitários aprovados, incluindo resultado exato de 2.000 ms, piso de apresentação, READY único aos 1.600 ms e revelação do placar aos 450 ms;
+- 4 arquivos/10 testes no runtime Workers/WebSocket aprovados sem alteração de protocolo;
+- builds do domínio, PWA com realtime ativado e Worker aprovados;
+- o reteste real de cinco perguntas com `2.000 / 1.600` permanece pendente do deploy automático; Milestone 9 não foi iniciado.
 
 ## Critério de saída desta execução
 
@@ -303,4 +333,4 @@ Validação executada antes da publicação:
 - build Worker/PWA e migrations do zero aprovados;
 - documentação separando evidência local, simulada e real;
 - publicação em commits lógicos na `main` pública, seguida por nova auditoria do conteúdo remoto;
-- deploy, health, autenticação, onboarding, ADMIN e fluxo principal WebSocket reais confirmados; cenários de reconexão/locks e aprovação visual desktop/mobile ainda pendentes, sem preview de branch, R2 ou produto pago.
+- deploy, health, autenticação, onboarding, ADMIN, fluxo principal WebSocket e polimento visual inicial reais confirmados; cenários de reconexão/locks e reteste real da cadência `2.000 / 1.600` ainda pendentes, sem preview de branch, R2 ou produto pago.
