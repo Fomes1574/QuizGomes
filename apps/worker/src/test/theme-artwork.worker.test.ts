@@ -80,6 +80,11 @@ describe('arte dinâmica de tema no runtime Workers', () => {
       data: imageBytes(), expectedVersion: 2, height: 512, themeId: THEME_ID, width: 512,
     });
     expect(firstImage.artwork).toMatchObject({ kind: 'CUSTOM', version: 3 });
+    await expect(repository.setArtworkChoice({ expectedVersion: 2, kind: 'NONE', themeId: THEME_ID }))
+      .rejects.toThrow('ARTWORK_VERSION_CONFLICT');
+    expect(await env.CORE_DB.prepare(
+      'SELECT version, byte_length FROM theme_artwork_blobs WHERE theme_id = ?1',
+    ).bind(THEME_ID).first()).toEqual({ byte_length: imageBytes().byteLength, version: 3 });
     await expect(repository.setCustomArtwork({
       data: new Uint8Array([1, 2, 3]).buffer,
       expectedVersion: 2,
@@ -113,16 +118,79 @@ describe('arte dinâmica de tema no runtime Workers', () => {
   });
 
   it('impede estados inválidos mesmo em escrita direta no D1', async () => {
-    await expect(env.CORE_DB.prepare(
+    const invalidStates: Array<{
+      iconKey: string | null;
+      id: string;
+      kind: string;
+      version: number;
+    }> = [
+      { iconKey: null, id: 'icon-without-key', kind: 'ICON', version: 0 },
+      { iconKey: 'unknown', id: 'icon-with-invalid-key', kind: 'ICON', version: 0 },
+      { iconKey: 'science', id: 'none-with-key', kind: 'NONE', version: 0 },
+      { iconKey: null, id: 'custom-without-version', kind: 'CUSTOM', version: 0 },
+    ];
+
+    for (const state of invalidStates) {
+      const id = `theme-synthetic-invalid-${state.id}-test`;
+      await expect(env.CORE_DB.prepare(
+        `INSERT INTO themes (
+           id, category_id, slug, name, description, status, origin, question_shard_id,
+           artwork_kind, artwork_icon_key, artwork_version
+         ) VALUES (?1, ?2, ?3, ?4, 'Fixture inválida.', 'PENDING', 'OFFICIAL',
+                   'questions-01', ?5, ?6, ?7)`,
+      ).bind(id, CATEGORY_ID, id, `Tema sintético inválido ${state.id}`, state.kind, state.iconKey, state.version).run())
+        .rejects.toThrow(/CHECK constraint failed/);
+    }
+
+    const customThemeId = 'theme-synthetic-artwork-constraints-test';
+    await env.CORE_DB.prepare(
       `INSERT INTO themes (
          id, category_id, slug, name, description, status, origin, question_shard_id,
-         artwork_kind, artwork_icon_key, artwork_version
-       ) VALUES (?1, ?2, ?3, ?4, 'Fixture inválida.', 'PENDING', 'OFFICIAL', 'questions-01', 'ICON', NULL, 0)`,
+         artwork_kind, artwork_version
+       ) VALUES (?1, ?2, ?3, 'Tema sintético de constraints', 'Fixture sintética.',
+                 'PENDING', 'OFFICIAL', 'questions-01', 'CUSTOM', 1)`,
+    ).bind(customThemeId, CATEGORY_ID, customThemeId).run();
+
+    const insertBlob = (overrides: {
+      byteLength?: number;
+      contentType?: string;
+      data?: ArrayBuffer;
+      height?: number;
+      version?: number;
+      width?: number;
+    } = {}) => env.CORE_DB.prepare(
+      `INSERT INTO theme_artwork_blobs (
+         theme_id, version, content_type, width, height, byte_length, image_data
+       ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`,
     ).bind(
-      'theme-synthetic-invalid-artwork-test',
-      CATEGORY_ID,
-      'theme-synthetic-invalid-artwork-test',
-      'Tema sintético inválido de arte',
-    ).run()).rejects.toThrow('Invalid standard artwork icon key');
+      customThemeId,
+      overrides.version ?? 1,
+      overrides.contentType ?? 'image/webp',
+      overrides.width ?? 512,
+      overrides.height ?? 512,
+      overrides.byteLength ?? 1,
+      overrides.data ?? new Uint8Array([0]).buffer,
+    ).run();
+
+    await expect(insertBlob({ contentType: 'image/png' })).rejects.toThrow(/CHECK constraint failed/);
+    await expect(insertBlob({ height: 255, width: 255 })).rejects.toThrow(/CHECK constraint failed/);
+    await expect(insertBlob({ height: 511 })).rejects.toThrow(/CHECK constraint failed/);
+    await expect(insertBlob({ byteLength: 61_441 })).rejects.toThrow(/CHECK constraint failed/);
+    await expect(insertBlob({ byteLength: 2 })).rejects.toThrow(/CHECK constraint failed/);
+    await expect(insertBlob({ version: 2 })).rejects.toThrow(/FOREIGN KEY constraint failed/);
+
+    await insertBlob();
+    await expect(insertBlob()).rejects.toThrow(/UNIQUE constraint failed/);
+    await expect(env.CORE_DB.prepare(
+      `UPDATE themes
+          SET artwork_kind = 'ICON', artwork_icon_key = 'science', artwork_version = 2
+        WHERE id = ?1`,
+    ).bind(customThemeId).run()).rejects.toThrow(/CHECK constraint failed|FOREIGN KEY constraint failed/);
+    expect(await env.CORE_DB.prepare(
+      'SELECT artwork_kind, artwork_version FROM themes WHERE id = ?1',
+    ).bind(customThemeId).first()).toEqual({ artwork_kind: 'CUSTOM', artwork_version: 1 });
+    expect(await env.CORE_DB.prepare(
+      'SELECT artwork_kind, version, COUNT(*) AS total FROM theme_artwork_blobs WHERE theme_id = ?1',
+    ).bind(customThemeId).first()).toEqual({ artwork_kind: 'CUSTOM', total: 1, version: 1 });
   });
 });

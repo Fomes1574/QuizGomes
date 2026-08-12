@@ -191,21 +191,21 @@ export class ThemeRepository {
     const nextVersion = input.expectedVersion + 1;
     const results = await this.db.batch([
       this.db.prepare(
+        `DELETE FROM theme_artwork_blobs
+          WHERE theme_id = ?1
+            AND EXISTS (
+              SELECT 1 FROM themes
+               WHERE id = ?1 AND artwork_version = ?2
+            )`,
+      ).bind(input.themeId, input.expectedVersion),
+      this.db.prepare(
         `UPDATE themes
             SET artwork_kind = ?1, artwork_icon_key = ?2, artwork_version = ?3,
                 cover_image_key = NULL, updated_at = CURRENT_TIMESTAMP
           WHERE id = ?4 AND artwork_version = ?5`,
       ).bind(input.kind, iconKey, nextVersion, input.themeId, input.expectedVersion),
-      this.db.prepare(
-        `DELETE FROM theme_artwork_blobs
-          WHERE theme_id = ?1
-            AND EXISTS (
-              SELECT 1 FROM themes
-               WHERE id = ?1 AND artwork_version = ?2 AND artwork_kind = ?3
-            )`,
-      ).bind(input.themeId, nextVersion, input.kind),
     ]);
-    await this.assertArtworkUpdated(input.themeId, results[0]?.meta.changes ?? 0);
+    await this.assertArtworkUpdated(input.themeId, results[1]?.meta.changes ?? 0);
     const theme = await this.findThemeForAdmin(input.themeId);
     if (theme === null) throw new Error('THEME_NOT_FOUND');
     return theme;

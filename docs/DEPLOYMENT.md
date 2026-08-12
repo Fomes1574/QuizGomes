@@ -1,6 +1,6 @@
 # Deployment
 
-Atualizado em 11 de agosto de 2026. O destino é um único Cloudflare Worker que serve API, PWA e Durable Objects em `workers.dev`, usando somente **Workers Free**.
+Atualizado em 12 de agosto de 2026. O destino é um único Cloudflare Worker que serve API, PWA e Durable Objects em `workers.dev`, usando somente **Workers Free**.
 
 Se o painel solicitar cartão, billing, Workers Paid, upgrade ou qualquer produto pago, cancele e pare. Não use deploy temporário, não crie R2 e não habilite recursos ausentes deste documento.
 
@@ -74,7 +74,7 @@ O root `/` é intencional. É nele que ficam `package-lock.json`, o `package.jso
 - `apps/web`;
 - `apps/worker`.
 
-O build executa `npm ci` e depois `npm run check`, que inclui lint, typecheck, todos os testes e os três builds. O deploy só é liberado quando `WORKERS_CI=1` e `WORKERS_CI_BRANCH=main`; em seguida aplica migrations D1 remotas pendentes e executa `wrangler deploy`. Nenhum script de produção referencia a pasta `seeds`.
+O build executa `npm ci` e depois `npm run check`, que inclui lint, typecheck, todos os testes, a validação isolada das migrations D1 e os três builds. O deploy só é liberado quando `WORKERS_CI=1` e `WORKERS_CI_BRANCH=main`; imediatamente antes de tocar o D1 remoto, repete o gate de migrations, aplica somente versões pendentes e executa `wrangler deploy`. Nenhum script de produção referencia a pasta `seeds`.
 
 Desative builds de branches não produtivas. Uma versão de preview usaria os mesmos bindings D1 reais e não existe um ambiente D1 separado autorizado para isso.
 
@@ -110,6 +110,7 @@ O evento nunca contém ID Token, refresh token, cookie, UID, email, payload ou c
 O pipeline executa, nessa ordem e antes do deploy:
 
 ```bash
+npm run test:migrations
 npm run db:migrate:remote
 npm run deploy:cloudflare -w @quiz-gomes/worker
 ```
@@ -117,9 +118,20 @@ npm run deploy:cloudflare -w @quiz-gomes/worker
 O primeiro comando aplica somente migrations pendentes:
 
 - `QUESTIONS_DB`: `0001_questions.sql` e `0002_synthetic_smoke_test.sql`;
-- `CORE_DB`: `0001_core.sql`, `0002_live_matches.sql` e `0003_synthetic_smoke_test.sql`.
+- `CORE_DB`: `0001_core.sql`, `0002_live_matches.sql`, `0003_synthetic_smoke_test.sql` e `0004_theme_artwork.sql`.
 
-Questions é aplicado primeiro para que o tema temporário só fique visível depois que seu pool estiver pronto. Wrangler registra o histórico em `d1_migrations`; retries não reaplicam versões concluídas. Se uma migration falhar, o deploy não começa. Migrations são forward-only e arquivos aplicados nunca devem ser reescritos.
+Questions é aplicado primeiro para que o tema temporário só fique visível depois que seu pool estiver pronto. Wrangler registra o histórico em `d1_migrations`; retries não reaplicam versões concluídas. Se uma migration falhar, o D1 reverte integralmente aquela migration, preserva as anteriores e o deploy não começa. Arquivos já aplicados são imutáveis e qualquer correção posterior é forward-only. Uma migration que falhou e não foi registrada, como a primeira tentativa remota da `0004_theme_artwork.sql`, continua pendente e deve ser corrigida no próprio arquivo antes do retry — não recebe uma compensação vazia ou manual.
+
+`npm run test:migrations` usa a versão fixada do Wrangler e não acessa Cloudflare. O gate:
+
+- lê e passa todas as migrations pelo splitter SQL exportado pelo Wrangler, incluindo o statement de tracking;
+- exige LF e bloqueia `CREATE TRIGGER`, pois compound statements continuam sujeitos a diferenças entre o splitter local e o parser multi-statement do endpoint D1 `/query` usado por migrations remotas;
+- aplica Core `0001–0004` em banco vazio;
+- aplica `0001–0003`, verifica o estado exato e só então aplica `0004`;
+- inspeciona colunas, índice e FK composta, e tenta estados inválidos de metadata/BLOB;
+- injeta uma migration temporária que falha depois de criar/escrever e comprova rollback de schema e de `d1_migrations`.
+
+Esse gate remove a classe conhecida de SQL remoto frágil e testa o runtime D1 local real, sem mock. Ele não reproduz o parser hospedado do endpoint `/query` e, portanto, não substitui o smoke remoto automático do Workers Build. Não cole SQL no Dashboard para contornar uma falha: o retry da pipeline GitHub → Workers Builds → migrations → deploy permanece a única fonte de verdade.
 
 Os únicos comandos de seed contêm `:local` no nome e não fazem parte de `build:cloudflare` nem de `deploy:cloudflare`. O conteúdo temporário de produção usa migrations próprias, IDs reservados e a flag `SYNTHETIC_SMOKE_TEST`; ele não reutiliza os seeds de desenvolvimento. Não cole SQL de fixture no Dashboard D1.
 
@@ -129,6 +141,7 @@ Antes de publicar mudanças de deployment:
 
 ```bash
 npm run check
+npm run test:migrations
 npm run db:migrate:local
 ```
 
@@ -165,7 +178,8 @@ A limpeza já está preparada em `apps/worker/maintenance/synthetic-smoke-test`,
 ## Rollback
 
 - código: implantar um commit anterior validado;
-- schema: criar migration corretiva forward-only, nunca editar uma aplicada;
+- schema já aplicado: criar migration corretiva forward-only, nunca editar uma aplicada;
+- migration que falhou e não consta em `d1_migrations`: corrigir o mesmo arquivo pendente e deixar a pipeline tentar novamente;
 - conteúdo: desativar pergunta/tema por status, sem exclusão destrutiva;
 - resultados: preservar o ledger idempotente durante retries.
 
@@ -181,6 +195,13 @@ Não há binding, bucket, script ou permissão de R2 neste deployment. A camada 
 - <https://developers.cloudflare.com/workers/ci-cd/builds/build-branches/>
 - <https://developers.cloudflare.com/workers/ci-cd/builds/limits-and-pricing/>
 - <https://developers.cloudflare.com/d1/reference/migrations/>
+- <https://developers.cloudflare.com/d1/wrangler-commands/>
+- <https://developers.cloudflare.com/d1/worker-api/d1-database/>
+- <https://developers.cloudflare.com/api/resources/d1/subresources/database/methods/query/>
+- <https://github.com/cloudflare/workers-sdk/issues/4326>
+- <https://github.com/cloudflare/workers-sdk/issues/4727>
+- <https://github.com/cloudflare/workers-sdk/issues/14991>
+- <https://github.com/cloudflare/workers-sdk/releases/tag/wrangler%404.121.0>
 - <https://developers.cloudflare.com/fundamentals/api/reference/permissions/>
 - <https://developers.cloudflare.com/workers/platform/pricing/>
 - <https://developers.cloudflare.com/workers/runtime-apis/web-crypto/>
