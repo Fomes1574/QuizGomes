@@ -113,7 +113,7 @@ describe('interface de partida', () => {
     expect(document.querySelector('.status-dot--answered')).toBeInTheDocument();
   });
 
-  it('revela o feedback local e só posiciona o avatar adversário quando o score já prova acerto', () => {
+  it('revela o feedback seguro e atualiza o placar somente na etapa de 450 ms', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-08-10T12:00:00Z'));
     const view = render(<MatchScreen
@@ -145,5 +145,17 @@ describe('interface de partida', () => {
     expect(screen.getByLabelText('17 pontos ganhos')).toHaveTextContent('+17');
     expect(screen.getByRole('button', { name: /C1 — correta — resposta correta do adversário/ })).toBeDisabled();
     expect(screen.getAllByLabelText('Foto de Ana')).toHaveLength(2);
+    expect(screen.getByText('20')).toBeInTheDocument();
+    expect(screen.getByText('10')).toBeInTheDocument();
+    expect(screen.queryByText('37')).not.toBeInTheDocument();
+    expect(screen.queryByText('27')).not.toBeInTheDocument();
+
+    await act(async () => vi.advanceTimersByTimeAsync(449));
+    expect(screen.queryByText('37')).not.toBeInTheDocument();
+    expect(screen.queryByText('27')).not.toBeInTheDocument();
+
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+    expect(screen.getByText('37')).toBeInTheDocument();
+    expect(screen.getByText('27')).toBeInTheDocument();
   });
 });

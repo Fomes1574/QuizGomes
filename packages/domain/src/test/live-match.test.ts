@@ -211,13 +211,16 @@ describe('partida simultânea autoritativa', () => {
     expect(state.pendingOutcome).toEqual({ kind: 'VOID', penalizedSeat: 2, reason: 'INDIVIDUAL_ABANDONMENT' });
   });
 
-  it('mantém o resultado visível por 1,2 segundo antes da próxima pergunta', () => {
+  it('mantém o resultado visível por 2 segundos exatos antes da próxima pergunta', () => {
     const started = startFirstRound();
     const deadline = started.state.phaseDeadlineMs ?? 0;
     let state = command(started.state, { type: 'ALARM' }, deadline);
     const revealEnds = state.phaseDeadlineMs ?? 0;
+    expect(LIVE_ROUND_RESULT_MS).toBe(2_000);
     expect(revealEnds).toBe(deadline + LIVE_ROUND_RESULT_MS);
     state = command(state, { type: 'ALARM' }, revealEnds - 1);
     expect(state.phase).toBe('ROUND_RESULT');
+    state = command(state, { type: 'ALARM' }, revealEnds);
+    expect(state.phase).toBe('ROUND_READY');
   });
 });

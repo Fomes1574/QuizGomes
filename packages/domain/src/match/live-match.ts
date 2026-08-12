@@ -5,7 +5,7 @@ import { QUESTION_DURATION_MS, remainingAt, scoreAnswer } from './scoring.js';
 import type { Difficulty, MatchMode } from '../types.js';
 
 export const LIVE_PREPARATION_MS = 3_000;
-export const LIVE_ROUND_RESULT_MS = 1_200;
+export const LIVE_ROUND_RESULT_MS = 2_000;
 export const LIVE_ROUND_TRANSITION_MS = 450;
 
 export type LiveSeat = 1 | 2;

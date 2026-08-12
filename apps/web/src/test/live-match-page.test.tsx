@@ -65,7 +65,7 @@ describe('página da partida em tempo real', () => {
     vi.useRealTimers();
   });
 
-  it('envia ROUND_READY uma única vez somente ao fim da apresentação de 900 ms', async () => {
+  it('envia ROUND_READY uma única vez somente ao fim da apresentação de 1.600 ms', async () => {
     render(
       <MemoryRouter initialEntries={['/partida/room-1']}>
         <Routes>
@@ -99,7 +99,7 @@ describe('página da partida em tempo real', () => {
     expect(screen.getAllByText('PERGUNTA')).toHaveLength(1);
     expect(socket?.send).not.toHaveBeenCalledWith(JSON.stringify({ roundNumber: 1, type: 'ROUND_READY' }));
 
-    await act(async () => vi.advanceTimersByTimeAsync(899));
+    await act(async () => vi.advanceTimersByTimeAsync(1_599));
     expect(socket?.send).not.toHaveBeenCalledWith(JSON.stringify({ roundNumber: 1, type: 'ROUND_READY' }));
 
     await act(async () => vi.advanceTimersByTimeAsync(1));

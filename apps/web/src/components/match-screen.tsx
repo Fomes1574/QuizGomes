@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState, type CSSProperties } from 'react';
 import { Avatar } from './avatar.js';
 
 const OPTION_LABELS = ['A', 'B', 'C', 'D'] as const;
+const ROUND_SCORE_REVEAL_MS = 450;
 
 interface MatchParticipantView {
   frameId?: string | null;
@@ -144,6 +145,10 @@ export function MatchScreen({
   const [localSelected, setLocalSelected] = useState<number | null>(selectedOption ?? resolution?.viewer.selectedOption ?? null);
   const [expiredDeadline, setExpiredDeadline] = useState<number | null>(null);
   const [opponentScoreAtRoundStart] = useState(opponentScore);
+  const [displayedScores, setDisplayedScores] = useState(() => ({
+    opponent: opponentScore,
+    player: playerScore,
+  }));
   const selected = resolution?.viewer.selectedOption ?? selectedOption ?? localSelected;
   const resolved = resolution !== undefined;
   const visuallyExpired = !paused && (expiredDeadline === deadlineMs || remainingMs <= 0);
@@ -151,6 +156,18 @@ export function MatchScreen({
     ? resolution.correctOption
     : null;
   const handleExpire = useCallback(() => setExpiredDeadline(deadlineMs), [deadlineMs]);
+
+  useEffect(() => {
+    if (!resolved) return undefined;
+    const timer = window.setTimeout(() => {
+      setDisplayedScores((current) => (
+        current.opponent === opponentScore && current.player === playerScore
+          ? current
+          : { opponent: opponentScore, player: playerScore }
+      ));
+    }, ROUND_SCORE_REVEAL_MS);
+    return () => window.clearTimeout(timer);
+  }, [opponentScore, playerScore, resolved]);
 
   return (
     <main className={`match-screen${resolved ? ' match-screen--resolved' : ''}${paused ? ' match-screen--paused' : ''}`}>
@@ -166,14 +183,14 @@ export function MatchScreen({
           </span>
           <span className="match-scoreboard__copy">
             <small>{opponent.name}</small>
-            <strong aria-live="polite" key={opponentScore}>{opponentScore}</strong>
+            <strong aria-live="polite" key={displayedScores.opponent}>{displayedScores.opponent}</strong>
           </span>
         </div>
         {round !== undefined && <span className="round-counter">PERGUNTA {round.number} / {round.total}</span>}
         <div className="player-chip">
           <span className="match-scoreboard__copy">
             <small>Você</small>
-            <strong aria-live="polite" key={playerScore}>{playerScore}</strong>
+            <strong aria-live="polite" key={displayedScores.player}>{displayedScores.player}</strong>
             {resolved && resolution.viewer.roundScore > 0 && (
               <span aria-label={`${resolution.viewer.roundScore} pontos ganhos`} className="score-gain">
                 +{resolution.viewer.roundScore}
