@@ -37,6 +37,7 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 - [x] 2026-08-11 — calibração `2.400 / 1.900` e revelação autoritativa das duas escolhas implementadas e validadas localmente.
 - [ ] Milestone 8.5 — repetir uma partida Fácil real em dois usuários após o deploy de `2.400 / 1.900`, cobrindo acerto, erro e timeout.
 - [x] 2026-08-12 — sistema unificado de arte dos temas implementado e validado localmente, com ícones próprios, upload ADMIN em D1 e auditoria de carregamento.
+- [x] 2026-08-12 — falha remota da migration de arte isolada no parser multi-statement do D1; `0004` pendente tornada robusta sem triggers e coberta por gate pré-deploy.
 - [ ] Milestone 8.5 — smoke real do sistema de arte após o deploy: ícone, imagem, iniciais, troca/remoção, claro/escuro, catálogo, tema e matchmaking.
 - [ ] Milestone 9 — social e desafio direto.
 - [ ] Milestone 10 — assíncrono selado e revelação progressiva.
@@ -64,6 +65,7 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 17. **Cadência local respeita o piso do servidor.** `roundPresentationDelay()` usa o maior valor entre `MATCH_ROUND_TRANSITION_MS` e `payload.transitionMs`; a calibração atual usa `ROUND_RESULT` de 2.400 ms e apresentação de 1.900 ms. `QUESTION_DURATION_MS` permanece em 10.000 ms e só começa depois do READY dos dois jogadores.
 18. **Escolhas são reveladas somente após resolução autoritativa.** Durante `ANSWERING`, a projeção informa apenas se o adversário respondeu. Em `ROUND_RESULT` ou estado equivalente já resolvido, `resolution` recebe do estado do MatchRoom as opções selecionadas por ambos, inclusive erro ou `null` por timeout; o cliente nunca deriva a escolha adversária pelo score.
 19. **Arte de tema é uma união exclusiva e versionada.** `ICON`, `CUSTOM` e `NONE` não coexistem. SVG padrão é estático/reutilizável; WebP personalizado ocupa uma única row BLOB separada no Core D1. Catálogo nunca lê o BLOB, URL pública contém versão, alteração exige versão esperada e somente ADMIN pode gravar.
+20. **Migrations remotas D1 não usam triggers compostos.** O endpoint `/query` recebe a migration inteira e seu parser pode truncar corpos `BEGIN … SELECT CASE … END; END`. A `0004` usa `CHECK`, chave única, FK composta e batches transacionais; o pipeline bloqueia `CREATE TRIGGER`, valida parse/exec/upgrade/rollback localmente e mantém o Workers Build remoto como smoke definitivo.
 
 ## Descobertas e riscos
 
@@ -80,6 +82,8 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 - O tema sintético será referenciado pelas partidas reais de smoke. Por isso, a limpeza futura não pode apagar o tema quando houver histórico: perguntas/pool são removidos, catálogo é desativado e o registro mínimo permanece como tombstone para não tocar em partidas, usuários ou resultados.
 - A projeção simultânea continua sem expor `opponent.selectedOption`, correção ou resposta correta durante `ANSWERING`. A revelação das escolhas certa ou errada existe exclusivamente dentro de `resolution`, depois que `resolveRound()` já produziu o estado autoritativo; score não é usado para inferir alternativa.
 - `coverImageKey` existia no modelo, mas não possuía resolução HTTP ligada aos temas: migrations/seeds atuais usam `NULL` e `LocalImageStorage` atende somente fixtures de perguntas. A arte dinâmica passou a ter endpoint próprio; `coverImageKey` permanece apenas como ponte compatível, sem URL inventada.
+- Wrangler `4.120.1` separa migrations localmente antes do `db.batch()`, mas envia a migration remota inteira, junto do tracking, para o endpoint D1 `/query`. O primeiro `SELECT CASE … END` sem parênteses do trigger `validate_theme_artwork_blob_insert` foi interpretado como fim do trigger e chegou incompleto ao SQLite remoto; `PRAGMA`, `RAISE` isolado e CRLF não foram a causa. A `4.121.0` não contém correção de migration/parser/trigger e não foi adotada.
+- A documentação D1 garante rollback da migration que falha. Como a tentativa da `0004` não foi registrada, corrigir a própria `0004` preserva produção em `0003`, instalações vazias e o princípio de nunca reescrever uma migration já aplicada. O próximo Workers Build é a confirmação remota; teste D1 local não substitui esse smoke.
 
 ## Testes requeridos por marco
 
@@ -95,6 +99,7 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 - Dataset de smoke: uma categoria interna, um tema, somente EASY, 30 slots densos, quatro opções, distribuição 8/8/7/7, nenhuma imagem/fonte/trivia e flag editorial exata; limpeza deve preservar todo histórico.
 - M8.5: timer sem rerender de alta frequência, segundo inteiro sincronizado, pausa por `phaseRemainingMs`, retomada por `remainingMs`, resultado por 2.400 ms, READY após apresentação de 1.900 ms, título de rodada único, escolhas autoritativas com dois avatares, resultado com dois perfis e `prefers-reduced-motion`.
 - Arte de tema: união exclusiva, 16 chaves/SVGs, fallback, imagem quebrada, crop/reencode/cap, magic bytes/chunks/dimensões, autorização ADMIN, conflito de versão, replace/remove, URL/ETag/cache, ausência de BLOB no catálogo, migration vazia e chunks lazy fora do precache.
+- Compatibilidade remota de migrations: parse de cada arquivo com o Wrangler fixado, proibição de trigger composto, banco vazio, upgrade exato `0003 → 0004`, schema/FK/constraints, invariantes metadata/BLOB e rollback sem resíduo em schema ou `d1_migrations`; smoke hospedado continua obrigatório.
 
 ## Diário de execução
 
@@ -374,7 +379,7 @@ Implementação concluída:
 - `ThemeArtwork` mantém dimensões quadradas conhecidas, usa `object-fit: cover`, preserva o fallback durante o carregamento e memoriza URLs carregadas; o matchmaking recebe o objeto de tema já disponível e não repete a consulta;
 - a rota Criar e o editor de arte são chunks lazy. O ADMIN escolhe claramente `Ícone padrão`, `Imagem personalizada` ou `Sem imagem`, vê a grade visual e pode substituir ou remover a escolha depois;
 - o processamento local aceita apenas PNG/JPEG/WebP/AVIF, rejeita SVG, permite crop quadrado com zoom e deslocamento, reencoda por Canvas em WebP, remove metadata, tenta 512 px com redução progressiva até 256 px e busca até 55 KB, respeitando o hard cap de 60 KB; o original nunca é enviado nem armazenado;
-- a migration imutável `core/0004_theme_artwork.sql` mantém somente metadados nas linhas de tema e guarda no máximo um WebP ativo por tema em `theme_artwork_blobs`; consultas textuais não selecionam o BLOB e R2 não foi provisionado;
+- a migration versionada `core/0004_theme_artwork.sql` mantém somente metadados nas linhas de tema e guarda no máximo um WebP ativo por tema em `theme_artwork_blobs`; consultas textuais não selecionam o BLOB e R2 não foi provisionado;
 - o Worker expõe URL pública própria e versionada `/api/theme-artwork/:themeId/v<versão>.webp`, com ETag, `HEAD`, `304` e cache imutável; versões antigas deixam de resolver depois da troca;
 - gravações de arte exigem Firebase válido, role `ADMIN`, versão esperada e validação autoritativa. A leitura em streaming é interrompida ao ultrapassar 60 KB; o parser WebP verifica contêiner, chunks, dimensões e metadata proibida antes da transação, e um token único impede upload concorrente atrasado de tocar no BLOB vencedor;
 - `coverImageKey` permanece apenas como ponte compatível para imagens personalizadas e não contém o BLOB; ícone e fallback usam a nova representação tipada;
@@ -394,6 +399,33 @@ Validação executada antes da publicação:
 - todas as migrations de Questions `0001–0002` e Core `0001–0004` foram aplicadas do zero em bancos D1 locais separados; o Core contém a tabela de arte e não contém perguntas, e o Questions contém perguntas e não contém arte;
 - a seleção de ícone/fallback, substituição e remoção de imagem, concorrência de versão, cache/ETag, ausência de BLOB no catálogo, bloqueio sem ADMIN, rejeição de arquivo inválido/metadata/SVG e fallback de imagem quebrada têm cobertura automatizada;
 - o smoke real autenticado de upload, troca de arte e renderização após deploy permanece pendente porque exige Firebase/D1/Worker reais. Esse ponto não é declarado como evidência local.
+
+### 2026-08-12 — correção do deployment da arte dos temas
+
+Investigação concluída:
+
+- o Workers Build chegou ao comando remoto com Wrangler `4.120.1`, mas parou antes de publicar o novo Worker; Questions não tinha migration pendente e Core falhou na `0004_theme_artwork.sql`;
+- o caminho local do Wrangler separa o SQL com `unstable_splitSqlQuery()` e envia statements completos ao batch local. O caminho remoto concatena a migration com o `INSERT` de tracking e envia a string inteira ao endpoint D1 `/query`;
+- o primeiro statement incompatível era `CREATE TRIGGER validate_theme_artwork_blob_insert`, especificamente seu `SELECT CASE WHEN … THEN RAISE(ABORT, …) END;` sem parênteses. O parser multi-statement remoto interpretava esse primeiro `END` como término do trigger e entregava SQL truncado ao SQLite, resultando em `incomplete input`;
+- a migration usa LF, e `PRAGMA foreign_keys`, `RAISE()` isolado e a sintaxe SQLite do trigger não eram a causa. Os outros triggers com `CASE … END` manteriam o mesmo risco mesmo se apenas o primeiro fosse contornado;
+- as release notes oficiais de Wrangler `4.121.0` não incluem correção de D1 migrations, `/query`, splitter ou triggers. A versão permaneceu fixada em `4.120.1`, sem atualização especulativa;
+- D1 documenta que uma migration com erro é revertida e não avança `d1_migrations`. Como a tentativa remota da `0004` falhou, produção permaneceu integralmente em `0003`; por isso a correção correta foi editar a `0004` ainda pendente, sem criar `0005` compensatória.
+
+Correção restrita ao deployment:
+
+- a `0004` passou a usar somente SQL remoto simples. `CHECK`s expressam a união exclusiva e a lista de ícones; PK limita a um BLOB por tema; índice único e FK composta ligam o BLOB `CUSTOM` à versão ativa; tipo, dimensões, byte cap e igualdade entre `byte_length`/BLOB permanecem no schema;
+- o Worker continua sendo a autoridade para autenticação ADMIN e validação estrutural WebP. A escolha ICON/NONE agora remove condicionalmente o BLOB antes de atualizar metadata, no mesmo batch transacional; a substituição CUSTOM mantém update versionado + upsert com token único e `ON UPDATE CASCADE`;
+- falha da segunda operação reverte a remoção, e uma requisição atrasada não remove o BLOB vencedor porque o `DELETE` também exige a versão esperada. Testes diretos cobrem estados inválidos, cap/dimensões/tipo, FK, unicidade, substituição, remoção e conflito;
+- `scripts/validate-d1-migrations.mjs` foi incluído em `npm run check` e repetido imediatamente antes da migration remota. Ele usa o Wrangler real, bloqueia compound triggers, executa todas as migrations em banco vazio, executa upgrade exato `0003 → 0004`, inspeciona schema/constraints e comprova rollback sem resíduo;
+- o gate local não finge reproduzir o parser hospedado de `/query`. A aprovação remota continua sendo o Workers Build disparado pelo push da `main`; nenhum SQL ou deploy manual foi executado.
+
+Validação executada:
+
+- `VITE_ENABLE_REALTIME_MATCHES=true npm run check`: lint sem warnings, typecheck dos três workspaces, 25 arquivos/127 testes unitários, 5 arquivos/14 testes no runtime Workers/WebSocket, gate D1 e builds de domínio/PWA/Worker aprovados;
+- migration Core aplicada desde banco vazio e desde o estado exato `0003`; schema final, defaults do tema existente, FK composta, invariantes metadata/BLOB e rollback de migration inválida aprovados;
+- revisão final da `0004`: LF, 2.168 bytes, zero trigger, zero `RAISE`, seis statements de schema + statement de tracking separados corretamente pelo Wrangler;
+- `npm audit --audit-level=high`: zero vulnerabilidades; auditoria de secrets encontrou somente `.env.example` e `.dev.vars.example` com placeholders esperados, sem chave privada, Service Account ou token;
+- ThemeArtwork, 16 SVGs, UX ADMIN/crop, endpoint/cache/lazy loading, storage D1 separado e auditoria de performance permaneceram inalterados. Nenhum R2, billing, seed, deploy manual ou Milestone 9 foi iniciado.
 
 ## Critério de saída desta execução
 
