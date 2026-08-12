@@ -103,7 +103,7 @@ describe('partida simultânea autoritativa', () => {
     expect(JSON.stringify(projection)).not.toContain('q-2');
   });
 
-  it('calcula score no servidor e não revela alternativa ou acerto do adversário', () => {
+  it('calcula score no servidor, sela a escolha durante ANSWERING e a revela somente na resolução', () => {
     const started = startFirstRound();
     const deadline = started.state.phaseDeadlineMs ?? 0;
     let state = command(started.state, {
@@ -123,11 +123,35 @@ describe('partida simultânea autoritativa', () => {
     const resolved = projectLiveMatchForSeat(state, 2, deadline - 4_100);
     expect(resolved.resolution).toEqual({
       correctOption: 0,
-      opponent: { answered: true, score: 19 },
+      opponent: { answered: true, correct: true, score: 19, selectedOption: 0 },
       viewer: { correct: false, roundScore: 0, score: 0, selectedOption: 3 },
     });
-    expect(resolved.resolution?.opponent).not.toHaveProperty('correct');
-    expect(resolved.resolution?.opponent).not.toHaveProperty('selectedOption');
+    expect(resolved.opponent).not.toHaveProperty('correct');
+    expect(resolved.opponent).not.toHaveProperty('selectedOption');
+
+    const winnerView = projectLiveMatchForSeat(state, 1, deadline - 4_100);
+    expect(winnerView.resolution).toEqual({
+      correctOption: 0,
+      opponent: { answered: true, correct: false, score: 0, selectedOption: 3 },
+      viewer: { correct: true, roundScore: 19, score: 19, selectedOption: 0 },
+    });
+
+    const pausedResult = command(state, { seat: 1, type: 'DISCONNECT' }, deadline - 4_000);
+    expect(pausedResult.pause?.phase).toBe('ROUND_RESULT');
+    expect(projectLiveMatchForSeat(pausedResult, 2, deadline - 3_900).resolution).toEqual(resolved.resolution);
+  });
+
+  it('projeta selectedOption nulo para ambos quando a rodada termina por timeout sem resposta', () => {
+    const started = startFirstRound();
+    const deadline = started.state.phaseDeadlineMs ?? 0;
+    const state = command(started.state, { type: 'ALARM' }, deadline);
+    const resolved = projectLiveMatchForSeat(state, 1, deadline);
+
+    expect(resolved.resolution).toEqual({
+      correctOption: 0,
+      opponent: { answered: false, correct: false, score: 0, selectedOption: null },
+      viewer: { correct: false, roundScore: 0, score: 0, selectedOption: null },
+    });
   });
 
   it.each([['EASY', 5], ['MEDIUM', 10], ['HARD', 15]] as const)(
@@ -211,12 +235,12 @@ describe('partida simultânea autoritativa', () => {
     expect(state.pendingOutcome).toEqual({ kind: 'VOID', penalizedSeat: 2, reason: 'INDIVIDUAL_ABANDONMENT' });
   });
 
-  it('mantém o resultado visível por 2 segundos exatos antes da próxima pergunta', () => {
+  it('mantém o resultado visível por 2,4 segundos exatos antes da próxima pergunta', () => {
     const started = startFirstRound();
     const deadline = started.state.phaseDeadlineMs ?? 0;
     let state = command(started.state, { type: 'ALARM' }, deadline);
     const revealEnds = state.phaseDeadlineMs ?? 0;
-    expect(LIVE_ROUND_RESULT_MS).toBe(2_000);
+    expect(LIVE_ROUND_RESULT_MS).toBe(2_400);
     expect(revealEnds).toBe(deadline + LIVE_ROUND_RESULT_MS);
     state = command(state, { type: 'ALARM' }, revealEnds - 1);
     expect(state.phase).toBe('ROUND_RESULT');

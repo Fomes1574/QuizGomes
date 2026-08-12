@@ -65,7 +65,7 @@ describe('página da partida em tempo real', () => {
     vi.useRealTimers();
   });
 
-  it('envia ROUND_READY uma única vez somente ao fim da apresentação de 1.600 ms', async () => {
+  it('envia ROUND_READY uma única vez somente ao fim da apresentação de 1.900 ms', async () => {
     render(
       <MemoryRouter initialEntries={['/partida/room-1']}>
         <Routes>
@@ -98,13 +98,13 @@ describe('página da partida em tempo real', () => {
     expect(screen.getByRole('status', { name: 'Pergunta 1 de 5' })).toBeInTheDocument();
     expect(screen.getAllByText('PERGUNTA')).toHaveLength(1);
     expect(document.querySelector('.match-screen--preparing')).toHaveStyle({
-      '--match-question-delay': '1300ms',
+      '--match-question-delay': '1600ms',
     });
     expect(document.querySelector('.match-screen--preparing')).toHaveAttribute('aria-hidden', 'true');
     expect([...document.querySelectorAll('.answer-option')].every((button) => button.hasAttribute('disabled'))).toBe(true);
     expect(socket?.send).not.toHaveBeenCalledWith(JSON.stringify({ roundNumber: 1, type: 'ROUND_READY' }));
 
-    await act(async () => vi.advanceTimersByTimeAsync(1_599));
+    await act(async () => vi.advanceTimersByTimeAsync(1_899));
     expect(socket?.send).not.toHaveBeenCalledWith(JSON.stringify({ roundNumber: 1, type: 'ROUND_READY' }));
 
     await act(async () => vi.advanceTimersByTimeAsync(1));

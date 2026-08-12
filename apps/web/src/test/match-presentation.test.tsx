@@ -12,16 +12,16 @@ import {
 describe('apresentação da partida', () => {
   afterEach(() => cleanup());
 
-  it('mantém a apresentação completa em 1.600 ms, respeita o piso do servidor e não repete o título', () => {
-    expect(MATCH_ROUND_TRANSITION_MS).toBe(1_600);
-    expect(roundPresentationDelay(450)).toBe(1_600);
-    expect(roundPresentationDelay(1_100)).toBe(1_600);
+  it('mantém a apresentação completa em 1.900 ms, respeita o piso do servidor e não repete o título', () => {
+    expect(MATCH_ROUND_TRANSITION_MS).toBe(1_900);
+    expect(roundPresentationDelay(450)).toBe(1_900);
+    expect(roundPresentationDelay(1_100)).toBe(1_900);
     expect(roundPresentationDelay(2_100)).toBe(2_100);
 
     render(<MatchRoundTransition number={3} total={5} />);
     expect(screen.getByRole('status', { name: 'Pergunta 3 de 5' })).toHaveStyle({
       '--match-question-entrance-duration': '300ms',
-      '--round-transition-duration': '1600ms',
+      '--round-transition-duration': '1900ms',
     });
     expect(screen.getAllByText('PERGUNTA')).toHaveLength(1);
     expect(screen.queryByText('PERGUNTA 3 / 5')).not.toBeInTheDocument();

@@ -1,9 +1,10 @@
-import { QUESTION_DURATION_MS, displayedSeconds, remainingAt } from '@quiz-gomes/domain';
+import { LIVE_ROUND_RESULT_MS, QUESTION_DURATION_MS, displayedSeconds, remainingAt } from '@quiz-gomes/domain';
 import { useCallback, useEffect, useState, type CSSProperties } from 'react';
 import { Avatar } from './avatar.js';
 
 const OPTION_LABELS = ['A', 'B', 'C', 'D'] as const;
-const ROUND_SCORE_REVEAL_MS = 450;
+const ROUND_OPPONENT_REVEAL_MS = 250;
+const ROUND_SCORE_REVEAL_MS = 550;
 
 interface MatchParticipantView {
   frameId?: string | null;
@@ -19,6 +20,9 @@ interface MatchTimerStyle extends CSSProperties {
 
 interface MatchScreenStyle extends CSSProperties {
   '--match-question-delay': string;
+  '--match-result-duration': string;
+  '--round-opponent-reveal-delay': string;
+  '--round-score-reveal-delay': string;
 }
 
 export interface MatchQuestionView {
@@ -29,6 +33,10 @@ export interface MatchQuestionView {
 
 export interface MatchResolutionView {
   correctOption: number;
+  opponent: {
+    correct: boolean;
+    selectedOption: number | null;
+  };
   viewer: {
     correct: boolean;
     roundScore: number;
@@ -152,21 +160,21 @@ export function MatchScreen({
 }) {
   const [localSelected, setLocalSelected] = useState<number | null>(selectedOption ?? resolution?.viewer.selectedOption ?? null);
   const [expiredDeadline, setExpiredDeadline] = useState<number | null>(null);
-  const [opponentScoreAtRoundStart] = useState(opponentScore);
   const [displayedScores, setDisplayedScores] = useState(() => ({
     opponent: opponentScore,
     player: playerScore,
   }));
   const [questionEntranceDelayMs] = useState(questionPresentationDelayMs);
-  const selected = resolution?.viewer.selectedOption ?? selectedOption ?? localSelected;
   const resolved = resolution !== undefined;
+  const selected = resolved ? resolution.viewer.selectedOption : selectedOption ?? localSelected;
   const visuallyExpired = !paused && (expiredDeadline === deadlineMs || remainingMs <= 0);
-  const opponentCorrectOption = resolved && opponentScore > opponentScoreAtRoundStart
-    ? resolution.correctOption
-    : null;
+  const opponentSelected = resolution?.opponent.selectedOption ?? null;
   const handleExpire = useCallback(() => setExpiredDeadline(deadlineMs), [deadlineMs]);
   const screenStyle: MatchScreenStyle = {
     '--match-question-delay': `${questionEntranceDelayMs}ms`,
+    '--match-result-duration': `${LIVE_ROUND_RESULT_MS}ms`,
+    '--round-opponent-reveal-delay': `${ROUND_OPPONENT_REVEAL_MS}ms`,
+    '--round-score-reveal-delay': `${ROUND_SCORE_REVEAL_MS}ms`,
   };
 
   useEffect(() => {
@@ -224,18 +232,21 @@ export function MatchScreen({
         <div className="answer-grid">
           {question.options.map((option, index) => {
             const correct = resolution?.correctOption === index;
-            const incorrect = resolved && selected === index && !correct;
-            const opponentRevealedHere = opponentCorrectOption === index;
+            const viewerRevealedHere = resolved && selected === index;
+            const opponentRevealedHere = resolved && opponentSelected === index;
+            const incorrect = resolved && !correct && (viewerRevealedHere || opponentRevealedHere);
             const className = [
               'answer-option',
               selected === index ? 'answer-option--selected' : '',
               correct ? 'answer-option--correct' : '',
               incorrect ? 'answer-option--incorrect' : '',
+              viewerRevealedHere || opponentRevealedHere ? 'answer-option--with-avatars' : '',
+              viewerRevealedHere && opponentRevealedHere ? 'answer-option--dual-avatar' : '',
             ].filter(Boolean).join(' ');
             const marker = correct ? '✓' : incorrect ? '×' : OPTION_LABELS[index];
             return (
               <button
-                aria-label={`${OPTION_LABELS[index]}: ${option}${correct ? ' — correta' : incorrect ? ' — incorreta' : ''}${opponentRevealedHere ? ' — resposta correta do adversário' : ''}`}
+                aria-label={`${OPTION_LABELS[index]}: ${option}${correct ? ' — correta' : incorrect ? ' — incorreta' : ''}${viewerRevealedHere ? ' — sua resposta' : ''}${opponentRevealedHere ? ' — resposta do adversário' : ''}`}
                 className={className}
                 disabled={preparing || paused || selected !== null || visuallyExpired || resolved}
                 key={OPTION_LABELS[index]}
@@ -244,9 +255,26 @@ export function MatchScreen({
               >
                 <span aria-hidden="true" className="answer-option__marker">{marker}</span>
                 <strong>{option}</strong>
-                {opponentRevealedHere && (
-                  <span className="answer-option__opponent">
-                    <Avatar name={opponent.name} photoUrl={opponent.photoUrl} size="small" />
+                {(viewerRevealedHere || opponentRevealedHere) && (
+                  <span className="answer-option__avatars">
+                    {viewerRevealedHere && (
+                      <span
+                        className={`${participantFrameClass(player.frameId)} answer-option__choice-avatar answer-option__choice-avatar--viewer`}
+                        data-frame-id={player.frameId ?? undefined}
+                        data-participant="viewer"
+                      >
+                        <Avatar name={player.name} photoUrl={player.photoUrl} size="small" />
+                      </span>
+                    )}
+                    {opponentRevealedHere && (
+                      <span
+                        className={`${participantFrameClass(opponent.frameId)} answer-option__choice-avatar answer-option__choice-avatar--opponent`}
+                        data-frame-id={opponent.frameId ?? undefined}
+                        data-participant="opponent"
+                      >
+                        <Avatar name={opponent.name} photoUrl={opponent.photoUrl} size="small" />
+                      </span>
+                    )}
                   </span>
                 )}
               </button>

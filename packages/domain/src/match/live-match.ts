@@ -5,7 +5,7 @@ import { QUESTION_DURATION_MS, remainingAt, scoreAnswer } from './scoring.js';
 import type { Difficulty, MatchMode } from '../types.js';
 
 export const LIVE_PREPARATION_MS = 3_000;
-export const LIVE_ROUND_RESULT_MS = 2_000;
+export const LIVE_ROUND_RESULT_MS = 2_400;
 export const LIVE_ROUND_TRANSITION_MS = 450;
 
 export type LiveSeat = 1 | 2;
@@ -493,7 +493,12 @@ export interface LiveMatchProjection {
   remainingMs?: number;
   resolution?: {
     correctOption: number;
-    opponent: { answered: boolean; score: number };
+    opponent: {
+      answered: boolean;
+      correct: boolean;
+      score: number;
+      selectedOption: number | null;
+    };
     viewer: { correct: boolean; roundScore: number; score: number; selectedOption: number | null };
   };
   round?: { number: number; total: number };
@@ -513,6 +518,12 @@ function phaseHasCurrentQuestion(state: LiveMatchState): boolean {
   if (['FINALIZING', 'FINISHED'].includes(state.phase)) return state.startedAtMs !== null;
   const pause = pauseOf(state);
   return state.phase === 'PAUSED' && pause !== null && pause.phase !== 'PREPARING';
+}
+
+function phaseHasResolvedCurrentRound(state: LiveMatchState): boolean {
+  if (['ROUND_RESULT', 'FINALIZING', 'FINISHED'].includes(state.phase)) return true;
+  const pause = pauseOf(state);
+  return state.phase === 'PAUSED' && pause?.phase === 'ROUND_RESULT';
 }
 
 export function projectLiveMatchForSeat(
@@ -561,10 +572,15 @@ export function projectLiveMatchForSeat(
     };
     if (viewerAnswer !== null && pause.phase === 'ANSWERING') projection.selectedOption = viewerAnswer.selectedOption;
   }
-  if (viewerAnswer !== null && opponentAnswer !== null && ['ROUND_RESULT', 'FINALIZING', 'FINISHED'].includes(state.phase)) {
+  if (viewerAnswer !== null && opponentAnswer !== null && phaseHasResolvedCurrentRound(state)) {
     projection.resolution = {
       correctOption: currentQuestion(state).correctOption,
-      opponent: { answered: opponentAnswer.submitted, score: opponent.score },
+      opponent: {
+        answered: opponentAnswer.submitted,
+        correct: opponentAnswer.correct,
+        score: opponent.score,
+        selectedOption: opponentAnswer.selectedOption,
+      },
       viewer: {
         correct: viewerAnswer.correct,
         roundScore: viewerAnswer.score,

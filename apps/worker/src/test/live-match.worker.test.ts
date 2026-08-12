@@ -310,8 +310,18 @@ describe('Milestone 8 no runtime Workers simulado', () => {
     ]);
     expect(firstResolved.match?.viewer.score).toBeGreaterThan(0);
     expect(secondResolved.match?.opponent.score).toBe(firstResolved.match?.viewer.score);
-    expect(secondResolved.match?.resolution?.opponent).not.toHaveProperty('correct');
-    expect(secondResolved.match?.resolution?.opponent).not.toHaveProperty('selectedOption');
+    expect(firstResolved.match?.resolution).toMatchObject({
+      correctOption: 0,
+      opponent: { answered: true, correct: false, selectedOption: 3 },
+      viewer: { correct: true, selectedOption: 0 },
+    });
+    expect(secondResolved.match?.resolution).toMatchObject({
+      correctOption: 0,
+      opponent: { answered: true, correct: true, selectedOption: 0 },
+      viewer: { correct: false, selectedOption: 3 },
+    });
+    expect(firstResolved.match?.opponent).not.toHaveProperty('selectedOption');
+    expect(secondResolved.match?.opponent).not.toHaveProperty('selectedOption');
 
     for (let round = 2; round <= 5; round += 1) {
       await expireAlarm(stub);
@@ -323,7 +333,17 @@ describe('Milestone 8 no runtime Workers simulado', () => {
       second.socket.send(JSON.stringify({ roundNumber: round, type: 'ROUND_READY' }));
       await Promise.all([firstReconnected.waitFor('ROUND_STARTED'), second.waitFor('ROUND_STARTED')]);
       await expireAlarm(stub);
-      await Promise.all([firstReconnected.waitFor('ROUND_RESOLVED'), second.waitFor('ROUND_RESOLVED')]);
+      const [firstTimedOut, secondTimedOut] = await Promise.all([
+        firstReconnected.waitFor('ROUND_RESOLVED'), second.waitFor('ROUND_RESOLVED'),
+      ]);
+      if (round === 2) {
+        expect(firstTimedOut.match?.resolution).toMatchObject({
+          correctOption: 0,
+          opponent: { answered: false, correct: false, selectedOption: null },
+          viewer: { correct: false, selectedOption: null },
+        });
+        expect(secondTimedOut.match?.resolution?.opponent.selectedOption).toBeNull();
+      }
       expect(nextSecond.match?.question?.id).toBeTypeOf('string');
     }
     await expireAlarm(stub);

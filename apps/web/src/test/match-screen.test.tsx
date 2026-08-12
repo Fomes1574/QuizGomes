@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MatchScreen } from '../components/match-screen.js';
 
@@ -113,7 +113,7 @@ describe('interface de partida', () => {
     expect(document.querySelector('.status-dot--answered')).toBeInTheDocument();
   });
 
-  it('revela o feedback seguro e atualiza o placar somente na etapa de 450 ms', async () => {
+  it('revela escolhas diferentes sem inferir pelo score e atualiza o placar somente aos 550 ms', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-08-10T12:00:00Z'));
     const view = render(<MatchScreen
@@ -130,32 +130,131 @@ describe('interface de partida', () => {
     view.rerender(<MatchScreen
       deadlineMs={Date.now()}
       onAnswer={() => undefined}
-      opponent={{ name: 'Ana' }}
-      opponentScore={27}
-      player={PLAYER}
+      opponent={{ frameId: 'frame-ana', name: 'Ana' }}
+      opponentScore={10}
+      player={{ frameId: 'frame-gomes', ...PLAYER }}
       playerScore={37}
       question={QUESTION}
       remainingMs={0}
       resolution={{
         correctOption: 2,
+        opponent: { correct: false, selectedOption: 1 },
         viewer: { correct: true, roundScore: 17, selectedOption: 2 },
       }}
     />);
 
     expect(screen.getByLabelText('17 pontos ganhos')).toHaveTextContent('+17');
-    expect(screen.getByRole('button', { name: /C1 — correta — resposta correta do adversário/ })).toBeDisabled();
+    const opponentChoice = screen.getByRole('button', { name: /B1 — incorreta — resposta do adversário/ });
+    const viewerChoice = screen.getByRole('button', { name: /C1 — correta — sua resposta/ });
+    expect(opponentChoice).toHaveClass('answer-option--incorrect');
+    expect(viewerChoice).toHaveClass('answer-option--correct');
+    expect(within(opponentChoice).getByLabelText('Foto de Ana')).toBeInTheDocument();
+    expect(within(viewerChoice).getByLabelText('Foto de Gomes')).toBeInTheDocument();
+    expect(opponentChoice.querySelector('[data-frame-id="frame-ana"]')).toBeInTheDocument();
+    expect(viewerChoice.querySelector('[data-frame-id="frame-gomes"]')).toBeInTheDocument();
     expect(screen.getAllByLabelText('Foto de Ana')).toHaveLength(2);
+    expect(screen.getAllByLabelText('Foto de Gomes')).toHaveLength(2);
     expect(screen.getByText('20')).toBeInTheDocument();
     expect(screen.getByText('10')).toBeInTheDocument();
     expect(screen.queryByText('37')).not.toBeInTheDocument();
-    expect(screen.queryByText('27')).not.toBeInTheDocument();
+    expect(document.querySelector('.match-screen--resolved')).toHaveStyle({
+      '--match-result-duration': '2400ms',
+      '--round-opponent-reveal-delay': '250ms',
+      '--round-score-reveal-delay': '550ms',
+    });
 
-    await act(async () => vi.advanceTimersByTimeAsync(449));
+    await act(async () => vi.advanceTimersByTimeAsync(549));
     expect(screen.queryByText('37')).not.toBeInTheDocument();
-    expect(screen.queryByText('27')).not.toBeInTheDocument();
 
     await act(async () => vi.advanceTimersByTimeAsync(1));
     expect(screen.getByText('37')).toBeInTheDocument();
-    expect(screen.getByText('27')).toBeInTheDocument();
+    expect(screen.getByText('10')).toBeInTheDocument();
+  });
+
+  it('dispõe os dois avatares na mesma alternativa sem remover o estado incorreto', () => {
+    render(<MatchScreen
+      deadlineMs={Date.now()}
+      onAnswer={() => undefined}
+      opponent={{ frameId: 'frame-ana', name: 'Ana' }}
+      opponentScore={0}
+      player={{ frameId: 'frame-gomes', ...PLAYER }}
+      playerScore={0}
+      question={QUESTION}
+      remainingMs={0}
+      resolution={{
+        correctOption: 2,
+        opponent: { correct: false, selectedOption: 1 },
+        viewer: { correct: false, roundScore: 0, selectedOption: 1 },
+      }}
+    />);
+
+    const sharedChoice = screen.getByRole('button', {
+      name: /B1 — incorreta — sua resposta — resposta do adversário/,
+    });
+    expect(sharedChoice).toHaveClass('answer-option--incorrect');
+    expect(sharedChoice).toHaveClass('answer-option--dual-avatar');
+    expect(within(sharedChoice).getByLabelText('Foto de Gomes')).toBeInTheDocument();
+    expect(within(sharedChoice).getByLabelText('Foto de Ana')).toBeInTheDocument();
+    expect(sharedChoice.querySelectorAll('.answer-option__choice-avatar')).toHaveLength(2);
+    expect(sharedChoice.querySelector('.answer-option__avatars')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /C1 — correta/ })).toHaveClass('answer-option--correct');
+  });
+
+  it('mantém a correta verde sem votos e não mostra avatar após timeout', () => {
+    render(<MatchScreen
+      deadlineMs={Date.now()}
+      onAnswer={() => undefined}
+      opponent={{ name: 'Ana' }}
+      opponentScore={0}
+      player={PLAYER}
+      playerScore={0}
+      question={QUESTION}
+      remainingMs={0}
+      resolution={{
+        correctOption: 2,
+        opponent: { correct: false, selectedOption: null },
+        viewer: { correct: false, roundScore: 0, selectedOption: null },
+      }}
+    />);
+
+    const correctChoice = screen.getByRole('button', { name: /C1 — correta/ });
+    expect(correctChoice).toHaveClass('answer-option--correct');
+    expect(within(correctChoice).getByText('✓')).toBeInTheDocument();
+    expect(document.querySelectorAll('.answer-option__choice-avatar')).toHaveLength(0);
+  });
+
+  it('descarta a escolha local otimista quando o timeout autoritativo retorna null', () => {
+    const view = render(<MatchScreen
+      deadlineMs={Date.now() + 1_000}
+      onAnswer={() => undefined}
+      opponent={{ name: 'Ana' }}
+      opponentScore={0}
+      player={PLAYER}
+      playerScore={0}
+      question={QUESTION}
+      remainingMs={1_000}
+    />);
+    fireEvent.click(screen.getByRole('button', { name: /B1/ }));
+    expect(screen.getByRole('button', { name: /B1/ })).toHaveClass('answer-option--selected');
+
+    view.rerender(<MatchScreen
+      deadlineMs={Date.now()}
+      onAnswer={() => undefined}
+      opponent={{ name: 'Ana' }}
+      opponentScore={0}
+      player={PLAYER}
+      playerScore={0}
+      question={QUESTION}
+      remainingMs={0}
+      resolution={{
+        correctOption: 2,
+        opponent: { correct: false, selectedOption: null },
+        viewer: { correct: false, roundScore: 0, selectedOption: null },
+      }}
+    />);
+
+    expect(screen.getByRole('button', { name: /B1/ })).not.toHaveClass('answer-option--selected');
+    expect(document.querySelectorAll('.answer-option__choice-avatar')).toHaveLength(0);
+    expect(screen.getByRole('button', { name: /C1 — correta/ })).toHaveClass('answer-option--correct');
   });
 });

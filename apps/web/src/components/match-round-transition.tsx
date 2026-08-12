@@ -1,6 +1,6 @@
 import type { CSSProperties } from 'react';
 
-export const MATCH_ROUND_TRANSITION_MS = 1_600;
+export const MATCH_ROUND_TRANSITION_MS = 1_900;
 export const MATCH_QUESTION_ENTRANCE_MS = 300;
 
 interface RoundTransitionStyle extends CSSProperties {
