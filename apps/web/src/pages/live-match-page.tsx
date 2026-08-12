@@ -4,7 +4,11 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { Button } from '../components/button.js';
 import { Logo } from '../components/logo.js';
 import { MatchResultScreen } from '../components/match-result-screen.js';
-import { MatchRoundTransition, roundPresentationDelay } from '../components/match-round-transition.js';
+import {
+  MATCH_QUESTION_ENTRANCE_MS,
+  MatchRoundTransition,
+  roundPresentationDelay,
+} from '../components/match-round-transition.js';
 import { MatchScreen } from '../components/match-screen.js';
 import { useAuth } from '../features/auth-context.js';
 import { apiRequest, websocketUrl } from '../lib/api.js';
@@ -38,7 +42,7 @@ export function LiveMatchPage() {
   const socketRef = useRef<WebSocket | null>(null);
   const [projection, setProjection] = useState<LiveMatchProjection | null>(null);
   const [deadlineMs, setDeadlineMs] = useState<number | null>(null);
-  const [roundIntro, setRoundIntro] = useState<{ number: number; total: number } | null>(null);
+  const [roundIntro, setRoundIntro] = useState<{ durationMs: number; number: number; total: number } | null>(null);
   const [statusMessage, setStatusMessage] = useState('Conectando à sala');
   const [error, setError] = useState<string | null>(null);
   const [terminal, setTerminal] = useState<{ result: TerminalResult; voidReason?: string } | null>(null);
@@ -77,7 +81,8 @@ export function LiveMatchPage() {
     ) => {
       if (match.round === undefined) return;
       clearRoundReady();
-      setRoundIntro(showPresentation ? match.round : null);
+      const presentationMs = Math.max(0, delayMs);
+      setRoundIntro(showPresentation ? { ...match.round, durationMs: presentationMs } : null);
       roundReadyTimer = window.setTimeout(() => {
         roundReadyTimer = null;
         setRoundIntro(null);
@@ -85,7 +90,7 @@ export function LiveMatchPage() {
         if (socket.readyState === WebSocket.OPEN) {
           socket.send(JSON.stringify({ roundNumber: match.round?.number, type: 'ROUND_READY' }));
         }
-      }, Math.max(0, delayMs));
+      }, presentationMs);
     };
     const applyProjection = (match: LiveMatchProjection) => {
       setProjection(match);
@@ -223,13 +228,14 @@ export function LiveMatchPage() {
   }
 
   const activeQuestion = projection?.question;
+  const preparingQuestion = projection?.phase === 'ROUND_READY';
   if (activeQuestion !== undefined && projection?.round !== undefined &&
-    (projection.phase === 'ANSWERING' || projection.phase === 'ROUND_RESULT' || projection.phase === 'PAUSED') &&
-    deadlineMs !== null) {
+    (preparingQuestion || projection.phase === 'ANSWERING' || projection.phase === 'ROUND_RESULT' || projection.phase === 'PAUSED') &&
+    (preparingQuestion || deadlineMs !== null)) {
     return (
       <>
         <MatchScreen
-          deadlineMs={deadlineMs}
+          deadlineMs={preparingQuestion ? 0 : deadlineMs ?? 0}
           key={`${projection.round.number}:${activeQuestion.id}`}
           onAnswer={(selectedOption) => {
             socketRef.current?.send(JSON.stringify({
@@ -256,7 +262,13 @@ export function LiveMatchPage() {
             photoUrl: projection.viewer.photoUrl,
           }}
           playerScore={projection.viewer.score}
+          preparing={preparingQuestion}
           question={activeQuestion}
+          questionPresentationDelayMs={preparingQuestion
+            ? roundIntro === null
+              ? -MATCH_QUESTION_ENTRANCE_MS
+              : Math.max(0, roundIntro.durationMs - MATCH_QUESTION_ENTRANCE_MS)
+            : 0}
           remainingMs={projection.phase === 'ANSWERING'
             ? projection.remainingMs ?? 0
             : projection.phase === 'PAUSED' && projection.paused?.phase === 'ANSWERING'
@@ -266,6 +278,13 @@ export function LiveMatchPage() {
           round={projection.round}
           selectedOption={projection.selectedOption}
         />
+        {roundIntro !== null && (
+          <MatchRoundTransition
+            durationMs={roundIntro.durationMs}
+            number={roundIntro.number}
+            total={roundIntro.total}
+          />
+        )}
         {projection.phase === 'PAUSED' && <div aria-live="assertive" className="match-pause-overlay"><strong>AGUARDANDO JOGADOR</strong><span>A partida está totalmente pausada por até 7 segundos.</span></div>}
       </>
     );
@@ -278,7 +297,7 @@ export function LiveMatchPage() {
       {error !== null
         ? <h1>{error}</h1>
         : roundIntro !== null
-          ? <MatchRoundTransition number={roundIntro.number} total={roundIntro.total} />
+          ? <MatchRoundTransition durationMs={roundIntro.durationMs} number={roundIntro.number} total={roundIntro.total} />
           : (
             <>
               <span className="matchmaking-radar"><span /><span /><i /></span>

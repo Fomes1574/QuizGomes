@@ -20,6 +20,7 @@ describe('apresentação da partida', () => {
 
     render(<MatchRoundTransition number={3} total={5} />);
     expect(screen.getByRole('status', { name: 'Pergunta 3 de 5' })).toHaveStyle({
+      '--match-question-entrance-duration': '300ms',
       '--round-transition-duration': '1600ms',
     });
     expect(screen.getAllByText('PERGUNTA')).toHaveLength(1);

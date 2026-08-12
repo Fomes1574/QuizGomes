@@ -17,6 +17,10 @@ interface MatchTimerStyle extends CSSProperties {
   '--timer-reduced-ratio': number;
 }
 
+interface MatchScreenStyle extends CSSProperties {
+  '--match-question-delay': string;
+}
+
 export interface MatchQuestionView {
   imageUrl?: string | null;
   options: readonly [string, string, string, string];
@@ -121,7 +125,9 @@ export function MatchScreen({
   pausedRemainingMs,
   player,
   playerScore,
+  preparing = false,
   question,
+  questionPresentationDelayMs = 0,
   remainingMs,
   resolution,
   round,
@@ -136,7 +142,9 @@ export function MatchScreen({
   pausedRemainingMs?: number | undefined;
   player: MatchParticipantView;
   playerScore: number;
+  preparing?: boolean;
   question: MatchQuestionView;
+  questionPresentationDelayMs?: number;
   remainingMs: number;
   resolution?: MatchResolutionView | undefined;
   round?: { number: number; total: number } | undefined;
@@ -149,6 +157,7 @@ export function MatchScreen({
     opponent: opponentScore,
     player: playerScore,
   }));
+  const [questionEntranceDelayMs] = useState(questionPresentationDelayMs);
   const selected = resolution?.viewer.selectedOption ?? selectedOption ?? localSelected;
   const resolved = resolution !== undefined;
   const visuallyExpired = !paused && (expiredDeadline === deadlineMs || remainingMs <= 0);
@@ -156,6 +165,9 @@ export function MatchScreen({
     ? resolution.correctOption
     : null;
   const handleExpire = useCallback(() => setExpiredDeadline(deadlineMs), [deadlineMs]);
+  const screenStyle: MatchScreenStyle = {
+    '--match-question-delay': `${questionEntranceDelayMs}ms`,
+  };
 
   useEffect(() => {
     if (!resolved) return undefined;
@@ -170,7 +182,11 @@ export function MatchScreen({
   }, [opponentScore, playerScore, resolved]);
 
   return (
-    <main className={`match-screen${resolved ? ' match-screen--resolved' : ''}${paused ? ' match-screen--paused' : ''}`}>
+    <main
+      aria-hidden={preparing || undefined}
+      className={`match-screen${resolved ? ' match-screen--resolved' : ''}${paused ? ' match-screen--paused' : ''}${preparing ? ' match-screen--preparing' : ''}`}
+      style={screenStyle}
+    >
       <header className="match-scoreboard">
         <div className="opponent-chip">
           <span
@@ -221,7 +237,7 @@ export function MatchScreen({
               <button
                 aria-label={`${OPTION_LABELS[index]}: ${option}${correct ? ' — correta' : incorrect ? ' — incorreta' : ''}${opponentRevealedHere ? ' — resposta correta do adversário' : ''}`}
                 className={className}
-                disabled={paused || selected !== null || visuallyExpired || resolved}
+                disabled={preparing || paused || selected !== null || visuallyExpired || resolved}
                 key={OPTION_LABELS[index]}
                 onClick={() => { setLocalSelected(index); onAnswer(index); }}
                 type="button"
@@ -238,14 +254,18 @@ export function MatchScreen({
           })}
         </div>
       </section>
-      <MatchTimer
-        deadlineMs={deadlineMs}
-        initialRemainingMs={remainingMs}
-        key={`${deadlineMs}:${paused ? pausedRemainingMs ?? 0 : 'running'}:${resolved ? 'resolved' : 'active'}`}
-        onExpire={handleExpire}
-        pausedRemainingMs={paused ? (pausedRemainingMs ?? 0) : undefined}
-        resolved={resolved}
-      />
+      {preparing
+        ? <div aria-hidden="true" className="match-timer match-timer--preparing" />
+        : (
+          <MatchTimer
+            deadlineMs={deadlineMs}
+            initialRemainingMs={remainingMs}
+            key={`${deadlineMs}:${paused ? pausedRemainingMs ?? 0 : 'running'}:${resolved ? 'resolved' : 'active'}`}
+            onExpire={handleExpire}
+            pausedRemainingMs={paused ? (pausedRemainingMs ?? 0) : undefined}
+            resolved={resolved}
+          />
+        )}
     </main>
   );
 }

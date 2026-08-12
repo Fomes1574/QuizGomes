@@ -97,6 +97,11 @@ describe('página da partida em tempo real', () => {
 
     expect(screen.getByRole('status', { name: 'Pergunta 1 de 5' })).toBeInTheDocument();
     expect(screen.getAllByText('PERGUNTA')).toHaveLength(1);
+    expect(document.querySelector('.match-screen--preparing')).toHaveStyle({
+      '--match-question-delay': '1300ms',
+    });
+    expect(document.querySelector('.match-screen--preparing')).toHaveAttribute('aria-hidden', 'true');
+    expect([...document.querySelectorAll('.answer-option')].every((button) => button.hasAttribute('disabled'))).toBe(true);
     expect(socket?.send).not.toHaveBeenCalledWith(JSON.stringify({ roundNumber: 1, type: 'ROUND_READY' }));
 
     await act(async () => vi.advanceTimersByTimeAsync(1_599));
@@ -105,5 +110,22 @@ describe('página da partida em tempo real', () => {
     await act(async () => vi.advanceTimersByTimeAsync(1));
     expect(socket?.send).toHaveBeenCalledTimes(1);
     expect(socket?.send).toHaveBeenCalledWith(JSON.stringify({ roundNumber: 1, type: 'ROUND_READY' }));
+
+    act(() => socket?.emitMessage({
+      match: {
+        opponent: { answered: false, displayName: 'Ana', frameId: null, photoUrl: null, score: 0 },
+        phase: 'ANSWERING',
+        question: { id: 'q-1', options: ['A', 'B', 'C', 'D'], prompt: 'Pergunta sintética?' },
+        remainingMs: 10_000,
+        round: { number: 1, total: 5 },
+        serverNow: Date.now(),
+        viewer: { displayName: 'Gomes', frameId: null, photoUrl: null, score: 0, seat: 1 },
+      },
+      type: 'ROUND_STARTED',
+    }));
+
+    expect(document.querySelector('.match-screen--preparing')).not.toBeInTheDocument();
+    expect(screen.getByRole('timer')).toHaveAccessibleName('10 segundos restantes');
+    expect(screen.getAllByRole('button').every((button) => !button.hasAttribute('disabled'))).toBe(true);
   });
 });
