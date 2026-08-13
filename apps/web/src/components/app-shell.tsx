@@ -1,6 +1,7 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '../features/auth-context.js';
 import { Avatar } from './avatar.js';
+import { AvatarFrame } from './avatar-frame.js';
 import { Icon, type IconName } from './icons.js';
 import { Logo } from './logo.js';
 
@@ -23,7 +24,14 @@ export function AppShell() {
             <small>{profile ? `Nível ${1}` : firebaseUser ? 'Complete seu perfil' : 'Visitante'}</small>
             <strong>{profile?.displayName ?? firebaseUser?.displayName ?? 'Entrar'}</strong>
           </span>
-          <Avatar name={profile?.displayName ?? firebaseUser?.displayName ?? 'Visitante'} photoUrl={profile?.photoUrl ?? firebaseUser?.photoURL} size="small" />
+          <AvatarFrame frameId={profile?.equippedFrameId}>
+            <Avatar
+              customUrl={profile?.customAvatarUrl}
+              googleUrl={profile?.photoUrl ?? firebaseUser?.photoURL}
+              name={profile?.displayName ?? firebaseUser?.displayName ?? 'Visitante'}
+              size="small"
+            />
+          </AvatarFrame>
         </NavLink>
       </header>
       <main className="app-content" id="conteudo-principal" key={location.pathname}>

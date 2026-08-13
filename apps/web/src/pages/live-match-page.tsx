@@ -12,6 +12,7 @@ import {
 import { MatchScreen } from '../components/match-screen.js';
 import { useAuth } from '../features/auth-context.js';
 import { apiRequest, websocketUrl } from '../lib/api.js';
+import { takePreparedMatchRoom } from '../lib/preloaded-match-room.js';
 
 interface TerminalResult {
   opponent: { result: MatchResult; score: number };
@@ -106,6 +107,72 @@ export function LiveMatchPage() {
       if (match.phase === 'PAUSED') setStatusMessage('AGUARDANDO JOGADOR');
     };
 
+    const handleMessage = (socket: WebSocket, raw: string) => {
+      let payload: RoomMessage;
+      try {
+        payload = JSON.parse(raw) as RoomMessage;
+      } catch {
+        setError('A sala enviou uma mensagem inválida.');
+        return;
+      }
+      if (payload.type === 'ERROR') {
+        setError(payload.message ?? 'A sala rejeitou esta ação.');
+        return;
+      }
+      if (payload.match !== undefined) applyProjection(payload.match);
+      if (payload.type === 'ROOM_STATE') {
+        if (payload.match?.phase === 'LOBBY') socket.send(JSON.stringify({ type: 'READY' }));
+        if (payload.match?.phase === 'ROUND_READY') acknowledgeRound(socket, payload.match, 0);
+      }
+      if (payload.type === 'PREPARING') setStatusMessage('PREPARE-SE PARA A PARTIDA');
+      if (payload.type === 'ROUND_QUESTION' && payload.match !== undefined) {
+        acknowledgeRound(socket, payload.match, roundPresentationDelay(payload.transitionMs), true);
+      }
+      if (payload.type === 'RESUMED') {
+        setStatusMessage('Partida restaurada');
+        if (payload.match?.phase === 'ROUND_READY') acknowledgeRound(socket, payload.match, 0);
+      }
+      if ((payload.type === 'MATCH_FINISHED' || payload.type === 'MATCH_VOID') && payload.result !== undefined) {
+        terminalReached = true;
+        clearRoundReady();
+        setRoundIntro(null);
+        setTerminal(payload.voidReason === undefined
+          ? { result: payload.result }
+          : { result: payload.result, voidReason: payload.voidReason });
+      }
+    };
+
+    const bindSocket = (socket: WebSocket, bufferedMessages: string[] = []) => {
+      socketRef.current = socket;
+      const opened = () => {
+        if (socketRef.current !== socket) return;
+        retryStartedAt = null;
+        setError(null);
+        setStatusMessage('Aguardando jogadores');
+      };
+      socket.addEventListener('open', opened);
+      socket.addEventListener('message', (event) => handleMessage(socket, String(event.data)));
+      socket.addEventListener('close', () => {
+        if (disposed || socketRef.current !== socket || terminalReached) return;
+        socketRef.current = null;
+        clearRoundReady();
+        setRoundIntro(null);
+        setStatusMessage('Reconectando à partida');
+        const now = Date.now();
+        retryStartedAt ??= now;
+        if (now - retryStartedAt >= 7_000) {
+          setError('Não foi possível restaurar a conexão dentro de 7 segundos.');
+          return;
+        }
+        retryTimer = window.setTimeout(() => { void connect(); }, 200);
+      });
+      socket.addEventListener('error', () => {
+        if (socketRef.current === socket) setStatusMessage('Reconectando à partida');
+      });
+      if (socket.readyState === WebSocket.OPEN) opened();
+      bufferedMessages.forEach((message) => handleMessage(socket, message));
+    };
+
     const connect = async (): Promise<void> => {
       const currentGeneration = ++generation;
       try {
@@ -116,65 +183,7 @@ export function LiveMatchPage() {
           body: { resource: roomId, scope: 'room' }, getToken, method: 'POST', token,
         });
         if (disposed || currentGeneration !== generation) return;
-        const socket = new WebSocket(websocketUrl(`/api/realtime/rooms/${roomId}?ticket=${encodeURIComponent(ticket.ticket)}`));
-        socketRef.current = socket;
-        socket.addEventListener('open', () => {
-          if (socketRef.current !== socket) return;
-          retryStartedAt = null;
-          setError(null);
-          setStatusMessage('Aguardando jogadores');
-        });
-        socket.addEventListener('message', (event) => {
-          let payload: RoomMessage;
-          try {
-            payload = JSON.parse(String(event.data)) as RoomMessage;
-          } catch {
-            setError('A sala enviou uma mensagem inválida.');
-            return;
-          }
-          if (payload.type === 'ERROR') {
-            setError(payload.message ?? 'A sala rejeitou esta ação.');
-            return;
-          }
-          if (payload.match !== undefined) applyProjection(payload.match);
-          if (payload.type === 'ROOM_STATE') {
-            if (payload.match?.phase === 'LOBBY') socket.send(JSON.stringify({ type: 'READY' }));
-            if (payload.match?.phase === 'ROUND_READY') acknowledgeRound(socket, payload.match, 0);
-          }
-          if (payload.type === 'PREPARING') setStatusMessage('PREPARE-SE PARA A PARTIDA');
-          if (payload.type === 'ROUND_QUESTION' && payload.match !== undefined) {
-            acknowledgeRound(socket, payload.match, roundPresentationDelay(payload.transitionMs), true);
-          }
-          if (payload.type === 'RESUMED') {
-            setStatusMessage('Partida restaurada');
-            if (payload.match?.phase === 'ROUND_READY') acknowledgeRound(socket, payload.match, 0);
-          }
-          if ((payload.type === 'MATCH_FINISHED' || payload.type === 'MATCH_VOID') && payload.result !== undefined) {
-            terminalReached = true;
-            clearRoundReady();
-            setRoundIntro(null);
-            setTerminal(payload.voidReason === undefined
-              ? { result: payload.result }
-              : { result: payload.result, voidReason: payload.voidReason });
-          }
-        });
-        socket.addEventListener('close', () => {
-          if (disposed || socketRef.current !== socket || terminalReached) return;
-          socketRef.current = null;
-          clearRoundReady();
-          setRoundIntro(null);
-          setStatusMessage('Reconectando à partida');
-          const now = Date.now();
-          retryStartedAt ??= now;
-          if (now - retryStartedAt >= 7_000) {
-            setError('Não foi possível restaurar a conexão dentro de 7 segundos.');
-            return;
-          }
-          retryTimer = window.setTimeout(() => { void connect(); }, 200);
-        });
-        socket.addEventListener('error', () => {
-          if (socketRef.current === socket) setStatusMessage('Reconectando à partida');
-        });
+        bindSocket(new WebSocket(websocketUrl(`/api/realtime/rooms/${roomId}?ticket=${encodeURIComponent(ticket.ticket)}`)));
       } catch (connectError) {
         if (disposed) return;
         const now = Date.now();
@@ -187,7 +196,12 @@ export function LiveMatchPage() {
       }
     };
 
-    void connect();
+    const prepared = takePreparedMatchRoom(roomId);
+    if (prepared === null) void connect();
+    else {
+      generation += 1;
+      bindSocket(prepared.socket, prepared.messages);
+    }
     return () => {
       disposed = true;
       generation += 1;
@@ -208,6 +222,7 @@ export function LiveMatchPage() {
         knowledgeDelta={viewer.knowledgeDelta}
         onBack={() => { void navigate('/'); }}
         opponent={{
+          customAvatarUrl: projection?.opponent.customAvatarUrl ?? null,
           frameId: projection?.opponent.frameId ?? null,
           name: projection?.opponent.displayName ?? 'Adversário',
           photoUrl: projection?.opponent.photoUrl ?? null,
@@ -215,6 +230,7 @@ export function LiveMatchPage() {
           score: opponent.score,
         }}
         viewer={{
+          customAvatarUrl: projection?.viewer.customAvatarUrl ?? null,
           frameId: projection?.viewer.frameId ?? null,
           name: projection?.viewer.displayName ?? 'Você',
           photoUrl: projection?.viewer.photoUrl ?? null,
@@ -246,6 +262,7 @@ export function LiveMatchPage() {
             }));
           }}
           opponent={{
+            customAvatarUrl: projection.opponent.customAvatarUrl,
             frameId: projection.opponent.frameId,
             name: projection.opponent.displayName,
             photoUrl: projection.opponent.photoUrl,
@@ -257,6 +274,7 @@ export function LiveMatchPage() {
             ? projection.paused.phaseRemainingMs
             : undefined}
           player={{
+            customAvatarUrl: projection.viewer.customAvatarUrl,
             frameId: projection.viewer.frameId,
             name: projection.viewer.displayName,
             photoUrl: projection.viewer.photoUrl,
@@ -300,7 +318,7 @@ export function LiveMatchPage() {
           ? <MatchRoundTransition durationMs={roundIntro.durationMs} number={roundIntro.number} total={roundIntro.total} />
           : (
             <>
-              <span className="matchmaking-radar"><span /><span /><i /></span>
+              <span aria-hidden="true" className="spinner match-lobby-spinner" />
               <h1>{statusMessage}</h1>
             </>
           )}

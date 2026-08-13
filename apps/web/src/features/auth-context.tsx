@@ -6,11 +6,12 @@ import {
   type User,
 } from 'firebase/auth';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { apiRequest, ClientApiError } from '../lib/api.js';
+import { apiRequest, apiUpload, ClientApiError } from '../lib/api.js';
 import { firebaseAuth, googleProvider } from '../lib/firebase.js';
 
 export interface QuizProfile {
   avatarKey: string;
+  customAvatarUrl: string | null;
   displayName: string;
   equippedFrameId: string | null;
   equippedTitleId: string | null;
@@ -27,10 +28,12 @@ interface AuthValue {
   getToken: (forceRefresh?: boolean) => Promise<string | null>;
   loading: boolean;
   profile: QuizProfile | null;
+  removeCustomAvatar: () => Promise<void>;
   role: 'ADMIN' | 'PLAYER' | null;
   signIn: () => Promise<void>;
   signOut: () => Promise<void>;
   updateDisplayName: (displayName: string) => Promise<void>;
+  uploadCustomAvatar: (avatar: Blob) => Promise<void>;
 }
 
 interface ProfileResponse {
@@ -99,6 +102,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setError(null);
   }, [getToken]);
 
+  const saveAvatar = useCallback(async (avatar?: Blob) => {
+    const token = await getToken();
+    if (token === null) throw new Error('Entre com Google para continuar.');
+    const result = avatar === undefined
+      ? await apiRequest<ProfileResponse>('/api/profile/avatar', { getToken, method: 'DELETE', token })
+      : await apiUpload<ProfileResponse>('/api/profile/avatar', { body: avatar, getToken, method: 'PUT', token });
+    setProfile(result.profile);
+    setRole(result.role);
+    setError(null);
+  }, [getToken]);
+
   const value = useMemo<AuthValue>(() => ({
     createProfile: (displayName) => saveProfile(displayName, 'POST'),
     error,
@@ -106,6 +120,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     getToken,
     loading,
     profile,
+    removeCustomAvatar: () => saveAvatar(),
     role,
     signIn: async () => {
       setError(null);
@@ -125,7 +140,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     },
     signOut: async () => firebaseSignOut(firebaseAuth),
     updateDisplayName: (displayName) => saveProfile(displayName, 'PATCH'),
-  }), [error, firebaseUser, getToken, loading, profile, role, saveProfile]);
+    uploadCustomAvatar: (avatar) => saveAvatar(avatar),
+  }), [error, firebaseUser, getToken, loading, profile, role, saveAvatar, saveProfile]);
 
   return <AuthContext value={value}>{children}</AuthContext>;
 }

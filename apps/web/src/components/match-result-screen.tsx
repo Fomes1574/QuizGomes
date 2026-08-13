@@ -1,10 +1,12 @@
 import { rankForKnowledge, type MatchResult } from '@quiz-gomes/domain';
 import type { CSSProperties } from 'react';
 import { Avatar } from './avatar.js';
+import { AvatarFrame } from './avatar-frame.js';
 import { Button } from './button.js';
 import { Logo } from './logo.js';
 
 interface ResultParticipant {
+  customAvatarUrl?: string | null;
   frameId?: string | null;
   name: string;
   photoUrl?: string | null;
@@ -41,11 +43,10 @@ function ResultPlayer({ participant, relation }: {
 }) {
   return (
     <article className={resultParticipantClass(participant)}>
-      <div
-        className={`match-result-portrait${participant.frameId === null || participant.frameId === undefined ? '' : ' match-result-portrait--framed'}`}
-        data-frame-id={participant.frameId ?? undefined}
-      >
-        <Avatar name={participant.name} photoUrl={participant.photoUrl} size="large" />
+      <div className="match-result-portrait">
+        <AvatarFrame frameId={participant.frameId} variant="result">
+          <Avatar customUrl={participant.customAvatarUrl} googleUrl={participant.photoUrl} name={participant.name} size="large" />
+        </AvatarFrame>
       </div>
       <small>{relation}</small>
       <strong className="match-result-player__name">{participant.name}</strong>

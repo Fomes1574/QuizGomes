@@ -19,6 +19,7 @@ vi.mock('../lib/api.js', () => ({
 }));
 
 import { LiveMatchPage } from '../pages/live-match-page.js';
+import { prepareMatchRoom } from '../lib/preloaded-match-room.js';
 
 type FakeListener = (event: { data?: string }) => void;
 
@@ -37,9 +38,17 @@ class FakeWebSocket {
 
   addEventListener(type: string, listener: EventListenerOrEventListenerObject): void {
     const callback: FakeListener = typeof listener === 'function'
-      ? (event) => listener(event as MessageEvent)
+      ? listener as unknown as FakeListener
       : (event) => listener.handleEvent(event as MessageEvent);
     this.listeners.set(type, [...(this.listeners.get(type) ?? []), callback]);
+  }
+
+  removeEventListener(type: string, listener: EventListenerOrEventListenerObject): void {
+    if (typeof listener !== 'function') return;
+    this.listeners.set(
+      type,
+      (this.listeners.get(type) ?? []).filter((candidate) => candidate !== listener as unknown as FakeListener),
+    );
   }
 
   emitMessage(payload: unknown): void {
@@ -127,5 +136,38 @@ describe('página da partida em tempo real', () => {
     expect(document.querySelector('.match-screen--preparing')).not.toBeInTheDocument();
     expect(screen.getByRole('timer')).toHaveAccessibleName('10 segundos restantes');
     expect(screen.getAllByRole('button').every((button) => !button.hasAttribute('disabled'))).toBe(true);
+  });
+
+  it('assume o socket pré-carregado e só envia READY depois que a MatchScreen monta', async () => {
+    const roomId = '44444444-4444-4444-8444-444444444444';
+    const preparation = prepareMatchRoom(roomId, mocks.getToken);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const socket = FakeWebSocket.instances.at(-1);
+    expect(socket).toBeDefined();
+    act(() => socket?.emitMessage({
+      match: {
+        opponent: { answered: false, customAvatarUrl: null, displayName: 'Ana', frameId: null, photoUrl: null, score: 0 },
+        phase: 'LOBBY',
+        serverNow: Date.now(),
+        viewer: { customAvatarUrl: null, displayName: 'Gomes', frameId: null, photoUrl: null, score: 0, seat: 1 },
+      },
+      type: 'ROOM_STATE',
+    }));
+    await preparation;
+    expect(socket?.send).not.toHaveBeenCalledWith(JSON.stringify({ type: 'READY' }));
+
+    render(
+      <MemoryRouter initialEntries={[`/partida/${roomId}`]}>
+        <Routes>
+          <Route element={<LiveMatchPage />} path="/partida/:roomId" />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(socket?.send).toHaveBeenCalledWith(JSON.stringify({ type: 'READY' }));
+    expect(mocks.apiRequest).toHaveBeenCalledTimes(1);
   });
 });

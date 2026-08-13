@@ -26,10 +26,12 @@ describe('onboarding', () => {
       getToken: vi.fn().mockResolvedValue('token'),
       loading: false,
       profile: null,
+      removeCustomAvatar: vi.fn().mockResolvedValue(undefined),
       role: null,
       signIn: vi.fn().mockResolvedValue(undefined),
       signOut,
       updateDisplayName: vi.fn().mockResolvedValue(undefined),
+      uploadCustomAvatar: vi.fn().mockResolvedValue(undefined),
     });
 
     render(<OnboardingDialog />);

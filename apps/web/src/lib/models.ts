@@ -23,6 +23,7 @@ export interface AdminThemeSummary extends ThemeSummary {
 }
 
 export interface LeaderboardEntry {
+  customAvatarUrl: string | null;
   displayName: string;
   frameId: string | null;
   knowledge: number;

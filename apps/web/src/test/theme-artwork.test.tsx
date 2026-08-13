@@ -50,8 +50,11 @@ describe('componente central de arte do tema', () => {
 
   it('leva a mesma arte já conhecida ao matchmaking sem voltar ao logo genérico', () => {
     render(<MatchmakingDialog
+      elapsedSeconds={0}
       onCancel={() => undefined}
       onClose={() => undefined}
+      opponent={null}
+      preparing={false}
       status="searching"
       theme={{
         activeQuestionCount: 30,

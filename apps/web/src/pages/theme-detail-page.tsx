@@ -2,6 +2,7 @@ import { questionsForDifficulty, type Difficulty, type MatchMode } from '@quiz-g
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { Avatar } from '../components/avatar.js';
+import { AvatarFrame } from '../components/avatar-frame.js';
 import { Button } from '../components/button.js';
 import { ErrorState, LoadingState } from '../components/async-state.js';
 import { Icon } from '../components/icons.js';
@@ -72,14 +73,14 @@ export function ThemeDetailPage() {
         <aside className="leaderboard-card">
           <div className="section-heading"><div><span className="eyebrow">Neste tema</span><h2>Top 5</h2></div></div>
           {data.topFive.length === 0 ? <p className="leaderboard-empty">A primeira Ranqueada ainda está esperando por alguém.</p> : (
-            <ol>{data.topFive.map((entry) => <li key={entry.publicId}><span className="leaderboard-position">{entry.position}</span><Avatar name={entry.displayName} photoUrl={entry.photoUrl} size="small" /><span><strong>{entry.displayName}</strong><small>{entry.publicId}</small></span><RankBadge knowledge={entry.knowledge} /></li>)}</ol>
+            <ol>{data.topFive.map((entry) => <li key={entry.publicId}><span className="leaderboard-position">{entry.position}</span><AvatarFrame frameId={entry.frameId}><Avatar customUrl={entry.customAvatarUrl} googleUrl={entry.photoUrl} name={entry.displayName} size="small" /></AvatarFrame><span><strong>{entry.displayName}</strong><small>{entry.publicId}</small></span><RankBadge knowledge={entry.knowledge} /></li>)}</ol>
           )}
         </aside>
       </div>
 
       <article className="personal-theme-card"><div><span className="eyebrow">Seu cartão</span><h2>{profile?.displayName ?? 'Entre para acompanhar'}</h2><p>{profile ? (data.personal?.rankedMatches ? 'Seu histórico neste tema é calculado apenas pelas partidas Ranqueadas.' : 'Sua história competitiva neste tema começa na primeira Ranqueada.') : 'Ranking, descoberta histórica e Conhecimento ficam reunidos aqui.'}</p></div><div className="personal-theme-card__stats"><RankBadge knowledge={data.personal?.knowledge ?? 0} showKnowledge /><span><strong>{(data.personal?.discoveredPercentage ?? 0).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%</strong><small>descoberto</small></span><span><strong>{data.personal?.position ? `#${data.personal.position}` : '—'}</strong><small>posição</small></span></div></article>
 
-      {matchmaking.status !== 'idle' && <MatchmakingDialog onCancel={matchmaking.cancel} onClose={matchmaking.cancel} status={matchmaking.status} theme={data.theme} />}
+      {matchmaking.status !== 'idle' && <MatchmakingDialog elapsedSeconds={matchmaking.elapsedSeconds} onCancel={matchmaking.cancel} onClose={matchmaking.cancel} opponent={matchmaking.opponent} preparing={matchmaking.preparing} status={matchmaking.status} theme={data.theme} />}
     </section>
   );
 }

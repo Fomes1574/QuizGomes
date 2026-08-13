@@ -3,18 +3,20 @@ import { defineConfig } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig({
+  build: { emptyOutDir: true },
   plugins: [
     react(),
     VitePWA({
       devOptions: { enabled: false },
-      includeAssets: ['brand/logo-placeholder.svg', 'icons/icon-192.svg', 'icons/icon-512.svg'],
+      includeManifestIcons: false,
       manifest: {
         background_color: '#FFF9F7',
         description: 'Quiz competitivo rápido, bonito e pessoal.',
         display: 'standalone',
         icons: [
-          { src: '/icons/icon-192.svg', sizes: '192x192', type: 'image/svg+xml' },
-          { src: '/icons/icon-512.svg', sizes: '512x512', type: 'image/svg+xml', purpose: 'any maskable' },
+          { src: '/icons/icon-192.webp', sizes: '192x192', type: 'image/webp', purpose: 'any' },
+          { src: '/icons/icon-512.webp', sizes: '512x512', type: 'image/webp', purpose: 'any' },
+          { src: '/icons/icon-512-maskable.webp', sizes: '512x512', type: 'image/webp', purpose: 'maskable' },
         ],
         lang: 'pt-BR',
         name: 'QUIZ GOMES',
@@ -27,7 +29,15 @@ export default defineConfig({
       registerType: 'autoUpdate',
       workbox: {
         cleanupOutdatedCaches: true,
-        globIgnores: ['**/create-page-*.js', '**/theme-artwork-editor-*.js'],
+        globIgnores: [
+          '**/avatar-editor-*.js',
+          '**/create-page-*.js',
+          '**/icons/**',
+          '**/theme-artwork-editor-*.js',
+          'apple-touch-icon.png',
+          'favicon-*.png',
+          'favicon.ico',
+        ],
         navigateFallbackDenylist: [/^\/api\//],
         runtimeCaching: [
           {

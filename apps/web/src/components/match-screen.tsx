@@ -1,12 +1,14 @@
 import { LIVE_ROUND_RESULT_MS, QUESTION_DURATION_MS, displayedSeconds, remainingAt } from '@quiz-gomes/domain';
 import { useCallback, useEffect, useState, type CSSProperties } from 'react';
 import { Avatar } from './avatar.js';
+import { AvatarFrame } from './avatar-frame.js';
 
 const OPTION_LABELS = ['A', 'B', 'C', 'D'] as const;
 const ROUND_OPPONENT_REVEAL_MS = 250;
 const ROUND_SCORE_REVEAL_MS = 550;
 
 interface MatchParticipantView {
+  customAvatarUrl?: string | null;
   frameId?: string | null;
   name: string;
   photoUrl?: string | null;
@@ -119,10 +121,6 @@ function MatchTimer({
   );
 }
 
-function participantFrameClass(frameId: string | null | undefined): string {
-  return `match-avatar-frame${frameId === null || frameId === undefined ? '' : ' match-avatar-frame--equipped'}`;
-}
-
 export function MatchScreen({
   deadlineMs,
   onAnswer,
@@ -202,9 +200,9 @@ export function MatchScreen({
             className={`status-dot ${opponentAnswered ? 'status-dot--answered' : ''}`}
             role="status"
           />
-          <span className={participantFrameClass(opponent.frameId)} data-frame-id={opponent.frameId ?? undefined}>
-            <Avatar name={opponent.name} photoUrl={opponent.photoUrl} size="small" />
-          </span>
+          <AvatarFrame frameId={opponent.frameId}>
+            <Avatar customUrl={opponent.customAvatarUrl} googleUrl={opponent.photoUrl} name={opponent.name} size="small" />
+          </AvatarFrame>
           <span className="match-scoreboard__copy">
             <small>{opponent.name}</small>
             <strong aria-live="polite" key={displayedScores.opponent}>{displayedScores.opponent}</strong>
@@ -221,9 +219,9 @@ export function MatchScreen({
               </span>
             )}
           </span>
-          <span className={participantFrameClass(player.frameId)} data-frame-id={player.frameId ?? undefined}>
-            <Avatar name={player.name} photoUrl={player.photoUrl} size="small" />
-          </span>
+          <AvatarFrame frameId={player.frameId}>
+            <Avatar customUrl={player.customAvatarUrl} googleUrl={player.photoUrl} name={player.name} size="small" />
+          </AvatarFrame>
         </div>
       </header>
       <section className="question-stage">
@@ -258,21 +256,17 @@ export function MatchScreen({
                 {(viewerRevealedHere || opponentRevealedHere) && (
                   <span className="answer-option__avatars">
                     {viewerRevealedHere && (
-                      <span
-                        className={`${participantFrameClass(player.frameId)} answer-option__choice-avatar answer-option__choice-avatar--viewer`}
-                        data-frame-id={player.frameId ?? undefined}
-                        data-participant="viewer"
-                      >
-                        <Avatar name={player.name} photoUrl={player.photoUrl} size="small" />
+                      <span className="answer-option__choice-avatar answer-option__choice-avatar--viewer" data-participant="viewer">
+                        <AvatarFrame frameId={player.frameId} variant="choice">
+                          <Avatar customUrl={player.customAvatarUrl} googleUrl={player.photoUrl} name={player.name} size="small" />
+                        </AvatarFrame>
                       </span>
                     )}
                     {opponentRevealedHere && (
-                      <span
-                        className={`${participantFrameClass(opponent.frameId)} answer-option__choice-avatar answer-option__choice-avatar--opponent`}
-                        data-frame-id={opponent.frameId ?? undefined}
-                        data-participant="opponent"
-                      >
-                        <Avatar name={opponent.name} photoUrl={opponent.photoUrl} size="small" />
+                      <span className="answer-option__choice-avatar answer-option__choice-avatar--opponent" data-participant="opponent">
+                        <AvatarFrame frameId={opponent.frameId} variant="choice">
+                          <Avatar customUrl={opponent.customAvatarUrl} googleUrl={opponent.photoUrl} name={opponent.name} size="small" />
+                        </AvatarFrame>
                       </span>
                     )}
                   </span>
