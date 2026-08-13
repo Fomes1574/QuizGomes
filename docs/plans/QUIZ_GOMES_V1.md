@@ -39,6 +39,8 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 - [x] 2026-08-12 — sistema unificado de arte dos temas implementado e validado localmente, com ícones próprios, upload ADMIN em D1 e auditoria de carregamento.
 - [x] 2026-08-12 — falha remota da migration de arte isolada no parser multi-statement do D1; `0004` pendente tornada robusta sem triggers e coberta por gate pré-deploy.
 - [ ] Milestone 8.5 — smoke real do sistema de arte após o deploy: ícone, imagem, iniciais, troca/remoção, claro/escuro, catálogo, tema e matchmaking.
+- [x] 2026-08-13 — correção de escopo do Milestone 8.5 concluída localmente: matchmaking visual/autoritativo, apresentação do adversário, preload seguro, marca oficial e avatar personalizado.
+- [ ] Milestone 8.5 — smoke real pós-deploy da nova apresentação e do upload/troca/remoção de avatar com dois usuários autenticados.
 - [ ] Milestone 9 — social e desafio direto.
 - [ ] Milestone 10 — assíncrono selado e revelação progressiva.
 - [ ] Milestone 11 — criação/moderação/import/admin.
@@ -66,12 +68,16 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 18. **Escolhas são reveladas somente após resolução autoritativa.** Durante `ANSWERING`, a projeção informa apenas se o adversário respondeu. Em `ROUND_RESULT` ou estado equivalente já resolvido, `resolution` recebe do estado do MatchRoom as opções selecionadas por ambos, inclusive erro ou `null` por timeout; o cliente nunca deriva a escolha adversária pelo score.
 19. **Arte de tema é uma união exclusiva e versionada.** `ICON`, `CUSTOM` e `NONE` não coexistem. SVG padrão é estático/reutilizável; WebP personalizado ocupa uma única row BLOB separada no Core D1. Catálogo nunca lê o BLOB, URL pública contém versão, alteração exige versão esperada e somente ADMIN pode gravar.
 20. **Migrations remotas D1 não usam triggers compostos.** O endpoint `/query` recebe a migration inteira e seu parser pode truncar corpos `BEGIN … SELECT CASE … END; END`. A `0004` usa `CHECK`, chave única, FK composta e batches transacionais; o pipeline bloqueia `CREATE TRIGGER`, valida parse/exec/upgrade/rollback localmente e mantém o Workers Build remoto como smoke definitivo.
+21. **Busca visual não substitui autoridade.** A fila envia `SEARCHING.timeoutAt`; o cliente deriva `startedAt = timeoutAt - 60.000`, atualiza apenas o texto por segundo e nunca estende a fila. `MATCH_FOUND` entra em apresentação explícita e não navega imediatamente.
+22. **Preload não inicia gameplay.** Durante 2.900 ms o cliente pode abrir/bufferizar o socket da sala e baixar somente chunk/assets públicos. `READY` fica proibido até a MatchScreen assumir o socket; `correctOption`, resposta adversária e pergunta futura não entram na projeção.
+23. **Avatar customizado é separado e substitutivo.** O BLOB WebP 256 × 256 fica em `user_custom_avatars`; perfil/ranking/partida leem apenas versão ativa. Firebase UID autenticado define o dono e a resolução única em UI é `custom → Google → iniciais`.
+24. **A marca deriva da fonte oficial.** Browser, PWA, Apple e marca interna usam derivados dimensionados do anexo oficial. A variante escura troca somente áreas brancas por near-black, sem `filter: invert()` e sem alterar os ícones canônicos instalados.
 
 ## Descobertas e riscos
 
 - O repositório está **público** por decisão explícita do proprietário. A árvore versionável foi auditada antes da publicação; somente a configuração Web pública do Firebase foi mantida no frontend.
 - O ambiente não possui `gh`; publicação, quando segura, usará a API Git do conector ou exigirá instalação externa.
-- A logo oficial não foi anexada. A UI usará slot técnico claramente substituível, sem redesenho artístico.
+- A logo oficial foi recebida em 2026-08-13. O JPEG fonte não é distribuído; somente derivados técnicos WebP/PNG/ICO dimensionados entram no app, sem redesenho.
 - Alterar slots ativos exige versionar/migrar bitmaps; a V1 bloqueará publicação durante migração para preservar descoberta exata.
 - Revogação imediata de Firebase tokens não é consultada por request sem Admin API; avaliar em hardening para ações críticas.
 - Bindings D1 precisam de UUIDs distintos; IDs iguais fazem o Wrangler compartilhar o mesmo arquivo SQLite entre shards. Os UUIDs reais configurados em 2026-08-11 foram testados em armazenamento local vazio e permaneceram isolados.
@@ -100,6 +106,7 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 - M8.5: timer sem rerender de alta frequência, segundo inteiro sincronizado, pausa por `phaseRemainingMs`, retomada por `remainingMs`, resultado por 2.400 ms, READY após apresentação de 1.900 ms, título de rodada único, escolhas autoritativas com dois avatares, resultado com dois perfis e `prefers-reduced-motion`.
 - Arte de tema: união exclusiva, 16 chaves/SVGs, fallback, imagem quebrada, crop/reencode/cap, magic bytes/chunks/dimensões, autorização ADMIN, conflito de versão, replace/remove, URL/ETag/cache, ausência de BLOB no catálogo, migration vazia e chunks lazy fora do precache.
 - Compatibilidade remota de migrations: parse de cada arquivo com o Wrangler fixado, proibição de trigger composto, banco vazio, upgrade exato `0003 → 0004`, schema/FK/constraints, invariantes metadata/BLOB e rollback sem resíduo em schema ou `d1_migrations`; smoke hospedado continua obrigatório.
+- Correção M8.5: `SEARCHING.timeoutAt`, 00:00–01:00, cancelamento imediato, globo/lupa/personagens/reduced-motion, `MATCH_FOUND` sem navegação imediata, apresentação 1.200/800/900 ms, payload individual sem segredo, preload sem READY, avatar custom→Google→iniciais, upload/replace/remove/version/cache, manifesto/logo claro/escuro e Chromium desktop/mobile.
 
 ## Diário de execução
 
@@ -426,6 +433,35 @@ Validação executada:
 - revisão final da `0004`: LF, 2.168 bytes, zero trigger, zero `RAISE`, seis statements de schema + statement de tracking separados corretamente pelo Wrangler;
 - `npm audit --audit-level=high`: zero vulnerabilidades; auditoria de secrets encontrou somente `.env.example` e `.dev.vars.example` com placeholders esperados, sem chave privada, Service Account ou token;
 - ThemeArtwork, 16 SVGs, UX ADMIN/crop, endpoint/cache/lazy loading, storage D1 separado e auditoria de performance permaneceram inalterados. Nenhum R2, billing, seed, deploy manual ou Milestone 9 foi iniciado.
+
+### 2026-08-13 — correção de escopo do Milestone 8.5
+
+Auditoria antes de alterações:
+
+- a `main` em `856aaa1` ainda possuía radar simples, texto antigo, Cancelar secundário, timeout local, navegação imediata, `QG`, assets PWA placeholder e nenhum avatar customizado;
+- Theme Artwork, os 16 ícones, editor ADMIN e `0004_theme_artwork.sql` foram verificados e permaneceram sem diff;
+- baseline de produção: 372,72 KB / 116,70 KB gzip de JS inicial, 47,63/9,96 KB de CSS e 9 entradas/417,07 KiB de precache.
+
+Implementação concluída:
+
+- a fila envia `SEARCHING.timeoutAt`; o frontend deriva o segundo inteiro e mantém o backend autoritativo, sem polling nem estado por frame;
+- o diálogo preserva `ThemeArtwork`, remove o parágrafo antigo, usa Cancelar primário vermelho e apresenta globo/lupa/personagens próprios em SVG/CSS, com entrada/saída e reduced-motion;
+- o MatchRoom projeta por jogador a identidade real do adversário, `knowledgeBefore` temático e somente a primeira pergunta pública. A apresentação usa 1.200 ms de entrada, 800 ms de permanência e 900 ms de saída;
+- chunk, ticket, socket, avatar e imagem pública atual são preparados nos 2.900 ms. O socket fica bufferizado sem `READY`; a MatchScreen assume a conexão antes de iniciar o protocolo existente;
+- `user_custom_avatars` guarda uma única versão ativa WebP 256 × 256/50 KB no Core D1. Upload e remoção usam o Firebase UID autenticado; perfil, Top 5 e partida consultam somente metadata;
+- `Avatar` e `AvatarFrame` centralizam `custom → Google → iniciais` e preservam moldura no header, perfil, ranking do tema, jogador encontrado, MatchScreen, alternativas e resultado;
+- a imagem oficial anexada gerou favicon, Apple, PWA `192/512/maskable` e logos internas WebP fingerprinted. A variante escura troca somente áreas brancas por near-black; placeholders foram removidos;
+- performance e requests antes/depois estão registrados em `docs/PERFORMANCE_MILESTONE_8_5.md`.
+
+Validação executada:
+
+- gate final `VITE_ENABLE_REALTIME_MATCHES=true npm run check`: lint sem warnings, typecheck dos três workspaces, 30 arquivos/142 testes unitários, 6 arquivos/18 testes Workers/WebSocket, migrations e builds aprovados;
+- migrations Core aprovadas em banco vazio, `0003 → 0004`, `0004 → 0005`, invariantes e rollback; a `0004` não foi alterada;
+- Chromium real: busca/encontrado/preparando em desktop 1.440 × 900 e mobile 390 × 844, claro/escuro, sem overflow/console error; Cancelar computado em vermelho, lupa animada e movimentos desligados por reduced-motion;
+- editor de avatar com arquivo real aprovado nas mesmas larguras, com preview, três controles, troca/remoção e variante escura da marca, sem overflow;
+- `npm audit --audit-level=high`: zero vulnerabilidades; varredura de chave/token privado sem achados;
+- build final: JS inicial 367,71/117,80 KB gzip, CSS 53,47/10,99 KB gzip, MatchScreen lazy 15,03/5,02 KB gzip, cropper lazy 4,92/2,04 KB gzip e precache 11 entradas/433,03 KiB;
+- nenhum scoring, ranking, XP, Conhecimento, duração de 10 segundos, cadência 2.400/1.900, randomização, reconexão, regra de 7 segundos, Durable Object existente ou Milestone 9 foi alterado.
 
 ## Critério de saída desta execução
 

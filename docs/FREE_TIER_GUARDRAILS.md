@@ -37,6 +37,7 @@ As únicas permissões de escrita do token do Workers Builds são Workers Script
 - catálogo: query indexada e paginada, limite fixo;
 - tema: uma leitura de metadata + Top 5 indexado + ranking pessoal;
 - arte de tema: zero BLOB na listagem; no máximo uma row WebP de 60 KB por tema, lida somente pela URL versionada quando a arte aparece;
+- avatar personalizado: zero BLOB em perfil/ranking/partida; no máximo uma row WebP de 50 KB por usuário, lida somente pela URL versionada;
 - matchmaking: mensagens/eventos no DO, sem writes periódicos D1;
 - rodada: estado principal no DO; D1 recebe finalização/agregados em batch, não ticks do timer;
 - histórico: uma row compacta usuário+pool em vez de uma row por pergunta;
@@ -54,6 +55,7 @@ O administrador deve acompanhar semanalmente no começo e diariamente após cres
 - número de matches incompletos e retries;
 - tamanho/quantidade de imagens quando R2 for aprovado.
 - quantidade e bytes de `theme_artwork_blobs`; 100 temas no hard cap representam cerca de 6 MB e 1.000 representam cerca de 60 MB, antes do overhead do SQLite.
+- quantidade e bytes de `user_custom_avatars`; remoção limpa o BLOB e troca substitui a row, sem histórico de originais.
 
 Alertas iniciais recomendados: 50%, 75% e 90% do limite diário. Em 75%, investigar antes de ampliar produto. Em 90%, degradar recursos não essenciais (presença detalhada/admin analytics), nunca integridade de partida.
 
@@ -67,7 +69,7 @@ Sinais:
 - envio de catálogo completo ao browser;
 - uma row por usuário×pergunta;
 - duplicação de snapshots grandes;
-- imagem de pergunta maior que 100 KB ou arte de tema maior que 60 KB;
+- imagem de pergunta maior que 100 KB, arte de tema maior que 60 KB ou avatar maior que 50 KB;
 - shards com pools não densos causando rerolls excessivos.
 
 Nenhuma franquia é considerada infinita. Se um requisito futuro exigir plano pago, a operação deve parar sem ativar billing; registrar custo, alternativa e decisão do proprietário.

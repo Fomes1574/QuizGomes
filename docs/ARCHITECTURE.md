@@ -110,6 +110,11 @@ Há duas camadas intencionalmente distintas:
 
 - imagens de pergunta continuam atrás de `ImageStorage`; `LocalImageStorage` serve fixtures e nenhum R2 foi provisionado;
 - arte personalizada de tema é pequena e dinâmica, fica no `CORE_DB.theme_artwork_blobs` e possui exatamente uma linha ativa por tema.
+- avatar personalizado fica no `CORE_DB.user_custom_avatars`, em uma row separada e versionada por usuário; consultas normais leem somente `active/version`, nunca o BLOB.
+
+O cliente recorta em quadrado, gera 256 × 256 WebP e busca aproximadamente 25–40 KB, com hard cap de 50 KB. O Worker autentica pelo Firebase UID, ignora qualquer identidade fornecida pelo cliente, limita a leitura, reinspeciona o contêiner/dimensões e substitui a única row. Remover limpa o BLOB e incrementa a versão. A resolução visual central é `custom → foto Google segura → iniciais`; a URL pública `/api/avatars/:userId/v<versão>.webp` tem ETag/cache imutável e deixa de servir a versão anterior após troca ou remoção.
+
+`MATCH_FOUND` não transporta estado privado da sala. Depois da inicialização autoritativa, o MatchRoom projeta individualmente nome, URLs de avatar, frame, `knowledgeBefore` do tema e somente a primeira pergunta pública. A tela usa os 2,9 s mínimos para abrir e bufferizar o socket da sala, mas não envia `READY`; portanto o relógio de 10 segundos não começa durante a apresentação. A MatchScreen assume o socket e só então participa do protocolo existente.
 
 `themes` mantém somente `artwork_kind`, `artwork_icon_key`, `artwork_version` e a ponte compatível `cover_image_key`. Catálogo, detalhe e matchmaking consultam apenas esses metadados. O BLOB só é lido por `GET /api/theme-artwork/:themeId/v:version.webp`, cuja URL imutável muda em toda substituição. Versões anteriores deixam imediatamente de ser servidas e a row anterior é substituída; não existe galeria ou histórico no produto. O Time Travel interno do D1 continua sendo uma capacidade operacional do provedor, não uma restauração exposta ao usuário.
 
