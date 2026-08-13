@@ -3,6 +3,7 @@ import {
   type StandardThemeIconKey,
   type ThemeArtwork,
 } from '@quiz-gomes/domain';
+import { customAvatarUrl } from '../storage/custom-avatar.js';
 
 export interface CategoryRecord {
   id: string;
@@ -261,6 +262,7 @@ export class ThemeRepository {
   }
 
   async topFive(themeId: string): Promise<Array<{
+    customAvatarUrl: string | null;
     displayName: string;
     frameId: string | null;
     knowledge: number;
@@ -269,22 +271,27 @@ export class ThemeRepository {
     publicId: string;
   }>> {
     const result = await this.db.prepare(
-      `SELECT p.display_name, p.public_id, p.photo_url, p.equipped_frame_id,
+      `SELECT p.user_id, p.display_name, p.public_id, p.photo_url, p.equipped_frame_id,
+              CASE WHEN a.active = 1 THEN a.version ELSE NULL END AS custom_avatar_version,
               r.knowledge, RANK() OVER (ORDER BY r.knowledge DESC) AS position
          FROM theme_rankings r
          JOIN user_profiles p ON p.user_id = r.user_id
+         LEFT JOIN user_custom_avatars a ON a.user_id = r.user_id
         WHERE r.theme_id = ?1
         ORDER BY r.knowledge DESC
         LIMIT 5`,
     ).bind(themeId).all<{
+      custom_avatar_version: number | null;
       display_name: string;
       equipped_frame_id: string | null;
       knowledge: number;
       photo_url: string | null;
       position: number;
       public_id: string;
+      user_id: string;
     }>();
     return result.results.map((row) => ({
+      customAvatarUrl: customAvatarUrl(row.user_id, row.custom_avatar_version),
       displayName: row.display_name,
       frameId: row.equipped_frame_id,
       knowledge: row.knowledge,

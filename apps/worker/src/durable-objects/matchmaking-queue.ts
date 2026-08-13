@@ -1,10 +1,18 @@
 import type { Env } from '../env.js';
+import type { LiveMatchPresentationProjection } from '@quiz-gomes/domain';
 
 interface QueueAttachment {
   joinedAt: number;
   knowledge: number;
   resource: string;
   uid: string;
+}
+
+interface RoomInitializationResult {
+  presentations?: Array<{
+    presentation?: LiveMatchPresentationProjection;
+    uid?: string;
+  }>;
 }
 
 function attachment(socket: WebSocket): QueueAttachment | null {
@@ -35,6 +43,7 @@ export class MatchmakingQueue {
     const existingAlarm = await this.ctx.storage.getAlarm();
     const timeoutAt = current.joinedAt + 60_000;
     if (existingAlarm === null || existingAlarm > timeoutAt) await this.ctx.storage.setAlarm(timeoutAt);
+    server.send(JSON.stringify({ type: 'SEARCHING', timeoutAt }));
 
     const candidates = this.ctx.getWebSockets()
       .filter((socket) => socket !== server)
@@ -49,7 +58,7 @@ export class MatchmakingQueue {
     if (opponent !== undefined) {
       const roomId = crypto.randomUUID();
       const room = this.env.MATCH_ROOM.get(this.env.MATCH_ROOM.idFromName(roomId));
-      let initialized: boolean;
+      let initialization: RoomInitializationResult | null;
       try {
         const response = await room.fetch('https://room.internal/initialize', {
           body: JSON.stringify({
@@ -60,11 +69,13 @@ export class MatchmakingQueue {
           }),
           method: 'POST',
         });
-        initialized = response.ok;
+        initialization = response.ok ? await response.json<RoomInitializationResult>() : null;
       } catch {
-        initialized = false;
+        initialization = null;
       }
-      if (!initialized) {
+      const currentPresentation = initialization?.presentations?.find((entry) => entry.uid === uid)?.presentation;
+      const opponentPresentation = initialization?.presentations?.find((entry) => entry.uid === opponent.value.uid)?.presentation;
+      if (currentPresentation === undefined || opponentPresentation === undefined) {
         const payload = JSON.stringify({ code: 'MATCH_INITIALIZATION_FAILED', type: 'MATCH_FAILED' });
         server.send(payload);
         opponent.socket.send(payload);
@@ -97,13 +108,10 @@ export class MatchmakingQueue {
         opponent.socket.close(4_101, 'Reserva inválida');
         return new Response(null, { status: 101, webSocket: client });
       }
-      const payload = JSON.stringify({ type: 'MATCH_FOUND', roomId });
-      server.send(payload);
-      opponent.socket.send(payload);
+      server.send(JSON.stringify({ ...currentPresentation, type: 'MATCH_FOUND', roomId }));
+      opponent.socket.send(JSON.stringify({ ...opponentPresentation, type: 'MATCH_FOUND', roomId }));
       server.close(1000, 'Pareado');
       opponent.socket.close(1000, 'Pareado');
-    } else {
-      server.send(JSON.stringify({ type: 'SEARCHING', timeoutAt }));
     }
     return new Response(null, { status: 101, webSocket: client });
   }

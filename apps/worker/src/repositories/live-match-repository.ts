@@ -21,8 +21,10 @@ import { ApiError } from '../http/api-error.js';
 import { PoolStateRepository } from './pool-state-repository.js';
 import { QuestionRepository } from './question-repository.js';
 import { QuestionSelectionService } from '../services/question-selection-service.js';
+import { customAvatarUrl } from '../storage/custom-avatar.js';
 
 interface InitializationPlayerRow {
+  custom_avatar_version: number | null;
   display_name: string;
   equipped_frame_id: string | null;
   firebase_uid: string;
@@ -96,6 +98,7 @@ export function parseMatchResource(resource: string): ParsedMatchResource | null
 
 function mapInitializationPlayer(row: InitializationPlayerRow): Omit<LivePlayer, 'connected' | 'lobbyReady' | 'roundReady' | 'score' | 'seat'> {
   return {
+    customAvatarUrl: customAvatarUrl(row.user_id, row.custom_avatar_version),
     displayName: row.display_name,
     firebaseUid: row.firebase_uid,
     frameId: row.equipped_frame_id,
@@ -166,9 +169,11 @@ export class LiveMatchRepository {
 
     const playerStatement = this.coreDb.prepare(
       `SELECT u.id AS user_id, u.firebase_uid, p.display_name, p.photo_url, p.equipped_frame_id,
+              CASE WHEN a.active = 1 THEN a.version ELSE NULL END AS custom_avatar_version,
               COALESCE(r.knowledge, 0) AS knowledge
          FROM users u
          JOIN user_profiles p ON p.user_id = u.id
+         LEFT JOIN user_custom_avatars a ON a.user_id = u.id
          LEFT JOIN theme_rankings r ON r.user_id = u.id AND r.theme_id = ?2
         WHERE u.firebase_uid = ?1 AND u.disabled_at IS NULL`,
     );

@@ -28,6 +28,7 @@ export interface LiveQuestion extends SecretQuestion {
 
 export interface LivePlayer {
   connected: boolean;
+  customAvatarUrl: string | null;
   displayName: string;
   firebaseUid: string;
   frameId: string | null;
@@ -478,6 +479,7 @@ export function markLiveMatchFinalized(state: LiveMatchState): LiveMatchState {
 export interface LiveMatchProjection {
   opponent: {
     answered: boolean;
+    customAvatarUrl: string | null;
     displayName: string;
     frameId: string | null;
     photoUrl: string | null;
@@ -505,11 +507,44 @@ export interface LiveMatchProjection {
   selectedOption?: number | null;
   serverNow: number;
   viewer: {
+    customAvatarUrl: string | null;
     displayName: string;
     frameId: string | null;
     photoUrl: string | null;
     score: number;
     seat: LiveSeat;
+  };
+}
+
+export interface LiveMatchPresentationProjection {
+  opponent: {
+    customAvatarUrl: string | null;
+    displayName: string;
+    frameId: string | null;
+    knowledge: number;
+    photoUrl: string | null;
+  };
+  preload: {
+    firstQuestion: PublicQuestion;
+  };
+}
+
+export function projectLiveMatchPresentationForSeat(
+  state: LiveMatchState,
+  viewerSeat: LiveSeat,
+): LiveMatchPresentationProjection {
+  const opponent = state.players[playerIndex(otherSeat(viewerSeat))];
+  const firstQuestion = state.questions[0];
+  if (firstQuestion === undefined) throw new LiveMatchCommandError('MATCH_WITHOUT_QUESTIONS', 'A partida não possui perguntas.');
+  return {
+    opponent: {
+      customAvatarUrl: opponent.customAvatarUrl,
+      displayName: opponent.displayName,
+      frameId: opponent.frameId,
+      knowledge: opponent.knowledgeBefore,
+      photoUrl: opponent.photoUrl,
+    },
+    preload: { firstQuestion: publicQuestion(firstQuestion) },
   };
 }
 
@@ -541,6 +576,7 @@ export function projectLiveMatchForSeat(
   const projection: LiveMatchProjection = {
     opponent: {
       answered: opponentAnswer?.submitted ?? false,
+      customAvatarUrl: opponent.customAvatarUrl,
       displayName: opponent.displayName,
       frameId: opponent.frameId,
       photoUrl: opponent.photoUrl,
@@ -549,6 +585,7 @@ export function projectLiveMatchForSeat(
     phase: state.phase,
     serverNow: nowMs,
     viewer: {
+      customAvatarUrl: viewer.customAvatarUrl,
       displayName: viewer.displayName,
       frameId: viewer.frameId,
       photoUrl: viewer.photoUrl,

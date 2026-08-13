@@ -143,7 +143,7 @@ function assertFinalSchema(scenario) {
   const schemaObjects = query(scenario, `
     SELECT name, type
       FROM sqlite_master
-     WHERE name IN ('theme_artwork_blobs', 'themes_artwork_parent_key')
+     WHERE name IN ('theme_artwork_blobs', 'themes_artwork_parent_key', 'user_custom_avatars')
         OR type = 'trigger'
      ORDER BY type, name
   `);
@@ -154,6 +154,10 @@ function assertFinalSchema(scenario) {
   assert(
     schemaObjects.some(({ name, type }) => name === 'themes_artwork_parent_key' && type === 'index'),
     `${scenario.name}: índice pai da arte ausente`,
+  );
+  assert(
+    schemaObjects.some(({ name, type }) => name === 'user_custom_avatars' && type === 'table'),
+    `${scenario.name}: tabela user_custom_avatars ausente`,
   );
   assert(!schemaObjects.some(({ type }) => type === 'trigger'), `${scenario.name}: migration criou trigger remoto frágil`);
 
@@ -177,10 +181,20 @@ function assertFinalSchema(scenario) {
     )), `${scenario.name}: FK composta ausente em ${from} → ${to}`);
   }
 
+  const avatarForeignKeys = query(scenario, 'PRAGMA foreign_key_list(user_custom_avatars)');
+  assert(
+    avatarForeignKeys.some((foreignKey) => (
+      foreignKey.from === 'user_id'
+      && foreignKey.to === 'id'
+      && foreignKey.on_delete === 'CASCADE'
+    )),
+    `${scenario.name}: FK do avatar para users ausente`,
+  );
+
   const appliedMigrations = query(scenario, 'SELECT name FROM d1_migrations ORDER BY id');
   assert(
-    appliedMigrations.at(-1)?.name === '0004_theme_artwork.sql',
-    `${scenario.name}: 0004 não foi registrada como última migration`,
+    appliedMigrations.at(-1)?.name === '0005_user_custom_avatars.sql',
+    `${scenario.name}: 0005 não foi registrada como última migration`,
   );
   const upgradedTheme = query(scenario, `
     SELECT artwork_kind, artwork_icon_key, artwork_version
@@ -193,6 +207,52 @@ function assertFinalSchema(scenario) {
       && upgradedTheme[0].artwork_icon_key === null
       && upgradedTheme[0].artwork_version === 0,
     `${scenario.name}: defaults da 0004 não preservaram o tema vindo da 0003`,
+  );
+}
+
+/** @param {MigrationScenario} scenario */
+function assertAvatarInvariants(scenario) {
+  const userId = `avatar-user-${scenario.name}`;
+  executeSql(scenario, `
+    INSERT INTO users (id, firebase_uid) VALUES ('${userId}', 'firebase-${userId}');
+    INSERT INTO user_profiles (user_id, public_id, display_name)
+    VALUES ('${userId}', '#QGAVATAR${scenario.name.toUpperCase()}', 'Avatar sintético');
+    INSERT INTO user_custom_avatars (
+      user_id, version, active, content_type, width, height, byte_length, image_data
+    ) VALUES ('${userId}', 1, 1, 'image/webp', 256, 256, 1, X'00');
+  `);
+  executeSql(scenario, `
+    UPDATE user_custom_avatars
+       SET width = 512
+     WHERE user_id = '${userId}'
+  `, true);
+  executeSql(scenario, `
+    UPDATE user_custom_avatars
+       SET byte_length = 51201
+     WHERE user_id = '${userId}'
+  `, true);
+  executeSql(scenario, `
+    UPDATE user_custom_avatars
+       SET version = version + 1,
+           active = 0,
+           content_type = NULL,
+           width = NULL,
+           height = NULL,
+           byte_length = NULL,
+           image_data = NULL
+     WHERE user_id = '${userId}'
+  `);
+  const removed = query(scenario, `
+    SELECT version, active, image_data
+      FROM user_custom_avatars
+     WHERE user_id = '${userId}'
+  `);
+  assert(
+    removed.length === 1
+      && removed[0].version === 2
+      && removed[0].active === 0
+      && removed[0].image_data === null,
+    `${scenario.name}: remoção não invalidou a versão nem descartou o BLOB`,
   );
 }
 
@@ -280,7 +340,7 @@ function assertArtworkInvariants(scenario) {
 
 /** @param {MigrationScenario} scenario */
 async function assertRollback(scenario) {
-  const rollbackMigrationName = '0005_rollback_probe.sql';
+  const rollbackMigrationName = '0006_rollback_probe.sql';
   await writeFile(join(scenario.migrationsDirectory, rollbackMigrationName), `
     CREATE TABLE theme_artwork_rollback_probe (id INTEGER PRIMARY KEY);
     INSERT INTO theme_artwork_rollback_probe (id) VALUES (1);
@@ -300,6 +360,7 @@ try {
     .filter((name) => /^\d+_[a-z0-9_-]+\.sql$/i.test(name))
     .sort();
   assert(migrationNames.includes('0004_theme_artwork.sql'), 'Migration 0004_theme_artwork.sql ausente');
+  assert(migrationNames.includes('0005_user_custom_avatars.sql'), 'Migration 0005_user_custom_avatars.sql ausente');
 
   for (const migrationName of migrationNames) {
     const sql = await readFile(join(sourceMigrationsDirectory, migrationName), 'utf8');
@@ -323,8 +384,12 @@ try {
   applyMigrations(emptyDatabase);
   assertFinalSchema(emptyDatabase);
   assertArtworkInvariants(emptyDatabase);
+  assertAvatarInvariants(emptyDatabase);
 
-  const upgradeDatabase = await createScenario('upgrade-0003', migrationNames.filter((name) => name !== '0004_theme_artwork.sql'));
+  const upgradeDatabase = await createScenario(
+    'upgrade-0003',
+    migrationNames.filter((name) => !['0004_theme_artwork.sql', '0005_user_custom_avatars.sql'].includes(name)),
+  );
   console.log('Validando upgrade D1 exato de 0003 para 0004...');
   applyMigrations(upgradeDatabase);
   const beforeUpgrade = query(upgradeDatabase, 'SELECT name FROM d1_migrations ORDER BY id');
@@ -338,12 +403,23 @@ try {
     join(upgradeDatabase.migrationsDirectory, '0004_theme_artwork.sql'),
   );
   applyMigrations(upgradeDatabase);
-  assertFinalSchema(upgradeDatabase);
   assertArtworkInvariants(upgradeDatabase);
+  assert(
+    !query(upgradeDatabase, "SELECT name FROM sqlite_master WHERE name = 'user_custom_avatars'").length,
+    'upgrade-0003: tabela de avatar já existia antes da 0005',
+  );
+  console.log('Validando upgrade D1 atual exato de 0004 para 0005...');
+  await copyFile(
+    join(sourceMigrationsDirectory, '0005_user_custom_avatars.sql'),
+    join(upgradeDatabase.migrationsDirectory, '0005_user_custom_avatars.sql'),
+  );
+  applyMigrations(upgradeDatabase);
+  assertFinalSchema(upgradeDatabase);
+  assertAvatarInvariants(upgradeDatabase);
   console.log('Validando rollback transacional de migration com erro...');
   await assertRollback(upgradeDatabase);
 
-  console.log('Migrations D1 aprovadas: parser Wrangler, banco vazio, upgrade 0003→0004, invariantes, rollback e schema final.');
+  console.log('Migrations D1 aprovadas: parser Wrangler, banco vazio, upgrades 0003→0004 e 0004→0005, invariantes, rollback e schema final.');
 } finally {
   await rm(temporaryRoot, { force: true, recursive: true });
 }

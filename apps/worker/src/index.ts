@@ -29,6 +29,7 @@ import { UserRepository } from './repositories/user-repository.js';
 import { LiveMatchRepository, parseMatchResource } from './repositories/live-match-repository.js';
 import { QuestionImportService } from './services/question-import-service.js';
 import { inspectWebp, THEME_ARTWORK_MAX_BYTES } from './storage/webp.js';
+import { CUSTOM_AVATAR_BYTES, CUSTOM_AVATAR_DIMENSION } from './storage/custom-avatar.js';
 
 export { MatchRoom, MatchmakingQueue, PresenceHub, TicketBroker };
 
@@ -188,6 +189,55 @@ async function profileRoute(request: Request, env: Env): Promise<Response> {
   throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Método não permitido.');
 }
 
+async function profileAvatarRoute(request: Request, env: Env): Promise<Response> {
+  const identity = await requireUser(request, env);
+  const repository = new UserRepository(env.CORE_DB);
+  let profile;
+  if (request.method === 'PUT') {
+    if (request.headers.get('Content-Type')?.split(';', 1)[0]?.trim().toLowerCase() !== 'image/webp') {
+      throw new ApiError(415, 'AVATAR_TYPE_INVALID', 'Envie o avatar reencodado em WebP.');
+    }
+    const data = await readBytes(request, CUSTOM_AVATAR_BYTES, new ApiError(
+      413,
+      'AVATAR_TOO_LARGE',
+      'O avatar deve ter no máximo 50 KB.',
+    ));
+    const dimensions = inspectWebp(data);
+    if (dimensions?.width !== CUSTOM_AVATAR_DIMENSION || dimensions.height !== CUSTOM_AVATAR_DIMENSION) {
+      throw new ApiError(400, 'AVATAR_INVALID', 'O avatar precisa ser WebP válido de 256 × 256 px, sem metadata.');
+    }
+    profile = await repository.replaceCustomAvatar(identity.uid, data);
+  } else if (request.method === 'DELETE') {
+    profile = await repository.removeCustomAvatar(identity.uid);
+  } else {
+    throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Método não permitido.');
+  }
+  if (profile === null) throw new ApiError(404, 'PROFILE_NOT_FOUND', 'Crie o perfil antes de editar o avatar.');
+  return json({ profile, role: await hasAdminAccess(identity, env) ? 'ADMIN' : 'PLAYER' });
+}
+
+async function customAvatarRoute(
+  request: Request,
+  repository: UserRepository,
+  userId: string,
+  version: number,
+): Promise<Response> {
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Método não permitido.');
+  }
+  const avatar = await repository.readCustomAvatar(userId, version);
+  if (avatar === null) throw new ApiError(404, 'AVATAR_NOT_FOUND', 'Avatar não encontrado.');
+  const etag = `"user-avatar:${userId}:v${version}"`;
+  const headers = new Headers({
+    'Cache-Control': 'public, max-age=31536000, immutable',
+    'Content-Length': String(avatar.byteLength),
+    'Content-Type': avatar.contentType,
+    ETag: etag,
+  });
+  if (request.headers.get('If-None-Match') === etag) return new Response(null, { headers, status: 304 });
+  return new Response(request.method === 'HEAD' ? null : avatar.data, { headers });
+}
+
 async function adminImportRoute(request: Request, env: Env): Promise<Response> {
   if (request.method !== 'POST') throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Método não permitido.');
   const identity = await requireUser(request, env);
@@ -302,6 +352,7 @@ async function apiRoute(request: Request, env: Env, url: URL): Promise<Response>
     return json({ name: 'QUIZ GOMES', status: 'ok', version: '0.1.0' });
   }
   if (url.pathname === '/api/profile/me') return profileRoute(request, env);
+  if (url.pathname === '/api/profile/avatar') return profileAvatarRoute(request, env);
   if (url.pathname === '/api/realtime/tickets' && request.method === 'POST') return createRealtimeTicket(request, env);
   if (url.pathname.startsWith('/api/realtime/') && request.headers.get('Upgrade') !== null) return realtimeRoute(request, env, url);
   if (url.pathname === '/api/admin/questions/import') return adminImportRoute(request, env);
@@ -313,6 +364,12 @@ async function apiRoute(request: Request, env: Env, url: URL): Promise<Response>
   }
 
   const themes = new ThemeRepository(env.CORE_DB);
+  const customAvatarMatch = /^\/api\/avatars\/([a-z0-9_-]{1,128})\/v([1-9]\d*)\.webp$/i.exec(url.pathname);
+  if (customAvatarMatch?.[1] !== undefined && customAvatarMatch[2] !== undefined) {
+    const version = Number(customAvatarMatch[2]);
+    if (!Number.isSafeInteger(version)) throw new ApiError(404, 'NOT_FOUND', 'Rota não encontrada.');
+    return customAvatarRoute(request, new UserRepository(env.CORE_DB), decodeURIComponent(customAvatarMatch[1]), version);
+  }
   const artworkMatch = /^\/api\/theme-artwork\/([a-z0-9_-]{1,128})\/v([1-9]\d*)\.webp$/i.exec(url.pathname);
   if (artworkMatch?.[1] !== undefined && artworkMatch[2] !== undefined) {
     const version = Number(artworkMatch[2]);

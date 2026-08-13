@@ -3,6 +3,7 @@ import {
   LIVE_PREPARATION_MS,
   LIVE_ROUND_RESULT_MS,
   projectLiveMatchForSeat,
+  projectLiveMatchPresentationForSeat,
   QUESTION_DURATION_MS,
   RECONNECT_GRACE_MS,
   transitionLiveMatch,
@@ -31,8 +32,8 @@ function match(difficulty: Difficulty = 'EASY'): LiveMatchState {
     matchId: 'match-1',
     mode: 'RANKED',
     players: [
-      { displayName: 'Jogador 1', firebaseUid: 'firebase-1', frameId: null, knowledgeBefore: 2_500, photoUrl: null, userId: 'user-1' },
-      { displayName: 'Jogador 2', firebaseUid: 'firebase-2', frameId: null, knowledgeBefore: 5_000, photoUrl: null, userId: 'user-2' },
+      { customAvatarUrl: null, displayName: 'Jogador 1', firebaseUid: 'firebase-1', frameId: null, knowledgeBefore: 2_500, photoUrl: null, userId: 'user-1' },
+      { customAvatarUrl: null, displayName: 'Jogador 2', firebaseUid: 'firebase-2', frameId: null, knowledgeBefore: 5_000, photoUrl: null, userId: 'user-2' },
     ],
     poolId: 'pool-1',
     poolVersion: 1,
@@ -101,6 +102,25 @@ describe('partida simultânea autoritativa', () => {
     expect(projection.question?.id).toBe('q-1');
     expect(JSON.stringify(projection)).not.toContain('correctOption');
     expect(JSON.stringify(projection)).not.toContain('q-2');
+  });
+
+  it('projeta apresentação individual com adversário real, elo temático e somente a primeira pergunta pública', () => {
+    const state = match();
+    state.players[1].customAvatarUrl = '/api/avatars/user-2/v3.webp';
+    state.players[1].frameId = 'frame-real';
+    const presentation = projectLiveMatchPresentationForSeat(state, 1);
+
+    expect(presentation.opponent).toEqual({
+      customAvatarUrl: '/api/avatars/user-2/v3.webp',
+      displayName: 'Jogador 2',
+      frameId: 'frame-real',
+      knowledge: 5_000,
+      photoUrl: null,
+    });
+    expect(presentation.preload.firstQuestion.id).toBe('q-1');
+    expect(JSON.stringify(presentation)).not.toContain('correctOption');
+    expect(JSON.stringify(presentation)).not.toContain('q-2');
+    expect(JSON.stringify(presentation)).not.toContain('selectedOption');
   });
 
   it('calcula score no servidor, sela a escolha durante ANSWERING e a revela somente na resolução', () => {

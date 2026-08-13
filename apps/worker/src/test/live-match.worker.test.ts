@@ -13,10 +13,20 @@ import { LiveMatchRepository } from '../repositories/live-match-repository.js';
 interface TestMessage {
   code?: string;
   match?: LiveMatchProjection;
+  opponent?: {
+    customAvatarUrl: string | null;
+    displayName: string;
+    frameId: string | null;
+    knowledge: number;
+    photoUrl: string | null;
+  };
+  preload?: { firstQuestion: { id: string; imageUrl: string | null; options: string[]; prompt: string } };
   result?: {
     opponent: { result: string; score: number };
     viewer: { knowledgeAfter: number; knowledgeDelta: number; result: string; score: number; xpDelta: number };
   };
+  roomId?: string;
+  timeoutAt?: number;
   type?: string;
   voidReason?: string;
 }
@@ -229,6 +239,85 @@ beforeAll(async () => {
 });
 
 describe('Milestone 8 no runtime Workers simulado', () => {
+  it('emite SEARCHING autoritativo e MATCH_FOUND individual sem resposta nem pergunta futura', async () => {
+    const fixture = await seedMatchFixture('matchfound', 0, 'CASUAL');
+    const avatarBytes = Uint8Array.from(atob(
+      'UklGRsAAAABXRUJQVlA4ILQAAAAwEQCdASoAAQABPpFIoU0lpCMiICgAsBIJaW7hdrEe3AAAFBjpyHvtk5H/PJyHvtk5D32ych77ZOQ99snIe+2TkPfbJyHvtk5D32ych77ZOQ99snIe+2TkPfbJyHvtk5D32ych77ZOQ99snIe+2TkPfbJyHvtk5D32ych77ZOQ99snIe+2TkPfbJyHvtk5D32xwAD+/ygT//D+/jVH//6En/wSf/BJ+5E8PunBQAAAAAAAAAA=',
+    ), (character) => character.charCodeAt(0)).buffer;
+    await env.CORE_DB.batch([
+      env.CORE_DB.prepare(
+        `UPDATE user_profiles SET photo_url = 'https://lh3.googleusercontent.com/matchfound-one',
+                                  equipped_frame_id = 'frame-matchfound-real'
+          WHERE user_id = ?1`,
+      ).bind(fixture.userIds[0]),
+      env.CORE_DB.prepare(
+        `INSERT INTO user_custom_avatars
+         (user_id, version, active, content_type, width, height, byte_length, image_data)
+         VALUES (?1, 1, 1, 'image/webp', 256, 256, ?2, ?3)`,
+      ).bind(fixture.userIds[0], avatarBytes.byteLength, avatarBytes),
+      env.CORE_DB.prepare('DELETE FROM theme_rankings WHERE user_id = ?1 AND theme_id = ?2')
+        .bind(fixture.userIds[1], fixture.themeId),
+    ]);
+
+    for (const uid of fixture.uids) {
+      const presence = env.PRESENCE_HUB.get(env.PRESENCE_HUB.idFromName(uid));
+      const reserved = await presence.fetch('https://presence.internal/transition', {
+        body: JSON.stringify({ from: 'idle', resource: fixture.resource, to: 'matchmaking' }),
+        method: 'POST',
+      });
+      expect(reserved.ok).toBe(true);
+    }
+
+    const queue = env.MATCHMAKING_QUEUE.get(env.MATCHMAKING_QUEUE.idFromName(fixture.resource));
+    const openQueue = async (uid: string) => {
+      const response = await queue.fetch(new Request('https://queue.internal/socket', {
+        headers: {
+          Upgrade: 'websocket',
+          'X-QG-Authenticated-Uid': uid,
+          'X-QG-Match-Resource': fixture.resource,
+          'X-QG-Theme-Knowledge': '0',
+        },
+      }));
+      expect(response.status).toBe(101);
+      return capture(response.webSocket as WebSocket);
+    };
+
+    const first = await openQueue(fixture.uids[0]);
+    const firstSearching = await first.waitFor('SEARCHING');
+    expect(firstSearching.timeoutAt).toBeGreaterThan(Date.now());
+    const second = await openQueue(fixture.uids[1]);
+    const [firstFound, secondSearching, secondFound] = await Promise.all([
+      first.waitFor('MATCH_FOUND'),
+      second.waitFor('SEARCHING'),
+      second.waitFor('MATCH_FOUND'),
+    ]);
+
+    expect(firstFound.roomId).toMatch(/^[a-f0-9-]{36}$/i);
+    expect(firstFound.opponent).toMatchObject({
+      customAvatarUrl: null,
+      displayName: 'matchfound Jogador 2',
+      knowledge: 0,
+    });
+    expect(secondFound.roomId).toBe(firstFound.roomId);
+    expect(secondFound.opponent).toEqual({
+      customAvatarUrl: `/api/avatars/${fixture.userIds[0]}/v1.webp`,
+      displayName: 'matchfound Jogador 1',
+      frameId: 'frame-matchfound-real',
+      knowledge: 0,
+      photoUrl: 'https://lh3.googleusercontent.com/matchfound-one',
+    });
+    expect(secondSearching.timeoutAt).toBeGreaterThan(Date.now());
+    const firstQuestionId = firstFound.preload?.firstQuestion.id;
+    expect(firstQuestionId).toMatch(/^matchfound-q-[1-5]$/);
+    expect(secondFound.preload?.firstQuestion.id).toBe(firstQuestionId);
+    expect(JSON.stringify(firstFound)).not.toContain('correctOption');
+    expect(JSON.stringify(firstFound)).not.toContain('selectedOption');
+    for (let index = 1; index <= 5; index += 1) {
+      const questionId = `matchfound-q-${index}`;
+      if (questionId !== firstQuestionId) expect(JSON.stringify(firstFound)).not.toContain(questionId);
+    }
+  });
+
   it('executa WebSocket, persiste/reconecta e aplica resultado idempotente no D1', async () => {
     const fixture = await seedMatchFixture('complete');
     const { roomId, stub } = await initializeRoom(fixture);

@@ -3,6 +3,7 @@ import {
   LIVE_ROUND_TRANSITION_MS,
   markLiveMatchFinalized,
   projectLiveMatchForSeat,
+  projectLiveMatchPresentationForSeat,
   transitionLiveMatch,
   type LiveMatchCommand,
   type LiveMatchEvent,
@@ -183,7 +184,7 @@ export class MatchRoom {
 
   private async initialize(request: Request): Promise<Response> {
     const existing = await this.state();
-    if (existing !== null) return Response.json({ matchId: existing.matchId, status: existing.phase });
+    if (existing !== null) return this.initializationResponse(existing);
     let input: InitializeRoomInput;
     try {
       input = await request.json<InitializeRoomInput>();
@@ -214,7 +215,18 @@ export class MatchRoom {
       }
       throw initializationError;
     }
-    return Response.json({ matchId: state.matchId, status: state.phase }, { status: 201 });
+    return this.initializationResponse(state, 201);
+  }
+
+  private initializationResponse(state: LiveMatchState, status = 200): Response {
+    return Response.json({
+      matchId: state.matchId,
+      presentations: state.players.map((player) => ({
+        presentation: projectLiveMatchPresentationForSeat(state, player.seat),
+        uid: player.firebaseUid,
+      })),
+      status: state.phase,
+    }, { status });
   }
 
   private async systemFailure(): Promise<Response> {
