@@ -41,7 +41,7 @@ describe('dataset temporário do smoke test real', () => {
       status: string;
     }>();
     expect(theme).toEqual({
-      active_question_count: 30,
+      active_question_count: 250,
       category_id: CATEGORY_ID,
       cover_image_key: null,
       created_by_user_id: null,
@@ -54,7 +54,7 @@ describe('dataset temporário do smoke test real', () => {
     });
   });
 
-  it('mantém somente EASY com 30 slots densos e respostas distribuídas', async () => {
+  it('mantém somente EASY com 250 slots densos e respostas distribuídas', async () => {
     const pools = await env.QUESTIONS_DB.prepare(
       `SELECT id, difficulty, active_count, version, migration_status
          FROM question_pools
@@ -68,7 +68,7 @@ describe('dataset temporário do smoke test real', () => {
       version: number;
     }>();
     expect(pools.results).toEqual([{
-      active_count: 30,
+      active_count: 250,
       difficulty: 'EASY',
       id: POOL_ID,
       migration_status: 'READY',
@@ -96,9 +96,9 @@ describe('dataset temporário do smoke test real', () => {
       prompt: string;
       status: string;
     }>();
-    expect(questions.results).toHaveLength(30);
+    expect(questions.results).toHaveLength(250);
     expect(questions.results.map((question) => question.active_slot)).toEqual(
-      Array.from({ length: 30 }, (_, index) => index + 1),
+      Array.from({ length: 250 }, (_, index) => index + 1),
     );
     expect(questions.results.every((question) => (
       question.id.startsWith('synthetic-smoke-test-20260811-q')
@@ -117,7 +117,7 @@ describe('dataset temporário do smoke test real', () => {
     const distribution = [0, 1, 2, 3].map((option) => (
       questions.results.filter((question) => question.correct_option === option).length
     ));
-    expect(distribution).toEqual([8, 8, 7, 7]);
+    expect(distribution).toEqual([63, 63, 62, 62]);
 
     const sources = await env.QUESTIONS_DB.prepare(
       `SELECT COUNT(*) AS total

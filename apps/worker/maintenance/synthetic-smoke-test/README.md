@@ -7,7 +7,7 @@ Estes arquivos estão versionados para a remoção futura do dataset temporário
 - categoria: `category-synthetic-smoke-test-20260811`;
 - tema: `theme-synthetic-smoke-test-multiplayer-20260811`;
 - pool: `pool-synthetic-smoke-test-multiplayer-easy-20260811`;
-- perguntas: `synthetic-smoke-test-20260811-q01` até `q30`;
+- perguntas: 250 slots; IDs legados `q01`–`q30` e IDs ampliados `q031`–`q250`;
 - flag editorial exata: `["SYNTHETIC_SMOKE_TEST"]`.
 
 ## Promoção futura

@@ -23,6 +23,8 @@ Seleção:
 
 Se `N - blockedEligible < needed`, retornar erro de pool insuficiente; nunca relaxar as últimas 200 silenciosamente.
 
+O dataset interno `SYNTHETIC_SMOKE_TEST` possui 250 perguntas EASY mínimas e inequivocamente artificiais para suportar repetição de smoke sem mudar essa regra. A ampliação é uma migration restrita aos IDs e à flag reservados; temas editoriais continuam usando seus próprios pools e históricos normais.
+
 Ao desativar slot S:
 
 1. ler pergunta em S e no último slot N;

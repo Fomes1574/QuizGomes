@@ -35,12 +35,14 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 - [x] 2026-08-11 — calibração final do Milestone 8.5 implementada localmente com resultado em 2.000 ms e apresentação da próxima pergunta em 1.600 ms.
 - [x] 2026-08-11 — reteste real da cadência `2.000 / 1.600` melhorou novamente a partida e motivou uma última calibração pequena.
 - [x] 2026-08-11 — calibração `2.400 / 1.900` e revelação autoritativa das duas escolhas implementadas e validadas localmente.
-- [ ] Milestone 8.5 — repetir uma partida Fácil real em dois usuários após o deploy de `2.400 / 1.900`, cobrindo acerto, erro e timeout.
+- [ ] Milestone 8.5 — repetir uma partida Fácil real em dois usuários após o deploy da calibração atual `2.900 / 1.900`, cobrindo acerto, erro e timeout.
 - [x] 2026-08-12 — sistema unificado de arte dos temas implementado e validado localmente, com ícones próprios, upload ADMIN em D1 e auditoria de carregamento.
 - [x] 2026-08-12 — falha remota da migration de arte isolada no parser multi-statement do D1; `0004` pendente tornada robusta sem triggers e coberta por gate pré-deploy.
 - [ ] Milestone 8.5 — smoke real do sistema de arte após o deploy: ícone, imagem, iniciais, troca/remoção, claro/escuro, catálogo, tema e matchmaking.
 - [x] 2026-08-13 — correção de escopo do Milestone 8.5 concluída localmente: matchmaking visual/autoritativo, apresentação do adversário, preload seguro, marca oficial e avatar personalizado.
 - [ ] Milestone 8.5 — smoke real pós-deploy da nova apresentação e do upload/troca/remoção de avatar com dois usuários autenticados.
+- [x] 2026-08-14 — correção final do Milestone 8 concluída localmente: deadline de reconexão autoritativo, recuperação terminal, cleanup/self-healing, códigos seguros e pool sintético ampliado.
+- [ ] Milestone 8 — repetir em produção o fluxo exato `partida 1 → queda >7 s → VOID nos dois clientes → partida 2 imediata com as mesmas contas`.
 - [ ] Milestone 9 — social e desafio direto.
 - [ ] Milestone 10 — assíncrono selado e revelação progressiva.
 - [ ] Milestone 11 — criação/moderação/import/admin.
@@ -62,9 +64,9 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 12. **Workers Builds parte da raiz.** `npm ci` e o gate completo coordenam os três workspaces; o deploy é aceito somente na `main`, aplica migrations pendentes antes do Worker/PWA e nunca referencia seeds.
 13. **Produção é mesma origem.** O Worker deriva sua própria origem de `request.url`; `ALLOWED_ORIGINS` é apenas uma lista adicional explícita de desenvolvimento, sem wildcard e sem hostname `workers.dev` hardcoded.
 14. **401 de Firebase tem uma única recuperação.** O cliente reutiliza o ID Token atual uma vez, força `getIdToken(true)` após o primeiro 401 e repete exatamente uma vez. Uma segunda rejeição encerra o fluxo com mensagem clara; assinatura RS256, `kid`, `aud`, `iss`, `exp`, `iat`, `auth_time` e `sub` continuam obrigatórios no Worker.
-15. **Conteúdo de smoke real é isolado e temporário.** Categoria, tema, pool e 30 perguntas usam IDs reservados, texto inequívoco e a flag `SYNTHETIC_SMOKE_TEST`; Questions migra antes de Core. A limpeza fica fora do pipeline até autorização posterior, remove apenas o conteúdo marcado e preserva referências históricas com tombstones desativados.
+15. **Conteúdo de smoke real é isolado e temporário.** Categoria, tema e pool com 250 perguntas artificiais usam IDs reservados, texto inequívoco e a flag `SYNTHETIC_SMOKE_TEST`; Questions migra antes de Core. A limpeza fica fora do pipeline até autorização posterior, remove apenas o conteúdo marcado e preserva referências históricas com tombstones desativados.
 16. **Polimento da partida não muda autoridade.** O deadline e `remainingMs` do Durable Object continuam sendo a única referência; CSS anima apenas a barra, React atualiza o número inteiro isoladamente e o cliente envia `ROUND_READY` somente após a apresentação local, sem calcular score, resposta ou timeout.
-17. **Cadência local respeita o piso do servidor.** `roundPresentationDelay()` usa o maior valor entre `MATCH_ROUND_TRANSITION_MS` e `payload.transitionMs`; a calibração atual usa `ROUND_RESULT` de 2.400 ms e apresentação de 1.900 ms. `QUESTION_DURATION_MS` permanece em 10.000 ms e só começa depois do READY dos dois jogadores.
+17. **Cadência local respeita o piso do servidor.** `roundPresentationDelay()` usa o maior valor entre `MATCH_ROUND_TRANSITION_MS` e `payload.transitionMs`; a calibração atual usa `ROUND_RESULT` de 2.900 ms e apresentação de 1.900 ms. `QUESTION_DURATION_MS` permanece em 10.000 ms e só começa depois do READY dos dois jogadores.
 18. **Escolhas são reveladas somente após resolução autoritativa.** Durante `ANSWERING`, a projeção informa apenas se o adversário respondeu. Em `ROUND_RESULT` ou estado equivalente já resolvido, `resolution` recebe do estado do MatchRoom as opções selecionadas por ambos, inclusive erro ou `null` por timeout; o cliente nunca deriva a escolha adversária pelo score.
 19. **Arte de tema é uma união exclusiva e versionada.** `ICON`, `CUSTOM` e `NONE` não coexistem. SVG padrão é estático/reutilizável; WebP personalizado ocupa uma única row BLOB separada no Core D1. Catálogo nunca lê o BLOB, URL pública contém versão, alteração exige versão esperada e somente ADMIN pode gravar.
 20. **Migrations remotas D1 não usam triggers compostos.** O endpoint `/query` recebe a migration inteira e seu parser pode truncar corpos `BEGIN … SELECT CASE … END; END`. A `0004` usa `CHECK`, chave única, FK composta e batches transacionais; o pipeline bloqueia `CREATE TRIGGER`, valida parse/exec/upgrade/rollback localmente e mantém o Workers Build remoto como smoke definitivo.
@@ -72,6 +74,10 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 22. **Preload não inicia gameplay.** Durante 2.900 ms o cliente pode abrir/bufferizar o socket da sala e baixar somente chunk/assets públicos. `READY` fica proibido até a MatchScreen assumir o socket; `correctOption`, resposta adversária e pergunta futura não entram na projeção.
 23. **Avatar customizado é separado e substitutivo.** O BLOB WebP 256 × 256 fica em `user_custom_avatars`; perfil/ranking/partida leem apenas versão ativa. Firebase UID autenticado define o dono e a resolução única em UI é `custom → Google → iniciais`.
 24. **A marca deriva da fonte oficial.** Browser, PWA, Apple e marca interna usam derivados dimensionados do anexo oficial. A variante escura troca somente áreas brancas por near-black, sem `filter: invert()` e sem alterar os ícones canônicos instalados.
+25. **A fronteira persistida de 7 segundos é definitiva.** Em `PAUSED`, tanto `CONNECT` quanto `ALARM` comparam `graceDeadlineMs`; 6.999 ms restaura exatamente a fase e o tempo congelados, enquanto 7.000 ms ou mais finaliza em `VOID`, independentemente da ordem da corrida ou do atraso do alarme.
+26. **Terminal nunca volta a ser jogável.** `FINALIZING` não projeta pergunta e força finalização idempotente; `VOID`/`FINISHED` restauram o summary do storage/D1. O cliente, após a graça local, remove a pergunta e tenta somente recuperar o resultado em cadência limitada, inclusive em `online`, foco e visibilidade.
+27. **Locks terminais têm reparo restrito.** A transação de resultado continua removendo os dois locks; uma associação histórica que aponta para `VOID`/`FINISHED` é apagada ao ser consultada, mas locks de `PREPARING`/`PLAYING` nunca são tratados como órfãos. Presence terminal residual volta a `idle` somente quando a membership e o recurso confirmam a mesma sala terminal.
+28. **Falha de pareamento expõe somente código seguro.** `PLAYER_BUSY`, `PROFILE_REQUIRED`, `QUESTION_POOL_EMPTY`, `QUESTION_POOL_INCONSISTENT` e `QUESTION_POOL_INSUFFICIENT` chegam ao cliente sem SQL, stack ou detalhe interno. O dataset reservado cresceu de 30 para 250 perguntas; a regra global de 200 recentes não mudou e perguntas futuras não exibidas não entram no histórico ao anular.
 
 ## Descobertas e riscos
 
@@ -102,11 +108,12 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 - M8 concluído local/simulado: 5/10/15 rodadas, empate, Casual sem Conhecimento, XP, abandono, dupla queda, lock único, payload estrito, sigilo do adversário, retry idempotente e transação D1; o health real passou, enquanto hibernação e smoke WebSocket reais continuam pendentes.
 - Preparação de deploy: origem própria, localhost explícito, wildcard/origem externa e bloqueio do script fora do Workers Builds/`main`; migrations vazias devem preservar isolamento core/questions.
 - Incidente de autenticação: retry único após 401 com refresh forçado, segunda falha terminal, saída real do onboarding, ADMIN posterior à autenticação, diagnóstico de algoritmo/chave/assinatura/claims sem token ou PII e fixture X.509 sintética no runtime Workers.
-- Dataset de smoke: uma categoria interna, um tema, somente EASY, 30 slots densos, quatro opções, distribuição 8/8/7/7, nenhuma imagem/fonte/trivia e flag editorial exata; limpeza deve preservar todo histórico.
-- M8.5: timer sem rerender de alta frequência, segundo inteiro sincronizado, pausa por `phaseRemainingMs`, retomada por `remainingMs`, resultado por 2.400 ms, READY após apresentação de 1.900 ms, título de rodada único, escolhas autoritativas com dois avatares, resultado com dois perfis e `prefers-reduced-motion`.
+- Dataset de smoke: uma categoria interna, um tema, somente EASY, 250 slots densos, quatro opções, distribuição 63/63/62/62, nenhuma imagem/fonte/trivia e flag editorial exata; limpeza deve preservar todo histórico.
+- M8.5: timer sem rerender de alta frequência, segundo inteiro sincronizado, pausa por `phaseRemainingMs`, retomada por `remainingMs`, resultado por 2.900 ms, READY após apresentação de 1.900 ms, título de rodada único, escolhas autoritativas com dois avatares, resultado com dois perfis e `prefers-reduced-motion`.
 - Arte de tema: união exclusiva, 16 chaves/SVGs, fallback, imagem quebrada, crop/reencode/cap, magic bytes/chunks/dimensões, autorização ADMIN, conflito de versão, replace/remove, URL/ETag/cache, ausência de BLOB no catálogo, migration vazia e chunks lazy fora do precache.
 - Compatibilidade remota de migrations: parse de cada arquivo com o Wrangler fixado, proibição de trigger composto, banco vazio, upgrade exato `0003 → 0004`, schema/FK/constraints, invariantes metadata/BLOB e rollback sem resíduo em schema ou `d1_migrations`; smoke hospedado continua obrigatório.
 - Correção M8.5: `SEARCHING.timeoutAt`, 00:00–01:00, cancelamento imediato, globo/lupa/personagens/reduced-motion, `MATCH_FOUND` sem navegação imediata, apresentação 1.200/800/900 ms, payload individual sem segredo, preload sem READY, avatar custom→Google→iniciais, upload/replace/remove/version/cache, manifesto/logo claro/escuro e Chromium desktop/mobile.
+- Fechamento M8: corrida 6.999/7.000/7.001 ms, CONNECT/ALARM após deadline, todas as fases pausáveis, FINALIZING neutro, reconexão terminal, offline além da graça, recuperação por retorno de rede, lock/Presence, finalização idempotente e `partida 1 → VOID → partida 2` com os mesmos usuários.
 
 ## Diário de execução
 
@@ -463,6 +470,43 @@ Validação executada:
 - build final: JS inicial 367,71/117,80 KB gzip, CSS 53,47/10,99 KB gzip, MatchScreen lazy 15,03/5,02 KB gzip, cropper lazy 4,92/2,04 KB gzip e precache 11 entradas/433,03 KiB;
 - nenhum scoring, ranking, XP, Conhecimento, duração de 10 segundos, cadência 2.400/1.900, randomização, reconexão, regra de 7 segundos, Durable Object existente ou Milestone 9 foi alterado.
 
+### 2026-08-14 — fechamento robusto de reconexão, locks e smoke dataset
+
+Auditoria causal antes das alterações:
+
+- o celular congelava porque, após 7 segundos de retries locais, `live-match-page.tsx` preservava a projeção `PAUSED` e a pergunta antiga; o ramo visual da pergunta tinha precedência sobre o erro e não existia recuperação terminal por retorno de rede/foco/visibilidade;
+- `CONNECT` em `PAUSED` restaurava a fase sem comparar o `graceDeadlineMs` persistido. Um alarme atrasado permitia `RESUMED` depois da fronteira aprovada;
+- `FINALIZING` ainda podia projetar a pergunta e uma reconexão nessa janela não forçava a finalização idempotente nem restaurava sempre o summary terminal;
+- a finalização normal já apagava `active_match_players` no mesmo batch do ledger. Como as contas observadas conseguiam abrir a fila — cujo ticket e socket verificavam o lock — o segundo pareamento não falhou por lock preso. O pool de 30 perguntas, bloqueado pela união dos recentes, reproduziu `QUESTION_POOL_INSUFFICIENT`, mas a fila colapsava esse código em `MATCH_INITIALIZATION_FAILED` e a UI mostrava a mensagem genérica;
+- associações historicamente órfãs apontando para uma partida já terminal e Presence terminal residual não possuíam reparo seguro, embora não tenham sido a causa do incidente observado;
+- a finalização já marcava somente `questions.slice(0, roundIndex + 1)`: a pergunta efetivamente exibida continua vista, e as futuras selecionadas para a sala não entram no histórico de uma partida anulada.
+
+Implementação:
+
+- `CONNECT` e `ALARM` usam o mesmo deadline persistido; exatamente no deadline a única saída é `VOID`. O restore preserva a fase, pergunta, respostas, READY, scores e `phaseRemainingMs` quando ocorre antes da fronteira;
+- após a graça local, o frontend remove pergunta/timer/overlay, mostra `Confirmando encerramento da partida...` e mantém somente retries terminais espaçados, reativados também por `online`, foco ou visibilidade;
+- a sala não projeta pergunta em `FINALIZING`, repete finalização idempotentemente e recupera `MATCH_VOID`/`MATCH_FINISHED` do storage ou D1 para membros históricos;
+- locks de partidas terminais são limpos de forma restrita na consulta/idempotência, Presence volta a `idle` sem poder sobrescrever uma atividade nova e partidas ativas permanecem bloqueadas;
+- a fila propaga somente códigos allowlisted; detalhes internos continuam reduzidos a `MATCH_INITIALIZATION_FAILED` e logs estruturados seguros;
+- migrations forward-only ampliam exclusivamente `SYNTHETIC_SMOKE_TEST` para 250 perguntas EASY mínimas. Nenhum histórico real pode ser resetado e o limite global de 200 recentes permanece intacto;
+- `LIVE_ROUND_RESULT_MS` foi corrigido para 2.900 ms; a apresentação da próxima pergunta permanece 1.900 ms e o gameplay permanece 10.000 ms.
+
+Cobertura adicionada:
+
+- domínio em 6.999/7.000/7.001 ms, CONNECT versus ALARM, todas as fases pausáveis e projeção sem pergunta em `FINALIZING`;
+- cliente offline além de 7 segundos, remoção da pergunta, recuperação por `online` e terminal sem retorno a gameplay;
+- runtime com CONNECT primeiro depois do deadline, ALARM primeiro, reconexão histórica, Casual sem efeito, Ranqueada com penalidade somente no desconectado, cleanup/self-healing, Presence e finalização concorrente/idempotente;
+- fluxo obrigatório `PARTIDA 1 → queda → VOID → locks 0/Presence idle → PARTIDA 2` com os mesmos usuários;
+- Questions vazio e upgrade `0002→0003`, Core vazio e `0003→0004→0005→0006`, comprovando 250 slots densos, marcados e sem mídia/fonte.
+
+Validação final local:
+
+- `VITE_ENABLE_REALTIME_MATCHES=true npm run check`: lint sem warnings, typecheck dos três workspaces, 30 arquivos/156 testes unitários, 6 arquivos/26 testes Workers/WebSocket, migrations e builds aprovados;
+- build Web: JS inicial 215,31/67,69 KB gzip, sala lazy 16,50/5,41 KB gzip, CSS 53,47/10,99 KB gzip e precache de 11 entradas/435,00 KiB; Worker 706,8 KB;
+- `npm audit --audit-level=high`: zero vulnerabilidades; varredura de chaves/tokens privados sem achados fora dos arquivos `.example` esperados.
+
+Branding, Theme Artwork, avatar, matchmaking visual, globo/lupa, apresentação do adversário, scoring, XP, ranking, Conhecimento, aleatoriedade, sigilo e Milestone 9 permaneceram fora do diff funcional.
+
 ## Critério de saída desta execução
 
 - código do Milestone 8 completo e Milestone 9 não iniciado;
@@ -470,4 +514,4 @@ Validação executada:
 - build Worker/PWA e migrations do zero aprovados;
 - documentação separando evidência local, simulada e real;
 - publicação em commits lógicos na `main` pública, seguida por nova auditoria do conteúdo remoto;
-- deploy, health, autenticação, onboarding, ADMIN, fluxo principal WebSocket, polimento visual e cadência `2.000 / 1.600` reais confirmados; cenários de reconexão/locks e smoke real da calibração `2.400 / 1.900` com os dois avatares ainda pendentes, sem preview de branch, R2 ou produto pago.
+- deploy, health, autenticação, onboarding, ADMIN e fluxo principal WebSocket reais confirmados; o smoke real pós-deploy da fronteira de 7 segundos, cleanup e segunda partida imediata permanece pendente, assim como a calibração atual `2.900 / 1.900`, sem preview de branch, R2 ou produto pago.

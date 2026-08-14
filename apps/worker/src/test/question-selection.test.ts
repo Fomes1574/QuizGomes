@@ -41,12 +41,12 @@ describe('seleção server-side de perguntas', () => {
     expect(new Set(selected.questions.map((item) => item.id)).size).toBe(5);
   });
 
-  it('retorna erro adequado quando recentes esgotam o pool', async () => {
+  it('reproduz o esgotamento do antigo dataset sintético de 30 perguntas', async () => {
     let state = createPoolState();
-    for (let slot = 1; slot <= 4; slot += 1) state = markAnswered(state, slot);
+    for (let slot = 1; slot <= 30; slot += 1) state = markAnswered(state, slot);
     const service = new QuestionSelectionService(
       {
-        pool: () => Promise.resolve({ activeCount: 5, id: 'pool-1', version: 1 }),
+        pool: () => Promise.resolve({ activeCount: 30, id: 'pool-1', version: 1 }),
         secretBySlot: (pool: string, slot: number) => {
           void pool;
           return Promise.resolve(question(slot));
@@ -55,9 +55,24 @@ describe('seleção server-side de perguntas', () => {
       { read: () => Promise.resolve({ poolVersion: 1, revision: 1, state }) },
       () => 0,
     );
-    await expect(service.select('theme', 'EASY', ['u1', 'u2'], 2)).rejects.toMatchObject({
+    await expect(service.select('theme', 'EASY', ['u1', 'u2'], 5)).rejects.toMatchObject({
       code: 'QUESTION_POOL_INSUFFICIENT', status: 409,
     });
+  });
+
+  it('mantém 50 slots elegíveis no dataset sintético ampliado após 200 recentes', async () => {
+    let state = createPoolState();
+    for (let slot = 1; slot <= 200; slot += 1) state = markAnswered(state, slot);
+    const service = new QuestionSelectionService(
+      {
+        pool: () => Promise.resolve({ activeCount: 250, id: 'pool-1', version: 1 }),
+        secretBySlot: (_pool: string, slot: number) => Promise.resolve(question(slot)),
+      },
+      { read: () => Promise.resolve({ poolVersion: 1, revision: 40, state }) },
+      () => 0,
+    );
+    const selected = await service.select('theme', 'EASY', ['u1', 'u2'], 5);
+    expect(selected.questions.map((item) => item.slot)).toEqual([201, 202, 203, 204, 205]);
   });
 
   it('detecta slot denso inconsistente', async () => {

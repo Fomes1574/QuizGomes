@@ -1,6 +1,6 @@
 # Deployment
 
-Atualizado em 12 de agosto de 2026. O destino é um único Cloudflare Worker que serve API, PWA e Durable Objects em `workers.dev`, usando somente **Workers Free**.
+Atualizado em 14 de agosto de 2026. O destino é um único Cloudflare Worker que serve API, PWA e Durable Objects em `workers.dev`, usando somente **Workers Free**.
 
 Se o painel solicitar cartão, billing, Workers Paid, upgrade ou qualquer produto pago, cancele e pare. Não use deploy temporário, não crie R2 e não habilite recursos ausentes deste documento.
 
@@ -117,8 +117,8 @@ npm run deploy:cloudflare -w @quiz-gomes/worker
 
 O primeiro comando aplica somente migrations pendentes:
 
-- `QUESTIONS_DB`: `0001_questions.sql` e `0002_synthetic_smoke_test.sql`;
-- `CORE_DB`: `0001_core.sql`, `0002_live_matches.sql`, `0003_synthetic_smoke_test.sql` e `0004_theme_artwork.sql`.
+- `QUESTIONS_DB`: `0001_questions.sql`, `0002_synthetic_smoke_test.sql` e `0003_expand_synthetic_smoke_test.sql`;
+- `CORE_DB`: `0001_core.sql`, `0002_live_matches.sql`, `0003_synthetic_smoke_test.sql`, `0004_theme_artwork.sql`, `0005_user_custom_avatars.sql` e `0006_expand_synthetic_smoke_test.sql`.
 
 Questions é aplicado primeiro para que o tema temporário só fique visível depois que seu pool estiver pronto. Wrangler registra o histórico em `d1_migrations`; retries não reaplicam versões concluídas. Se uma migration falhar, o D1 reverte integralmente aquela migration, preserva as anteriores e o deploy não começa. Arquivos já aplicados são imutáveis e qualquer correção posterior é forward-only. Uma migration que falhou e não foi registrada, como a primeira tentativa remota da `0004_theme_artwork.sql`, continua pendente e deve ser corrigida no próprio arquivo antes do retry — não recebe uma compensação vazia ou manual.
 
@@ -126,8 +126,8 @@ Questions é aplicado primeiro para que o tema temporário só fique visível de
 
 - lê e passa todas as migrations pelo splitter SQL exportado pelo Wrangler, incluindo o statement de tracking;
 - exige LF e bloqueia `CREATE TRIGGER`, pois compound statements continuam sujeitos a diferenças entre o splitter local e o parser multi-statement do endpoint D1 `/query` usado por migrations remotas;
-- aplica Core `0001–0004` em banco vazio;
-- aplica `0001–0003`, verifica o estado exato e só então aplica `0004`;
+- aplica Core `0001–0006` e Questions `0001–0003` em bancos vazios e isolados;
+- prova os upgrades Core `0003→0004→0005→0006` e Questions `0002→0003`, incluindo a passagem exata do pool sintético de 30 para 250 slots;
 - inspeciona colunas, índice e FK composta, e tenta estados inválidos de metadata/BLOB;
 - injeta uma migration temporária que falha depois de criar/escrever e comprova rollback de schema e de `d1_migrations`.
 
@@ -164,14 +164,14 @@ Depois:
 5. confirme acesso ADMIN depois da autenticação; o secret de UID não deve alterar a aceitação do token;
 6. selecione a categoria **INTERNO · TESTE SINTÉTICO TEMPORÁRIO**, abra o tema **Teste Multiplayer** e mantenha **Fácil + Casual** nas duas contas;
 7. em dois perfis/navegadores, conclua uma partida e confira pergunta X/Y, timer após os dois READY, bolinha amarela sem segredo e score adversário somente após resolução;
-8. inicie uma nova partida para confirmar a liberação dos locks;
-9. repita com reconexão abaixo de 7 segundos, queda individual acima de 7 segundos e dupla queda, sempre confirmando que uma partida terminada/anulada libera ambos os usuários;
+8. na primeira partida, desconecte o jogador 1 durante uma pergunta, aguarde mais de 7 segundos, confirme `Partida anulada` no jogador 2 e só então reabra o jogador 1; ele deve ir diretamente a `Partida anulada`, sem restaurar a pergunta;
+9. com as mesmas duas contas, inicie imediatamente uma segunda partida e confirme que ela forma normalmente; depois repita com reconexão abaixo de 7 segundos e dupla queda;
 10. confirme que o Conhecimento do tema continua em 0 nas duas contas e que os frames WebSocket nunca expõem `correctOption`, perguntas futuras ou a alternativa do adversário antes da resolução;
 11. confira métricas D1/DO e confirme que eventos `firebase_id_token_rejected` não contêm tokens ou PII.
 
 Esses itens só contam como **testes reais Cloudflare** quando executados no hostname implantado. Até lá, permanecem pendentes no ExecPlan.
 
-As respostas corretas do dataset seguem o ciclo A/B/C/D pelo número da pergunta: 01=A, 02=B, 03=C, 04=D e então reinicia. Todas as 30 perguntas têm quatro opções, nenhuma imagem ou trivia real e a flag editorial exata `SYNTHETIC_SMOKE_TEST`.
+As respostas corretas do dataset seguem o ciclo A/B/C/D pelo slot: 1=A, 2=B, 3=C, 4=D e então reinicia. Todas as 250 perguntas têm quatro opções mínimas, nenhuma imagem, fonte ou trivia real e a flag editorial exata `SYNTHETIC_SMOKE_TEST`. A ampliação é exclusiva deste dataset e não relaxa a regra global das últimas 200 perguntas.
 
 A limpeza já está preparada em `apps/worker/maintenance/synthetic-smoke-test`, mas não faz parte do pipeline e não deve ser executada antes da autorização posterior do proprietário. Quando promovida a migrations novas, ela remove apenas o conteúdo marcado e preserva todo histórico de usuário/partida por meio de tombstones desativados quando houver referências.
 
