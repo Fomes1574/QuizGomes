@@ -29,7 +29,7 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 - [x] 2026-08-11 — reteste real aprovado: Google Authentication, onboarding, perfil persistido, `JOGADOR · ADMIN`, secret ADMIN e PWA no `workers.dev`.
 - [x] 2026-08-11 — dataset temporário `SYNTHETIC_SMOKE_TEST` preparado em migrations próprias, com limpeza futura versionada e inativa.
 - [x] 2026-08-11 — fluxo principal WebSocket real aprovado com dois usuários: matchmaking Casual, cinco perguntas EASY, respostas, pontuação e resultado.
-- [ ] Milestone 8 — cenários reais de queda/reconexão e liberação de locks ainda não foram declarados como aprovados.
+- [x] 2026-08-14 — smoke real do Milestone 8 confirmou reconexão dentro de 7 s, `VOID` acima da graça e nova partida imediata com as mesmas contas.
 - [x] 2026-08-11 — Milestone 8.5 — Gameplay Presentation Polish implementado e validado localmente, sem alteração de gameplay ou rede.
 - [x] 2026-08-11 — reteste visual real do Milestone 8.5 aprovado pelo proprietário: timer, layout, animações e tela de resultado satisfatórios em produção.
 - [x] 2026-08-11 — calibração final do Milestone 8.5 implementada localmente com resultado em 2.000 ms e apresentação da próxima pergunta em 1.600 ms.
@@ -42,7 +42,9 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 - [x] 2026-08-13 — correção de escopo do Milestone 8.5 concluída localmente: matchmaking visual/autoritativo, apresentação do adversário, preload seguro, marca oficial e avatar personalizado.
 - [ ] Milestone 8.5 — smoke real pós-deploy da nova apresentação e do upload/troca/remoção de avatar com dois usuários autenticados.
 - [x] 2026-08-14 — correção final do Milestone 8 concluída localmente: deadline de reconexão autoritativo, recuperação terminal, cleanup/self-healing, códigos seguros e pool sintético ampliado.
-- [ ] Milestone 8 — repetir em produção o fluxo exato `partida 1 → queda >7 s → VOID nos dois clientes → partida 2 imediata com as mesmas contas`.
+- [x] 2026-08-14 — produção aprovou o fluxo `partida 1 → queda >7 s → VOID → partida 2 imediata` com as mesmas contas; não houve lock terminal persistente.
+- [x] 2026-08-14 — hardening final de UX/liveness concluído localmente: questão removida na perda local/`PAUSED`, heartbeat leve e matchmaking modal de verdade.
+- [ ] Milestone 8 — repetir em produção o smoke visual de modo avião nos dois celulares e o bloqueio integral da navegação durante matchmaking.
 - [ ] Milestone 9 — social e desafio direto.
 - [ ] Milestone 10 — assíncrono selado e revelação progressiva.
 - [ ] Milestone 11 — criação/moderação/import/admin.
@@ -78,6 +80,8 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 26. **Terminal nunca volta a ser jogável.** `FINALIZING` não projeta pergunta e força finalização idempotente; `VOID`/`FINISHED` restauram o summary do storage/D1. O cliente, após a graça local, remove a pergunta e tenta somente recuperar o resultado em cadência limitada, inclusive em `online`, foco e visibilidade.
 27. **Locks terminais têm reparo restrito.** A transação de resultado continua removendo os dois locks; uma associação histórica que aponta para `VOID`/`FINISHED` é apagada ao ser consultada, mas locks de `PREPARING`/`PLAYING` nunca são tratados como órfãos. Presence terminal residual volta a `idle` somente quando a membership e o recurso confirmam a mesma sala terminal.
 28. **Falha de pareamento expõe somente código seguro.** `PLAYER_BUSY`, `PROFILE_REQUIRED`, `QUESTION_POOL_EMPTY`, `QUESTION_POOL_INCONSISTENT` e `QUESTION_POOL_INSUFFICIENT` chegam ao cliente sem SQL, stack ou detalhe interno. O dataset reservado cresceu de 30 para 250 perguntas; a regra global de 200 recentes não mudou e perguntas futuras não exibidas não entram no histórico ao anular.
+29. **Perda local fecha a superfície da pergunta.** `offline`, close/error do socket ou ausência de `PONG` tiram imediatamente a `MatchScreen` jogável do DOM e mostram uma tela opaca local. O heartbeat de 1.500 ms considera a conexão silenciosa após 3.000 ms, mas nunca decide pausa, deadline, score, `RESUMED` ou `VOID`; toda decisão de gameplay permanece no MatchRoom.
+30. **Matchmaking ocupa o top layer.** A busca usa `dialog.showModal()` em Portal, torna o AppShell explicitamente `inert`, confina Tab, trata Escape como cancelamento seguro durante busca/timeout e restaura o foco ao fechar. Busca, cancelamento, timeout e apresentação do adversário mantêm o fundo indisponível até o estado `idle` ou a navegação para a sala.
 
 ## Descobertas e riscos
 
@@ -114,6 +118,7 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 - Compatibilidade remota de migrations: parse de cada arquivo com o Wrangler fixado, proibição de trigger composto, banco vazio, upgrade exato `0003 → 0004`, schema/FK/constraints, invariantes metadata/BLOB e rollback sem resíduo em schema ou `d1_migrations`; smoke hospedado continua obrigatório.
 - Correção M8.5: `SEARCHING.timeoutAt`, 00:00–01:00, cancelamento imediato, globo/lupa/personagens/reduced-motion, `MATCH_FOUND` sem navegação imediata, apresentação 1.200/800/900 ms, payload individual sem segredo, preload sem READY, avatar custom→Google→iniciais, upload/replace/remove/version/cache, manifesto/logo claro/escuro e Chromium desktop/mobile.
 - Fechamento M8: corrida 6.999/7.000/7.001 ms, CONNECT/ALARM após deadline, todas as fases pausáveis, FINALIZING neutro, reconexão terminal, offline além da graça, recuperação por retorno de rede, lock/Presence, finalização idempotente e `partida 1 → VOID → partida 2` com os mesmos usuários.
+- Hardening UX M8: offline imediato, socket silencioso com `navigator.onLine=true`, retomada da mesma pergunta/tempo, `VOID` sem retorno da questão, `PAUSED` opaco nos dois clientes, modal top-layer, Tab/Escape, cancelamento/Presence, encontrado e timeout com fundo inerte, desktop e viewport mobile.
 
 ## Diário de execução
 
@@ -507,6 +512,32 @@ Validação final local:
 
 Branding, Theme Artwork, avatar, matchmaking visual, globo/lupa, apresentação do adversário, scoring, XP, ranking, Conhecimento, aleatoriedade, sigilo e Milestone 9 permaneceram fora do diff funcional.
 
+### 2026-08-14 — hardening final de UX de desconexão e modalidade do matchmaking
+
+Auditoria causal antes das alterações:
+
+- na perda local, close/offline alteravam apenas retry e texto; a projeção anterior continuava `ANSWERING`, portanto `MatchScreen` mantinha pergunta, imagem, alternativas e escolha no DOM até a recuperação terminal;
+- `PAUSED` era incluído explicitamente no ramo jogável e recebia apenas um overlay com fundo parcialmente transparente. As respostas ficavam desabilitadas, mas o conteúdo continuava legível;
+- o MatchRoom já implementava `HEARTBEAT → PONG`, porém o frontend não o consumia. `navigator.onLine`, `offline` e o callback de close do edge não cobrem imediatamente uma conexão móvel silenciosa;
+- `aria-modal` estava aplicado a uma `section` comum. O AppShell, header e barra inferior permaneciam clicáveis/focáveis porque não havia top layer, `inert` nem confinamento de Tab.
+
+Implementação restrita à UX/liveness:
+
+- o cliente mantém estado local explícito `CONNECTED / SUSPECTED_LOSS / RECONNECTING / TERMINAL_RECOVERY`. Offline, close/error ou ausência de dois ciclos de `PONG` removem imediatamente a tela jogável e mostram `CONEXÃO PERDIDA` com contagem 7→0;
+- heartbeat envia uma mensagem pequena a cada 1.500 ms enquanto o socket está aberto e considera a conexão silenciosa em 3.000 ms. Um watchdog de abertura e um timer único da graça evitam socket pendurado, sem polling HTTP ou estado por frame;
+- `PAUSED_FOR_RECONNECT` desmonta `MatchScreen` nos dois clientes. O jogador conectado vê `AGUARDANDO JOGADOR`; o cliente localmente afetado vê `CONEXÃO PERDIDA`. A tela é opaca e entrada/saída usam somente opacity/transform;
+- `RESUMED` aplica primeiro a projeção e o `remainingMs` autoritativos, mantém a tela de pausa durante 180 ms de saída e só então remonta a mesma pergunta. `MATCH_VOID` e recuperação terminal nunca remontam conteúdo jogável;
+- matchmaking usa `dialog.showModal()` em Portal. O AppShell fica `inert` e `aria-hidden`, cliques/foco externos têm bloqueio defensivo, Tab permanece no modal, Escape cancela a fila durante busca ou fecha o timeout pelo mesmo caminho de `Voltar ao tema`, e o foco original é restaurado no cleanup;
+- o visual existente do ThemeArtwork, globo/lupa, Cancelar vermelho, timer e apresentação do adversário foi preservado. Domínio, MatchRoom, regra 6.999/7.000/7.001 ms, scoring, pool e dataset não receberam alteração funcional.
+
+Cobertura e validação local:
+
+- A–E: offline imediato, socket silencioso com `navigator.onLine=true`, retomada suave da mesma pergunta/tempo, terminal depois da graça e `PAUSED` opaco para o adversário;
+- F–J: navegação/header inertes, Tab confinado, Cancelar com close real da fila e Presence `idle`, encontrado ainda modal e timeout bloqueado até `Voltar ao tema`;
+- `VITE_ENABLE_REALTIME_MATCHES=true npm run check` aprovou lint e typecheck dos três workspaces, 30 arquivos/163 testes unitários, 6 arquivos/27 testes Workers/WebSocket e todas as migrations; o build raiz foi repetido com update notifier desativado e aprovado;
+- build Web: JS inicial 217,60/68,34 KB gzip, sala lazy 18,68/6,17 KB gzip, CSS 55,16/11,26 KB gzip e precache de 11 entradas/441,02 KiB; Worker 706,8 KB;
+- `npm audit --audit-level=high`: zero vulnerabilidades; varredura de chaves/tokens privados sem achados. A chave Web pública do Firebase permanece classificada como configuração cliente, não segredo.
+
 ## Critério de saída desta execução
 
 - código do Milestone 8 completo e Milestone 9 não iniciado;
@@ -514,4 +545,4 @@ Branding, Theme Artwork, avatar, matchmaking visual, globo/lupa, apresentação 
 - build Worker/PWA e migrations do zero aprovados;
 - documentação separando evidência local, simulada e real;
 - publicação em commits lógicos na `main` pública, seguida por nova auditoria do conteúdo remoto;
-- deploy, health, autenticação, onboarding, ADMIN e fluxo principal WebSocket reais confirmados; o smoke real pós-deploy da fronteira de 7 segundos, cleanup e segunda partida imediata permanece pendente, assim como a calibração atual `2.900 / 1.900`, sem preview de branch, R2 ou produto pago.
+- deploy, health, autenticação, onboarding, ADMIN, fluxo principal WebSocket, fronteira de 7 segundos, cleanup e segunda partida imediata reais confirmados; o smoke pós-deploy desta camada visual/liveness permanece pendente, assim como a calibração atual `2.900 / 1.900`, sem preview de branch, R2 ou produto pago.
