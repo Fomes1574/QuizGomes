@@ -18,6 +18,21 @@ export const MATCH_FOUND_EXIT_MS = 900;
 const SEARCH_DURATION_MS = 60_000;
 const SEARCH_EXIT_MS = 260;
 
+const MATCH_FAILURE_MESSAGES: Record<string, string> = {
+  PLAYER_BUSY: 'Um dos jogadores já está em outra partida.',
+  PROFILE_REQUIRED: 'Um dos jogadores precisa concluir o perfil.',
+  QUESTION_POOL_EMPTY: 'Este tema ainda não possui perguntas suficientes.',
+  QUESTION_POOL_INCONSISTENT: 'O banco de perguntas deste tema está em manutenção.',
+  QUESTION_POOL_INSUFFICIENT: 'As perguntas recentes deste tema foram esgotadas para estes jogadores.',
+  RECENT_QUESTIONS_EXHAUSTED: 'As perguntas recentes deste tema foram esgotadas para estes jogadores.',
+};
+
+export function matchmakingFailureMessage(code?: string): string {
+  return code === undefined
+    ? 'Não foi possível formar a partida.'
+    : MATCH_FAILURE_MESSAGES[code] ?? 'Não foi possível formar a partida.';
+}
+
 export type MatchmakingStatus =
   | 'cancelling'
   | 'idle'
@@ -225,7 +240,7 @@ export function useMatchmaking() {
         }
         if (message.type === 'MATCH_FAILED') {
           socketRef.current = null;
-          setError(message.code === 'PLAYER_BUSY' ? 'Um dos jogadores já está em outra partida.' : 'Não foi possível formar a partida.');
+          setError(matchmakingFailureMessage(message.code));
           setStatus('idle');
         }
       });

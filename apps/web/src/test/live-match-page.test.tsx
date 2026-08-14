@@ -24,10 +24,13 @@ import { prepareMatchRoom } from '../lib/preloaded-match-room.js';
 type FakeListener = (event: { data?: string }) => void;
 
 class FakeWebSocket {
+  static readonly CLOSED = 3;
   static readonly OPEN = 1;
   static instances: FakeWebSocket[] = [];
 
-  readonly close = vi.fn();
+  readonly close = vi.fn(() => {
+    this.readyState = FakeWebSocket.CLOSED;
+  });
   readonly listeners = new Map<string, FakeListener[]>();
   readonly send = vi.fn();
   readyState = FakeWebSocket.OPEN;
@@ -56,7 +59,34 @@ class FakeWebSocket {
       listener({ data: JSON.stringify(payload) });
     }
   }
+
+  emit(type: 'close' | 'error' | 'open'): void {
+    if (type === 'close') this.readyState = FakeWebSocket.CLOSED;
+    for (const listener of this.listeners.get(type) ?? []) listener({});
+  }
 }
+
+const activeMatch = {
+  opponent: { answered: false, displayName: 'Ana', frameId: 'frame-ana', photoUrl: null, score: 0 },
+  phase: 'ANSWERING',
+  question: { id: 'q-1', options: ['A', 'B', 'C', 'D'], prompt: 'Pergunta que não pode congelar?' },
+  remainingMs: 9_000,
+  round: { number: 1, total: 5 },
+  serverNow: Date.now(),
+  viewer: { displayName: 'Gomes', frameId: null, photoUrl: null, score: 0, seat: 1 },
+} as const;
+
+const voidResult = {
+  opponent: { result: 'VOID', score: 0 },
+  viewer: {
+    knowledgeAfter: 500,
+    knowledgeBefore: 500,
+    knowledgeDelta: 0,
+    result: 'VOID',
+    score: 0,
+    xpDelta: 0,
+  },
+} as const;
 
 describe('página da partida em tempo real', () => {
   beforeEach(() => {
@@ -169,5 +199,88 @@ describe('página da partida em tempo real', () => {
 
     expect(socket?.send).toHaveBeenCalledWith(JSON.stringify({ type: 'READY' }));
     expect(mocks.apiRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('remove a pergunta após a graça local e recupera somente o resultado terminal quando a rede volta', async () => {
+    render(
+      <MemoryRouter initialEntries={['/partida/room-terminal']}>
+        <Routes>
+          <Route element={<LiveMatchPage />} path="/partida/:roomId" />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const playingSocket = FakeWebSocket.instances[0];
+    act(() => playingSocket?.emitMessage({ match: activeMatch, type: 'ROUND_STARTED' }));
+    expect(screen.getByText('Pergunta que não pode congelar?')).toBeInTheDocument();
+
+    mocks.apiRequest.mockRejectedValue(new Error('offline'));
+    act(() => {
+      window.dispatchEvent(new Event('offline'));
+    });
+    expect(playingSocket?.close).toHaveBeenCalledWith(1_001, 'Rede indisponível');
+    await act(async () => vi.advanceTimersByTimeAsync(7_250));
+
+    expect(screen.getByRole('heading', { name: 'Confirmando encerramento da partida...' })).toBeInTheDocument();
+    expect(screen.queryByText('Pergunta que não pode congelar?')).not.toBeInTheDocument();
+    expect(screen.queryByText('AGUARDANDO JOGADOR')).not.toBeInTheDocument();
+
+    mocks.apiRequest.mockResolvedValue({ ticket: 'ticket-terminal' });
+    await act(async () => {
+      window.dispatchEvent(new Event('online'));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const terminalSocket = FakeWebSocket.instances.at(-1);
+    expect(terminalSocket).not.toBe(playingSocket);
+    expect(terminalSocket?.url).toContain('terminal=1');
+    act(() => terminalSocket?.emitMessage({
+      match: {
+        ...activeMatch,
+        phase: 'VOID',
+        question: undefined,
+        remainingMs: undefined,
+        round: undefined,
+      },
+      result: voidResult,
+      type: 'MATCH_VOID',
+      voidReason: 'INDIVIDUAL_DISCONNECT',
+    }));
+
+    expect(screen.getByRole('heading', { name: 'Partida anulada' })).toBeInTheDocument();
+    expect(screen.getByText('A partida foi anulada por perda de conexão.')).toBeInTheDocument();
+    expect(screen.queryByText('Pergunta que não pode congelar?')).not.toBeInTheDocument();
+  });
+
+  it('trata FINALIZING como encerramento neutro e nunca volta a projetar pergunta', async () => {
+    render(
+      <MemoryRouter initialEntries={['/partida/room-finalizing']}>
+        <Routes>
+          <Route element={<LiveMatchPage />} path="/partida/:roomId" />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const socket = FakeWebSocket.instances[0];
+    act(() => socket?.emitMessage({ match: activeMatch, type: 'ROUND_STARTED' }));
+    expect(screen.getByText('Pergunta que não pode congelar?')).toBeInTheDocument();
+
+    act(() => socket?.emitMessage({
+      match: { ...activeMatch, phase: 'FINALIZING' },
+      type: 'MATCH_FINALIZING',
+    }));
+    expect(screen.getByRole('heading', { name: 'Confirmando encerramento da partida...' })).toBeInTheDocument();
+    expect(screen.queryByText('Pergunta que não pode congelar?')).not.toBeInTheDocument();
   });
 });

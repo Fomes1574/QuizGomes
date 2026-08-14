@@ -11,6 +11,7 @@ import {
   type LiveSeat,
 } from '@quiz-gomes/domain';
 import type { Env } from '../env.js';
+import { ApiError } from '../http/api-error.js';
 import {
   LiveMatchRepository,
   type FinalizedLiveMatch,
@@ -41,6 +42,19 @@ const RESULT_KEY = 'result';
 const PRESENCE_CLEANUP_KEY = 'presence-cleanup-pending';
 const REPLACED_SOCKET_CODE = 4_000;
 const FINALIZATION_RETRY_MS = 1_000;
+const SAFE_INITIALIZATION_CODES = new Set([
+  'PLAYER_BUSY',
+  'PROFILE_REQUIRED',
+  'QUESTION_POOL_EMPTY',
+  'QUESTION_POOL_INCONSISTENT',
+  'QUESTION_POOL_INSUFFICIENT',
+]);
+
+function safeInitializationCode(error: unknown): string {
+  return error instanceof ApiError && SAFE_INITIALIZATION_CODES.has(error.code)
+    ? error.code
+    : 'MATCH_INITIALIZATION_FAILED';
+}
 
 function readAttachment(socket: WebSocket): RoomAttachment | null {
   return socket.deserializeAttachment() as RoomAttachment | null;
@@ -166,13 +180,21 @@ export class MatchRoom {
     const state = await this.state();
     if (state === null) return;
     if (state.phase === 'FINISHED' || state.phase === 'VOID') {
+      if (await this.ctx.storage.get<FinalizedLiveMatch>(RESULT_KEY) === undefined) {
+        const summary = await this.restoreTerminalSummary(state);
+        if (summary === null) {
+          await this.ctx.storage.setAlarm(Date.now() + FINALIZATION_RETRY_MS);
+          return;
+        }
+        for (const socket of this.ctx.getWebSockets()) this.sendTerminal(socket, state, summary);
+      }
       if (await this.ctx.storage.get<boolean>(PRESENCE_CLEANUP_KEY) === true) {
         await this.finishPresenceCleanup();
       }
       return;
     }
     if (state.phase === 'FINALIZING') {
-      await this.finalize(state);
+      await this.tryFinalize(state);
       return;
     }
     await this.applyCommand({ type: 'ALARM' }, Date.now());
@@ -198,7 +220,12 @@ export class MatchRoom {
       return Response.json({ error: 'invalid_initialization' }, { status: 400 });
     }
     const repository = this.repository();
-    const state = await repository.initialize(input);
+    let state: LiveMatchState;
+    try {
+      state = await repository.initialize(input);
+    } catch (error) {
+      return this.initializationFailure(input.matchId, error);
+    }
     try {
       await this.save(state);
       await this.syncAlarm(state);
@@ -213,9 +240,17 @@ export class MatchRoom {
           { cause: cleanupError },
         );
       }
-      throw initializationError;
+      return this.initializationFailure(input.matchId, initializationError);
     }
     return this.initializationResponse(state, 201);
+  }
+
+  private initializationFailure(matchId: string, error: unknown): Response {
+    const code = safeInitializationCode(error);
+    console.warn(JSON.stringify({ code, event: 'match_initialization_failed', matchId }));
+    return Response.json({ error: { code } }, {
+      status: error instanceof ApiError && SAFE_INITIALIZATION_CODES.has(error.code) ? error.status : 500,
+    });
   }
 
   private initializationResponse(state: LiveMatchState, status = 200): Response {
@@ -233,12 +268,17 @@ export class MatchRoom {
     const state = await this.state();
     if (state === null) return Response.json({ status: 'missing' }, { status: 404 });
     if (state.phase === 'FINISHED' || state.phase === 'VOID') return Response.json({ status: state.phase });
+    if (state.phase === 'FINALIZING') {
+      await this.tryFinalize(state);
+      return Response.json({ status: (await this.state())?.phase ?? 'FINALIZING' });
+    }
     await this.applyCommand({ type: 'SYSTEM_FAILURE' }, Date.now());
     return Response.json({ status: 'VOID' });
   }
 
   private async connect(request: Request): Promise<Response> {
     const uid = request.headers.get('X-QG-Authenticated-Uid');
+    const terminalOnly = request.headers.get('X-QG-Terminal-Only') === '1';
     if (uid === null) return new Response('Não autorizado', { status: 401 });
     const state = await this.state();
     if (state === null) return new Response('Sala não encontrada', { status: 404 });
@@ -254,16 +294,20 @@ export class MatchRoom {
     this.ctx.acceptWebSocket(server);
 
     if (state.phase === 'FINISHED' || state.phase === 'VOID') {
-      const summary = await this.ctx.storage.get<FinalizedLiveMatch>(RESULT_KEY);
-      if (summary !== undefined) this.sendTerminal(server, state, summary);
-      else this.sendState(server, 'ROOM_STATE', state);
+      const summary = await this.restoreTerminalSummary(state);
+      if (summary !== null) this.sendTerminal(server, state, summary);
+      else await this.deferTerminal(server, state);
     } else if (state.phase === 'FINALIZING') {
-      this.sendState(server, 'ROOM_STATE', state);
+      if (!await this.tryFinalize(state)) await this.deferTerminal(server, state);
+    } else if (terminalOnly) {
+      await this.connectForTerminalOnly(server, state, player.seat);
     } else {
       const transition = transitionLiveMatch(state, { seat: player.seat, type: 'CONNECT' }, Date.now());
       await this.save(transition.state);
       await this.syncAlarm(transition.state);
-      if (transition.event.type === 'RESUMED') {
+      if (transition.event.type === 'FINALIZE') {
+        if (!await this.tryFinalize(transition.state)) await this.deferTerminal(server, transition.state);
+      } else if (transition.event.type === 'RESUMED') {
         await this.setPlayersActivity(transition.state.startedAtMs === null ? 'preparing' : 'playing');
         this.broadcastState('RESUMED', transition.state);
       } else {
@@ -277,6 +321,27 @@ export class MatchRoom {
     return new Response(null, { status: 101, webSocket: client });
   }
 
+  private async connectForTerminalOnly(
+    socket: WebSocket,
+    state: LiveMatchState,
+    seat: LiveSeat,
+  ): Promise<void> {
+    const transition = state.phase === 'PAUSED'
+      ? transitionLiveMatch(state, { type: 'ALARM' }, Date.now())
+      : transitionLiveMatch(state, { seat, type: 'DISCONNECT' }, Date.now());
+    await this.save(transition.state);
+    await this.syncAlarm(transition.state);
+    if (transition.event.type === 'FINALIZE') {
+      if (!await this.tryFinalize(transition.state)) this.safeSend(socket, { type: 'MATCH_FINALIZING' });
+      return;
+    }
+    if (transition.event.type === 'PAUSED') {
+      await this.setPlayersActivity('reconnecting');
+      this.broadcastState('PAUSED_FOR_RECONNECT', transition.state, socket);
+    }
+    this.safeSend(socket, { type: 'MATCH_FINALIZING' });
+  }
+
   private async applyCommand(command: LiveMatchCommand, nowMs: number, source?: WebSocket): Promise<void> {
     const current = await this.state();
     if (current === null) throw new LiveMatchCommandError('ROOM_NOT_FOUND', 'Sala não encontrada.');
@@ -287,7 +352,9 @@ export class MatchRoom {
     await this.save(transition.state);
     await this.syncAlarm(transition.state);
     await this.publishEvent(transition.event, transition.state, source);
-    if (transition.event.type === 'FINALIZE') await this.finalize(transition.state);
+    if (transition.event.type === 'FINALIZE' && !await this.tryFinalize(transition.state)) {
+      this.broadcastState('MATCH_FINALIZING', transition.state);
+    }
   }
 
   private async publishEvent(event: LiveMatchEvent, state: LiveMatchState, source?: WebSocket): Promise<void> {
@@ -331,6 +398,31 @@ export class MatchRoom {
   private async finalize(state: LiveMatchState): Promise<void> {
     const summary = await this.repository().finalize(state);
     await this.persistFinalized(state, summary, true);
+  }
+
+  private async tryFinalize(state: LiveMatchState): Promise<boolean> {
+    try {
+      await this.finalize(state);
+      return true;
+    } catch {
+      console.error(JSON.stringify({ code: 'MATCH_FINALIZATION_RETRY', event: 'match_finalization_failed', matchId: state.matchId }));
+      await this.ctx.storage.setAlarm(Date.now() + FINALIZATION_RETRY_MS);
+      return false;
+    }
+  }
+
+  private async restoreTerminalSummary(state: LiveMatchState): Promise<FinalizedLiveMatch | null> {
+    const stored = await this.ctx.storage.get<FinalizedLiveMatch>(RESULT_KEY);
+    if (stored !== undefined) return stored;
+    const persisted = await this.repository().readFinalized(state);
+    if (persisted === null) return null;
+    await this.ctx.storage.put(RESULT_KEY, persisted);
+    return persisted;
+  }
+
+  private async deferTerminal(socket: WebSocket, state: LiveMatchState): Promise<void> {
+    this.sendState(socket, 'MATCH_FINALIZING', state);
+    await this.ctx.storage.setAlarm(Date.now() + FINALIZATION_RETRY_MS);
   }
 
   private async persistFinalized(
@@ -430,6 +522,10 @@ export class MatchRoom {
       await this.ctx.storage.setAlarm(Date.now() + FINALIZATION_RETRY_MS);
       return;
     }
+    if (state.phase === 'PAUSED' && state.pause !== null) {
+      await this.ctx.storage.setAlarm(state.pause.graceDeadlineMs);
+      return;
+    }
     if (state.phaseDeadlineMs !== null) await this.ctx.storage.setAlarm(state.phaseDeadlineMs);
   }
 
@@ -438,7 +534,7 @@ export class MatchRoom {
     if (state === null) return;
     await Promise.all(state.players.map(async (player) => {
       const id = this.env.PRESENCE_HUB.idFromName(player.firebaseUid);
-      await this.env.PRESENCE_HUB.get(id).fetch('https://presence.internal/transition', {
+      const response = await this.env.PRESENCE_HUB.get(id).fetch('https://presence.internal/transition', {
         body: JSON.stringify({
           from: ['preparing', 'playing', 'reconnecting'],
           fromResource: state.matchId,
@@ -447,6 +543,10 @@ export class MatchRoom {
         }),
         method: 'POST',
       });
+      if (to !== 'idle' || response.ok) return;
+      const rejected = await response.json<{ state?: { activity?: string; resource?: string | null } }>();
+      if (rejected.state?.activity === 'idle' || rejected.state?.resource !== state.matchId) return;
+      throw new Error('Presence da partida terminal ainda não pôde voltar a idle.');
     }));
   }
 }

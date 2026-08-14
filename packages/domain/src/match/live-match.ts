@@ -5,7 +5,7 @@ import { QUESTION_DURATION_MS, remainingAt, scoreAnswer } from './scoring.js';
 import type { Difficulty, MatchMode } from '../types.js';
 
 export const LIVE_PREPARATION_MS = 3_000;
-export const LIVE_ROUND_RESULT_MS = 2_400;
+export const LIVE_ROUND_RESULT_MS = 2_900;
 export const LIVE_ROUND_TRANSITION_MS = 450;
 
 export type LiveSeat = 1 | 2;
@@ -231,7 +231,24 @@ function resolveRound(state: LiveMatchState, nowMs: number): LiveTransition {
   return { event: { type: 'ROUND_RESOLVED' }, state };
 }
 
+function expirePause(state: LiveMatchState): LiveTransition {
+  const pause = pauseOf(state);
+  if (pause === null) throw new Error('Pausa sem estado preservado.');
+  if (pause.disconnectedSeats.length !== 1) return beginVoid(state, 'SYSTEM_FAILURE', null);
+  const disconnectedSeat = pause.disconnectedSeats[0] ?? null;
+  return state.startedAtMs === null
+    ? beginVoid(state, 'READINESS_TIMEOUT', null)
+    : beginVoid(state, 'INDIVIDUAL_DISCONNECT', disconnectedSeat);
+}
+
 function alarm(state: LiveMatchState, nowMs: number): LiveTransition {
+  if (state.phase === 'PAUSED') {
+    const pause = pauseOf(state);
+    if (pause === null) throw new Error('Pausa sem estado preservado.');
+    return nowMs < pause.graceDeadlineMs
+      ? { event: { type: 'NOOP' }, state }
+      : expirePause(state);
+  }
   if (state.phaseDeadlineMs === null || nowMs < state.phaseDeadlineMs) {
     return { event: { type: 'NOOP' }, state };
   }
@@ -258,15 +275,6 @@ function alarm(state: LiveMatchState, nowMs: number): LiveTransition {
     }
     state.roundIndex += 1;
     return beginRoundReady(state, nowMs);
-  }
-  if (state.phase === 'PAUSED') {
-    const pause = pauseOf(state);
-    if (pause === null) throw new Error('Pausa sem estado preservado.');
-    if (pause.disconnectedSeats.length !== 1) return beginVoid(state, 'SYSTEM_FAILURE', null);
-    const disconnectedSeat = pause.disconnectedSeats[0] ?? null;
-    return state.startedAtMs === null
-      ? beginVoid(state, 'READINESS_TIMEOUT', null)
-      : beginVoid(state, 'INDIVIDUAL_DISCONNECT', disconnectedSeat);
   }
   return { event: { type: 'NOOP' }, state };
 }
@@ -340,6 +348,11 @@ export function transitionLiveMatch(
   }
 
   if (command.type === 'CONNECT') {
+    if (state.phase === 'PAUSED') {
+      const pause = pauseOf(state);
+      if (pause === null) throw new Error('Pausa sem estado preservado.');
+      if (nowMs >= pause.graceDeadlineMs) return expirePause(state);
+    }
     player.connected = true;
     if (state.phase !== 'PAUSED') {
       if (state.phase === 'LOBBY' && state.players.every((entry) => entry.connected && entry.lobbyReady)) {
@@ -550,13 +563,12 @@ export function projectLiveMatchPresentationForSeat(
 
 function phaseHasCurrentQuestion(state: LiveMatchState): boolean {
   if (['ROUND_READY', 'ANSWERING', 'ROUND_RESULT'].includes(state.phase)) return true;
-  if (['FINALIZING', 'FINISHED'].includes(state.phase)) return state.startedAtMs !== null;
   const pause = pauseOf(state);
   return state.phase === 'PAUSED' && pause !== null && pause.phase !== 'PREPARING';
 }
 
 function phaseHasResolvedCurrentRound(state: LiveMatchState): boolean {
-  if (['ROUND_RESULT', 'FINALIZING', 'FINISHED'].includes(state.phase)) return true;
+  if (state.phase === 'ROUND_RESULT') return true;
   const pause = pauseOf(state);
   return state.phase === 'PAUSED' && pause?.phase === 'ROUND_RESULT';
 }

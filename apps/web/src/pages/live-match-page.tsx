@@ -1,4 +1,4 @@
-import type { LiveMatchProjection, MatchResult } from '@quiz-gomes/domain';
+import { RECONNECT_GRACE_MS, type LiveMatchProjection, type MatchResult } from '@quiz-gomes/domain';
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Button } from '../components/button.js';
@@ -36,6 +36,8 @@ interface RoomMessage {
   voidReason?: string;
 }
 
+const TERMINAL_RECOVERY_RETRY_MS = 3_000;
+
 export function LiveMatchPage() {
   const { roomId = '' } = useParams();
   const { getToken } = useAuth();
@@ -48,6 +50,7 @@ export function LiveMatchPage() {
   const [error, setError] = useState<string | null>(null);
   const [terminal, setTerminal] = useState<{ result: TerminalResult; voidReason?: string } | null>(null);
   const [countdown, setCountdown] = useState<number | null>(null);
+  const [recoveringTerminal, setRecoveringTerminal] = useState(false);
 
   useEffect(() => {
     let disposed = false;
@@ -57,16 +60,44 @@ export function LiveMatchPage() {
     let countdownTimer: number | null = null;
     let generation = 0;
     let terminalReached = false;
+    let terminalRecovery = false;
+    let connecting = false;
+    let connect: (() => Promise<void>) | null = null;
 
     const clearRoundReady = () => {
       if (roundReadyTimer !== null) window.clearTimeout(roundReadyTimer);
       roundReadyTimer = null;
     };
-    const updateCountdown = (match: LiveMatchProjection) => {
+    const clearCountdown = () => {
       if (countdownTimer !== null) window.clearInterval(countdownTimer);
+      countdownTimer = null;
+      setCountdown(null);
+    };
+    const clearRetry = () => {
+      if (retryTimer !== null) window.clearTimeout(retryTimer);
+      retryTimer = null;
+    };
+    const scheduleRetry = (delayMs: number) => {
+      clearRetry();
+      retryTimer = window.setTimeout(() => {
+        retryTimer = null;
+        if (connect !== null) void connect();
+      }, delayMs);
+    };
+    const enterTerminalRecovery = () => {
+      terminalRecovery = true;
+      clearRoundReady();
+      clearCountdown();
+      setProjection(null);
+      setDeadlineMs(null);
+      setRoundIntro(null);
+      setError(null);
+      setRecoveringTerminal(true);
+      setStatusMessage('Confirmando encerramento da partida...');
+    };
+    const updateCountdown = (match: LiveMatchProjection) => {
+      clearCountdown();
       if (match.phase !== 'PREPARING' || match.remainingMs === undefined) {
-        countdownTimer = null;
-        setCountdown(null);
         return;
       }
       const endsAt = Date.now() + match.remainingMs;
@@ -116,10 +147,40 @@ export function LiveMatchPage() {
         return;
       }
       if (payload.type === 'ERROR') {
+        if (terminalRecovery || payload.code === 'MATCH_NOT_ACTIVE') {
+          enterTerminalRecovery();
+          return;
+        }
         setError(payload.message ?? 'A sala rejeitou esta ação.');
         return;
       }
-      if (payload.match !== undefined) applyProjection(payload.match);
+      if ((payload.type === 'MATCH_FINISHED' || payload.type === 'MATCH_VOID') && payload.result !== undefined) {
+        terminalReached = true;
+        terminalRecovery = false;
+        clearRetry();
+        clearRoundReady();
+        clearCountdown();
+        setRecoveringTerminal(false);
+        setRoundIntro(null);
+        if (payload.match !== undefined) setProjection(payload.match);
+        setTerminal(payload.voidReason === undefined
+          ? { result: payload.result }
+          : { result: payload.result, voidReason: payload.voidReason });
+        return;
+      }
+      if (payload.type === 'MATCH_FINALIZING' ||
+        payload.match?.phase === 'FINALIZING' || payload.match?.phase === 'FINISHED' || payload.match?.phase === 'VOID') {
+        enterTerminalRecovery();
+        return;
+      }
+      if (payload.match !== undefined) {
+        if ((payload.type === 'RESUMED' || payload.type === 'ROOM_STATE') && payload.match.phase !== 'PAUSED') {
+          terminalRecovery = false;
+          retryStartedAt = null;
+          setRecoveringTerminal(false);
+        }
+        applyProjection(payload.match);
+      }
       if (payload.type === 'ROOM_STATE') {
         if (payload.match?.phase === 'LOBBY') socket.send(JSON.stringify({ type: 'READY' }));
         if (payload.match?.phase === 'ROUND_READY') acknowledgeRound(socket, payload.match, 0);
@@ -132,13 +193,21 @@ export function LiveMatchPage() {
         setStatusMessage('Partida restaurada');
         if (payload.match?.phase === 'ROUND_READY') acknowledgeRound(socket, payload.match, 0);
       }
-      if ((payload.type === 'MATCH_FINISHED' || payload.type === 'MATCH_VOID') && payload.result !== undefined) {
-        terminalReached = true;
-        clearRoundReady();
-        setRoundIntro(null);
-        setTerminal(payload.voidReason === undefined
-          ? { result: payload.result }
-          : { result: payload.result, voidReason: payload.voidReason });
+    };
+
+    const handleConnectionLoss = (socket?: WebSocket) => {
+      if (disposed || terminalReached || (socket !== undefined && socketRef.current !== socket)) return;
+      if (socket !== undefined) socketRef.current = null;
+      clearRoundReady();
+      setRoundIntro(null);
+      const now = Date.now();
+      retryStartedAt ??= now;
+      if (!terminalRecovery && now - retryStartedAt < RECONNECT_GRACE_MS) {
+        setStatusMessage('Reconectando à partida');
+        scheduleRetry(200);
+      } else {
+        enterTerminalRecovery();
+        scheduleRetry(TERMINAL_RECOVERY_RETRY_MS);
       }
     };
 
@@ -146,52 +215,57 @@ export function LiveMatchPage() {
       socketRef.current = socket;
       const opened = () => {
         if (socketRef.current !== socket) return;
-        retryStartedAt = null;
         setError(null);
-        setStatusMessage('Aguardando jogadores');
+        setStatusMessage(terminalRecovery ? 'Confirmando encerramento da partida...' : 'Aguardando jogadores');
       };
       socket.addEventListener('open', opened);
       socket.addEventListener('message', (event) => handleMessage(socket, String(event.data)));
       socket.addEventListener('close', () => {
-        if (disposed || socketRef.current !== socket || terminalReached) return;
-        socketRef.current = null;
-        clearRoundReady();
-        setRoundIntro(null);
-        setStatusMessage('Reconectando à partida');
-        const now = Date.now();
-        retryStartedAt ??= now;
-        if (now - retryStartedAt >= 7_000) {
-          setError('Não foi possível restaurar a conexão dentro de 7 segundos.');
-          return;
-        }
-        retryTimer = window.setTimeout(() => { void connect(); }, 200);
+        handleConnectionLoss(socket);
       });
       socket.addEventListener('error', () => {
-        if (socketRef.current === socket) setStatusMessage('Reconectando à partida');
+        if (socketRef.current === socket) {
+          setStatusMessage(terminalRecovery ? 'Confirmando encerramento da partida...' : 'Reconectando à partida');
+        }
       });
       if (socket.readyState === WebSocket.OPEN) opened();
       bufferedMessages.forEach((message) => handleMessage(socket, message));
     };
 
-    const connect = async (): Promise<void> => {
+    connect = async (): Promise<void> => {
+      if (connecting || socketRef.current !== null || disposed || terminalReached) return;
+      connecting = true;
       const currentGeneration = ++generation;
       try {
         const token = await getToken();
-        if (disposed || currentGeneration !== generation) return;
+        if (disposed || currentGeneration !== generation) {
+          connecting = false;
+          return;
+        }
         if (token === null) throw new Error('Sua sessão expirou. Entre novamente.');
         const ticket = await apiRequest<{ ticket: string }>('/api/realtime/tickets', {
           body: { resource: roomId, scope: 'room' }, getToken, method: 'POST', token,
         });
-        if (disposed || currentGeneration !== generation) return;
-        bindSocket(new WebSocket(websocketUrl(`/api/realtime/rooms/${roomId}?ticket=${encodeURIComponent(ticket.ticket)}`)));
+        if (disposed || currentGeneration !== generation) {
+          connecting = false;
+          return;
+        }
+        connecting = false;
+        const search = new URLSearchParams({ ticket: ticket.ticket });
+        if (terminalRecovery) search.set('terminal', '1');
+        bindSocket(new WebSocket(websocketUrl(`/api/realtime/rooms/${roomId}?${search}`)));
       } catch (connectError) {
-        if (disposed) return;
+        connecting = false;
+        if (disposed || currentGeneration !== generation) return;
         const now = Date.now();
         retryStartedAt ??= now;
-        if (now - retryStartedAt < 7_000) {
-          retryTimer = window.setTimeout(() => { void connect(); }, 250);
+        if (!terminalRecovery && now - retryStartedAt < RECONNECT_GRACE_MS) {
+          setStatusMessage('Reconectando à partida');
+          scheduleRetry(250);
         } else {
-          setError(connectError instanceof Error ? connectError.message : 'Não foi possível entrar na sala.');
+          void connectError;
+          enterTerminalRecovery();
+          scheduleRetry(TERMINAL_RECOVERY_RETRY_MS);
         }
       }
     };
@@ -202,12 +276,40 @@ export function LiveMatchPage() {
       generation += 1;
       bindSocket(prepared.socket, prepared.messages);
     }
+    const recoverTerminalNow = () => {
+      if (!terminalRecovery || disposed || terminalReached || socketRef.current !== null || connecting) return;
+      clearRetry();
+      if (connect !== null) void connect();
+    };
+    const recoverWhenVisible = () => {
+      if (document.visibilityState === 'visible') recoverTerminalNow();
+    };
+    const handleOffline = () => {
+      if (disposed || terminalReached) return;
+      generation += 1;
+      connecting = false;
+      const socket = socketRef.current;
+      if (socket !== null) {
+        handleConnectionLoss(socket);
+        socket.close(1_001, 'Rede indisponível');
+      } else {
+        handleConnectionLoss();
+      }
+    };
+    window.addEventListener('online', recoverTerminalNow);
+    window.addEventListener('offline', handleOffline);
+    window.addEventListener('focus', recoverTerminalNow);
+    document.addEventListener('visibilitychange', recoverWhenVisible);
     return () => {
       disposed = true;
       generation += 1;
-      if (retryTimer !== null) window.clearTimeout(retryTimer);
+      window.removeEventListener('online', recoverTerminalNow);
+      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('focus', recoverTerminalNow);
+      document.removeEventListener('visibilitychange', recoverWhenVisible);
+      clearRetry();
       clearRoundReady();
-      if (countdownTimer !== null) window.clearInterval(countdownTimer);
+      clearCountdown();
       const socket = socketRef.current;
       socketRef.current = null;
       socket?.close(1_000, 'Tela encerrada');
@@ -240,6 +342,17 @@ export function LiveMatchPage() {
         voidReason={terminal.voidReason}
         xpDelta={viewer.xpDelta}
       />
+    );
+  }
+
+  if (recoveringTerminal || projection?.phase === 'FINALIZING' ||
+    projection?.phase === 'FINISHED' || projection?.phase === 'VOID') {
+    return (
+      <main className="match-lobby-screen">
+        <Logo />
+        <span aria-hidden="true" className="spinner match-lobby-spinner" />
+        <h1>Confirmando encerramento da partida...</h1>
+      </main>
     );
   }
 

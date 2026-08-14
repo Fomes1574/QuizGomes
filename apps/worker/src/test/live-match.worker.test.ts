@@ -1,6 +1,9 @@
 import {
+  createPoolState,
   decodePoolState,
+  encodePoolState,
   transitionLiveMatch,
+  markAnswered,
   type LiveMatchCommand,
   type LiveMatchProjection,
   type LiveMatchState,
@@ -84,9 +87,13 @@ function capture(socket: WebSocket): SocketCapture {
   };
 }
 
-async function openRoom(stub: DurableObjectStub, uid: string): Promise<SocketCapture> {
+async function openRoom(stub: DurableObjectStub, uid: string, terminalOnly = false): Promise<SocketCapture> {
   const response = await stub.fetch(new Request('https://room.internal/socket', {
-    headers: { Upgrade: 'websocket', 'X-QG-Authenticated-Uid': uid },
+    headers: {
+      Upgrade: 'websocket',
+      'X-QG-Authenticated-Uid': uid,
+      'X-QG-Terminal-Only': terminalOnly ? '1' : '0',
+    },
   }));
   expect(response.status).toBe(101);
   expect(response.webSocket).not.toBeNull();
@@ -109,6 +116,7 @@ async function seedMatchFixture(
   prefix: string,
   knowledge = 500,
   mode: 'CASUAL' | 'RANKED' = 'RANKED',
+  questionCount = 5,
 ): Promise<{
   poolId: string;
   resource: string;
@@ -138,8 +146,8 @@ async function seedMatchFixture(
     env.CORE_DB.prepare(
       `INSERT INTO themes
         (id, category_id, slug, name, description, status, origin, question_shard_id, active_question_count)
-       VALUES (?1, 'test-live-category', ?2, ?3, 'Fixture sintética de integração realtime.', 'ACTIVE', 'OFFICIAL', 'questions-01', 5)`,
-    ).bind(themeId, `${prefix}-theme`, `${prefix} Tema`),
+       VALUES (?1, 'test-live-category', ?2, ?3, 'Fixture sintética de integração realtime.', 'ACTIVE', 'OFFICIAL', 'questions-01', ?4)`,
+    ).bind(themeId, `${prefix}-theme`, `${prefix} Tema`, questionCount),
     env.CORE_DB.prepare(
       `INSERT INTO theme_rankings (user_id, theme_id, knowledge)
        VALUES (?1, ?2, ?3)`,
@@ -152,10 +160,10 @@ async function seedMatchFixture(
   const questionStatements: D1PreparedStatement[] = [
     env.QUESTIONS_DB.prepare(
       `INSERT INTO question_pools (id, theme_id, difficulty, active_count)
-       VALUES (?1, ?2, 'EASY', 5)`,
-    ).bind(poolId, themeId),
+       VALUES (?1, ?2, 'EASY', ?3)`,
+    ).bind(poolId, themeId, questionCount),
   ];
-  for (let index = 1; index <= 5; index += 1) {
+  for (let index = 1; index <= questionCount; index += 1) {
     questionStatements.push(env.QUESTIONS_DB.prepare(
       `INSERT INTO questions
         (id, pool_id, active_slot, prompt, option_a, option_b, option_c, option_d, correct_option, content_hash, status)
@@ -164,6 +172,83 @@ async function seedMatchFixture(
   }
   await env.QUESTIONS_DB.batch(questionStatements);
   return { poolId, resource: `${themeId}:EASY:${mode}`, themeId, uids, userIds };
+}
+
+async function presenceState(uid: string): Promise<{ activity: string; resource: string | null }> {
+  const presence = env.PRESENCE_HUB.get(env.PRESENCE_HUB.idFromName(uid));
+  const state = await presence.fetch('https://presence.internal/state').then((response) => (
+    response.json<{ activity: string; resource: string | null }>()
+  ));
+  return { activity: state.activity, resource: state.resource };
+}
+
+async function reserveForMatchmaking(
+  fixture: Awaited<ReturnType<typeof seedMatchFixture>>,
+): Promise<void> {
+  for (const uid of fixture.uids) {
+    const presence = env.PRESENCE_HUB.get(env.PRESENCE_HUB.idFromName(uid));
+    const reserved = await presence.fetch('https://presence.internal/transition', {
+      body: JSON.stringify({ from: 'idle', resource: fixture.resource, to: 'matchmaking' }),
+      method: 'POST',
+    });
+    expect(reserved.ok).toBe(true);
+  }
+}
+
+async function pairThroughMatchmaking(
+  fixture: Awaited<ReturnType<typeof seedMatchFixture>>,
+): Promise<{ first: TestMessage; roomId: string; second: TestMessage; stub: DurableObjectStub }> {
+  await reserveForMatchmaking(fixture);
+  const queue = env.MATCHMAKING_QUEUE.get(env.MATCHMAKING_QUEUE.idFromName(fixture.resource));
+  const openQueue = async (uid: string) => {
+    const response = await queue.fetch(new Request('https://queue.internal/socket', {
+      headers: {
+        Upgrade: 'websocket',
+        'X-QG-Authenticated-Uid': uid,
+        'X-QG-Match-Resource': fixture.resource,
+        'X-QG-Theme-Knowledge': '500',
+      },
+    }));
+    expect(response.status).toBe(101);
+    return capture(response.webSocket as WebSocket);
+  };
+  const firstSocket = await openQueue(fixture.uids[0]);
+  await firstSocket.waitFor('SEARCHING');
+  const secondSocket = await openQueue(fixture.uids[1]);
+  const [first, second] = await Promise.all([
+    firstSocket.waitFor('MATCH_FOUND'),
+    secondSocket.waitFor('MATCH_FOUND'),
+  ]);
+  expect(first.roomId).toBe(second.roomId);
+  if (first.roomId === undefined) throw new Error('Matchmaking não retornou roomId.');
+  return {
+    first,
+    roomId: first.roomId,
+    second,
+    stub: env.MATCH_ROOM.get(env.MATCH_ROOM.idFromName(first.roomId)),
+  };
+}
+
+async function startRoomAtAnswering(
+  stub: DurableObjectStub,
+  uids: readonly [string, string],
+): Promise<{ first: SocketCapture; questionId: string; second: SocketCapture }> {
+  const first = await openRoom(stub, uids[0]);
+  const second = await openRoom(stub, uids[1]);
+  await Promise.all([first.waitFor('ROOM_STATE'), second.waitFor('ROOM_STATE')]);
+  first.socket.send(JSON.stringify({ type: 'READY' }));
+  second.socket.send(JSON.stringify({ type: 'READY' }));
+  await Promise.all([first.waitFor('PREPARING'), second.waitFor('PREPARING')]);
+  await expireAlarm(stub);
+  const [firstQuestion] = await Promise.all([
+    first.waitFor('ROUND_QUESTION'), second.waitFor('ROUND_QUESTION'),
+  ]);
+  const questionId = firstQuestion.match?.question?.id;
+  if (questionId === undefined) throw new Error('Pergunta pública inicial ausente.');
+  first.socket.send(JSON.stringify({ roundNumber: 1, type: 'ROUND_READY' }));
+  second.socket.send(JSON.stringify({ roundNumber: 1, type: 'ROUND_READY' }));
+  await Promise.all([first.waitFor('ROUND_STARTED'), second.waitFor('ROUND_STARTED')]);
+  return { first, questionId, second };
 }
 
 function apply(state: LiveMatchState, command: LiveMatchCommand, nowMs: number): LiveMatchState {
@@ -218,17 +303,26 @@ async function initializeRoom(
   roomId = crypto.randomUUID(),
 ): Promise<{ roomId: string; stub: DurableObjectStub }> {
   const stub = env.MATCH_ROOM.get(env.MATCH_ROOM.idFromName(roomId));
-  const response = await stub.fetch('https://room.internal/initialize', {
+  const response = await requestInitialization(stub, fixture, roomId);
+  expect(response.status).toBe(201);
+  return { roomId, stub };
+}
+
+async function requestInitialization(
+  stub: DurableObjectStub,
+  fixture: Awaited<ReturnType<typeof seedMatchFixture>>,
+  roomId: string,
+  resource = fixture.resource,
+): Promise<Response> {
+  return stub.fetch('https://room.internal/initialize', {
     body: JSON.stringify({
       createdAtMs: Date.now(),
       firebaseUids: fixture.uids,
       matchId: roomId,
-      resource: fixture.resource,
+      resource,
     }),
     method: 'POST',
   });
-  expect(response.status).toBe(201);
-  return { roomId, stub };
 }
 
 beforeAll(async () => {
@@ -501,6 +595,274 @@ describe('Milestone 8 no runtime Workers simulado', () => {
     expect(players.results).toEqual([
       { knowledge_delta: -20, user_id: fixture.userIds[0], xp_delta: 0 },
       { knowledge_delta: 0, user_id: fixture.userIds[1], xp_delta: 0 },
+    ]);
+
+    const lateReconnect = await openRoom(stub, fixture.uids[0]);
+    const recovered = await lateReconnect.waitFor('MATCH_VOID');
+    expect(recovered.match?.phase).toBe('VOID');
+    expect(recovered.match?.question).toBeUndefined();
+    expect(recovered.match?.remainingMs).toBeUndefined();
+  });
+
+  it('executa PARTIDA 1 → VOID → locks/Presence limpos → PARTIDA 2 com os mesmos usuários', async () => {
+    const fixture = await seedMatchFixture('voidrematch', 500, 'RANKED', 10);
+    const firstMatch = await pairThroughMatchmaking(fixture);
+    const selectedSlots = await env.CORE_DB.prepare(
+      'SELECT pool_slot FROM match_questions WHERE match_id = ?1 ORDER BY round_number',
+    ).bind(firstMatch.roomId).all<{ pool_slot: number }>();
+    expect(selectedSlots.results).toHaveLength(5);
+
+    const playing = await startRoomAtAnswering(firstMatch.stub, fixture.uids);
+    playing.first.socket.close(1_000, 'Queda do smoke obrigatório');
+    const paused = await playing.second.waitFor('PAUSED_FOR_RECONNECT');
+    expect(paused.match?.phase).toBe('PAUSED');
+    await expireAlarm(firstMatch.stub);
+
+    const stayedConnected = await playing.second.waitFor('MATCH_VOID');
+    expect(stayedConnected.match?.phase).toBe('VOID');
+    expect(stayedConnected.match?.question).toBeUndefined();
+    const returnedPlayer = await openRoom(firstMatch.stub, fixture.uids[0]);
+    const recovered = await returnedPlayer.waitFor('MATCH_VOID');
+    expect(recovered.match?.phase).toBe('VOID');
+    expect(recovered.match?.question).toBeUndefined();
+    expect(recovered.result?.viewer.result).toBe('VOID');
+
+    expect(await env.CORE_DB.prepare(
+      'SELECT status FROM matches WHERE id = ?1',
+    ).bind(firstMatch.roomId).first<{ status: string }>()).toEqual({ status: 'VOID' });
+    expect(await env.CORE_DB.prepare(
+      'SELECT COUNT(*) AS total, SUM(applied) AS applied FROM result_ledger WHERE match_id = ?1',
+    ).bind(firstMatch.roomId).first<{ applied: number; total: number }>()).toEqual({ applied: 2, total: 2 });
+    expect(await env.CORE_DB.prepare(
+      'SELECT COUNT(*) AS total FROM active_match_players WHERE user_id IN (?1, ?2)',
+    ).bind(...fixture.userIds).first<{ total: number }>()).toEqual({ total: 0 });
+    await expect(Promise.all(fixture.uids.map(presenceState))).resolves.toEqual([
+      { activity: 'idle', resource: null },
+      { activity: 'idle', resource: null },
+    ]);
+
+    for (const userId of fixture.userIds) {
+      const row = await env.CORE_DB.prepare(
+        'SELECT state_blob FROM user_pool_states WHERE user_id = ?1 AND pool_id = ?2',
+      ).bind(userId, fixture.poolId).first<{ state_blob: ArrayBuffer }>();
+      const recent = decodePoolState(new Uint8Array(row?.state_blob ?? new ArrayBuffer(0))).recentSlots;
+      expect(recent).toEqual([selectedSlots.results[0]?.pool_slot]);
+      expect(selectedSlots.results.slice(1).every(({ pool_slot: slot }) => !recent.includes(slot))).toBe(true);
+    }
+
+    const secondMatch = await pairThroughMatchmaking(fixture);
+    expect(secondMatch.roomId).not.toBe(firstMatch.roomId);
+    expect(await env.CORE_DB.prepare(
+      'SELECT COUNT(*) AS total FROM active_match_players WHERE user_id IN (?1, ?2)',
+    ).bind(...fixture.userIds).first<{ total: number }>()).toEqual({ total: 2 });
+    const cleanup = await secondMatch.stub.fetch('https://room.internal/system-failure', { method: 'POST' });
+    expect(cleanup.ok).toBe(true);
+    expect(await cleanup.json<{ status: string }>()).toEqual({ status: 'VOID' });
+    expect(await env.CORE_DB.prepare(
+      'SELECT COUNT(*) AS total FROM active_match_players WHERE user_id IN (?1, ?2)',
+    ).bind(...fixture.userIds).first<{ total: number }>()).toEqual({ total: 0 });
+  });
+
+  it('faz CONNECT após o deadline finalizar a sala antes do alarm, sem RESUMED nem pergunta', async () => {
+    const fixture = await seedMatchFixture('connectfirst');
+    const { stub } = await initializeRoom(fixture);
+    const playing = await startRoomAtAnswering(stub, fixture.uids);
+    playing.first.socket.close(1_000, 'Queda antes da corrida temporal');
+    await playing.second.waitFor('PAUSED_FOR_RECONNECT');
+    await runInDurableObject(stub, async (_instance, state) => {
+      const room = await state.storage.get<LiveMatchState>('room');
+      if (room?.pause === null || room?.pause === undefined) throw new Error('Pausa ausente.');
+      room.pause.graceDeadlineMs = Date.now() - 1;
+      room.phaseDeadlineMs = Date.now() + 60_000;
+      await state.storage.put('room', room);
+    });
+
+    const reconnecting = await openRoom(stub, fixture.uids[0]);
+    const [returned, opponent] = await Promise.all([
+      reconnecting.waitFor('MATCH_VOID'), playing.second.waitFor('MATCH_VOID'),
+    ]);
+    expect(returned.match?.phase).toBe('VOID');
+    expect(opponent.match?.phase).toBe('VOID');
+    expect(returned.match?.question).toBeUndefined();
+    expect(JSON.stringify(returned)).not.toContain('RESUMED');
+  });
+
+  it('conexão terminal-only antes do deadline observa o encerramento sem restaurar gameplay', async () => {
+    const fixture = await seedMatchFixture('terminalonly');
+    const { stub } = await initializeRoom(fixture);
+    const playing = await startRoomAtAnswering(stub, fixture.uids);
+    playing.first.socket.close(1_000, 'Queda antes da recuperação terminal');
+    await playing.second.waitFor('PAUSED_FOR_RECONNECT');
+
+    const recovering = await openRoom(stub, fixture.uids[0], true);
+    const neutral = await recovering.waitFor('MATCH_FINALIZING');
+    expect(neutral.match).toBeUndefined();
+    await expireAlarm(stub);
+    const [returned, opponent] = await Promise.all([
+      recovering.waitFor('MATCH_VOID'), playing.second.waitFor('MATCH_VOID'),
+    ]);
+    expect(returned.match?.phase).toBe('VOID');
+    expect(opponent.match?.phase).toBe('VOID');
+    expect(returned.match?.question).toBeUndefined();
+  });
+
+  it('reconexão durante FINALIZING conclui idempotentemente e entrega apenas o terminal', async () => {
+    const fixture = await seedMatchFixture('finalizing');
+    const repository = new LiveMatchRepository(env.CORE_DB, env.QUESTIONS_DB);
+    const { roomId, stub } = await initializeRoom(fixture);
+    const initial = await runInDurableObject(stub, async (_instance, state) => {
+      const room = await state.storage.get<LiveMatchState>('room');
+      if (room === undefined) throw new Error('Sala ausente.');
+      return room;
+    });
+    let finalizing = startStoredMatch(initial);
+    finalizing = apply(finalizing, { seat: 1, type: 'DISCONNECT' }, finalizing.phaseDeadlineMs ?? Date.now());
+    finalizing = apply(finalizing, { type: 'ALARM' }, finalizing.pause?.graceDeadlineMs ?? Date.now());
+    expect(finalizing.phase).toBe('FINALIZING');
+    await repository.markStarted(roomId);
+    await runInDurableObject(stub, async (_instance, state) => state.storage.put('room', finalizing));
+
+    const reconnecting = await openRoom(stub, fixture.uids[0]);
+    const terminal = await reconnecting.waitFor('MATCH_VOID');
+    expect(terminal.match?.phase).toBe('VOID');
+    expect(terminal.match?.question).toBeUndefined();
+    expect(await env.CORE_DB.prepare(
+      'SELECT COUNT(*) AS total FROM active_match_players WHERE match_id = ?1',
+    ).bind(roomId).first<{ total: number }>()).toEqual({ total: 0 });
+
+    const repeated = await repository.finalize(finalizing);
+    expect(repeated.status).toBe('VOID');
+    expect(await env.CORE_DB.prepare(
+      'SELECT COUNT(*) AS total FROM result_ledger WHERE match_id = ?1',
+    ).bind(roomId).first<{ total: number }>()).toEqual({ total: 2 });
+  });
+
+  it('limpa lock historicamente órfão de partida terminal sem tocar partida ativa', async () => {
+    const terminalFixture = await seedMatchFixture('orphan-terminal');
+    const repository = new LiveMatchRepository(env.CORE_DB, env.QUESTIONS_DB);
+    const { roomId, stub } = await initializeRoom(terminalFixture);
+    const response = await stub.fetch('https://room.internal/system-failure', { method: 'POST' });
+    expect(response.ok).toBe(true);
+    await env.CORE_DB.batch(terminalFixture.userIds.map((userId) => env.CORE_DB.prepare(
+      'INSERT INTO active_match_players (user_id, match_id) VALUES (?1, ?2)',
+    ).bind(userId, roomId)));
+    await expect(repository.activeMatchForFirebaseUid(terminalFixture.uids[0])).resolves.toBeNull();
+    expect(await env.CORE_DB.prepare(
+      'SELECT COUNT(*) AS total FROM active_match_players WHERE match_id = ?1',
+    ).bind(roomId).first<{ total: number }>()).toEqual({ total: 0 });
+
+    const activeFixture = await seedMatchFixture('orphan-active');
+    const active = await initializeRoom(activeFixture);
+    await expect(repository.activeMatchForFirebaseUid(activeFixture.uids[0])).resolves.toBe(active.roomId);
+    expect(await env.CORE_DB.prepare(
+      'SELECT COUNT(*) AS total FROM active_match_players WHERE match_id = ?1',
+    ).bind(active.roomId).first<{ total: number }>()).toEqual({ total: 2 });
+    await active.stub.fetch('https://room.internal/system-failure', { method: 'POST' });
+  });
+
+  it('propaga QUESTION_POOL_INSUFFICIENT com código seguro pela fila', async () => {
+    const fixture = await seedMatchFixture('exhausted');
+    let exhausted = createPoolState();
+    for (let slot = 1; slot <= 5; slot += 1) exhausted = markAnswered(exhausted, slot);
+    const blob = encodePoolState(exhausted);
+    await env.CORE_DB.batch(fixture.userIds.map((userId) => env.CORE_DB.prepare(
+      `INSERT INTO user_pool_states (user_id, pool_id, pool_version, state_blob, revision)
+       VALUES (?1, ?2, 1, ?3, 1)`,
+    ).bind(userId, fixture.poolId, blob.buffer)));
+    await reserveForMatchmaking(fixture);
+    const queue = env.MATCHMAKING_QUEUE.get(env.MATCHMAKING_QUEUE.idFromName(fixture.resource));
+    const openQueue = async (uid: string) => {
+      const response = await queue.fetch(new Request('https://queue.internal/socket', {
+        headers: {
+          Upgrade: 'websocket',
+          'X-QG-Authenticated-Uid': uid,
+          'X-QG-Match-Resource': fixture.resource,
+          'X-QG-Theme-Knowledge': '500',
+        },
+      }));
+      return capture(response.webSocket as WebSocket);
+    };
+    const first = await openQueue(fixture.uids[0]);
+    await first.waitFor('SEARCHING');
+    const second = await openQueue(fixture.uids[1]);
+    const failures = await Promise.all([first.waitFor('MATCH_FAILED'), second.waitFor('MATCH_FAILED')]);
+    expect(failures.map(({ code }) => code)).toEqual([
+      'QUESTION_POOL_INSUFFICIENT',
+      'QUESTION_POOL_INSUFFICIENT',
+    ]);
+    await expect(Promise.all(fixture.uids.map(presenceState))).resolves.toEqual([
+      { activity: 'idle', resource: null },
+      { activity: 'idle', resource: null },
+    ]);
+  });
+
+  it('diferencia falhas conhecidas e reduz qualquer código não allowlisted a falha sistêmica', async () => {
+    const profile = await seedMatchFixture('code-profile');
+    await env.CORE_DB.prepare('DELETE FROM user_profiles WHERE user_id = ?1').bind(profile.userIds[1]).run();
+    const profileRoomId = crypto.randomUUID();
+    const profileResponse = await requestInitialization(
+      env.MATCH_ROOM.get(env.MATCH_ROOM.idFromName(profileRoomId)), profile, profileRoomId,
+    );
+    expect(profileResponse.status).toBe(409);
+    await expect(profileResponse.json()).resolves.toEqual({ error: { code: 'PROFILE_REQUIRED' } });
+
+    const empty = await seedMatchFixture('code-empty');
+    await env.QUESTIONS_DB.prepare('UPDATE question_pools SET active_count = 0 WHERE id = ?1').bind(empty.poolId).run();
+    const emptyRoomId = crypto.randomUUID();
+    const emptyResponse = await requestInitialization(
+      env.MATCH_ROOM.get(env.MATCH_ROOM.idFromName(emptyRoomId)), empty, emptyRoomId,
+    );
+    expect(emptyResponse.status).toBe(409);
+    await expect(emptyResponse.json()).resolves.toEqual({ error: { code: 'QUESTION_POOL_EMPTY' } });
+
+    const inconsistent = await seedMatchFixture('code-inconsistent');
+    await env.QUESTIONS_DB.prepare('DELETE FROM questions WHERE pool_id = ?1 AND active_slot = 5')
+      .bind(inconsistent.poolId).run();
+    const inconsistentRoomId = crypto.randomUUID();
+    const inconsistentResponse = await requestInitialization(
+      env.MATCH_ROOM.get(env.MATCH_ROOM.idFromName(inconsistentRoomId)), inconsistent, inconsistentRoomId,
+    );
+    expect(inconsistentResponse.status).toBe(503);
+    await expect(inconsistentResponse.json()).resolves.toEqual({ error: { code: 'QUESTION_POOL_INCONSISTENT' } });
+
+    const busy = await seedMatchFixture('code-busy');
+    const initializedBusy = await initializeRoom(busy);
+    const busyRoomId = crypto.randomUUID();
+    const busyResponse = await requestInitialization(
+      env.MATCH_ROOM.get(env.MATCH_ROOM.idFromName(busyRoomId)), busy, busyRoomId,
+    );
+    expect(busyResponse.status).toBe(409);
+    await expect(busyResponse.json()).resolves.toEqual({ error: { code: 'PLAYER_BUSY' } });
+
+    const generic = await seedMatchFixture('code-generic');
+    const genericRoomId = crypto.randomUUID();
+    const genericResponse = await requestInitialization(
+      env.MATCH_ROOM.get(env.MATCH_ROOM.idFromName(genericRoomId)),
+      generic,
+      genericRoomId,
+      'theme-that-does-not-exist:EASY:RANKED',
+    );
+    expect(genericResponse.status).toBe(500);
+    await expect(genericResponse.json()).resolves.toEqual({ error: { code: 'MATCH_INITIALIZATION_FAILED' } });
+
+    await initializedBusy.stub.fetch('https://room.internal/system-failure', { method: 'POST' });
+  });
+
+  it('em Casual, queda individual anula sem Conhecimento nem XP para ninguém', async () => {
+    const fixture = await seedMatchFixture('casualvoid', 500, 'CASUAL');
+    const { roomId, stub } = await initializeRoom(fixture);
+    const playing = await startRoomAtAnswering(stub, fixture.uids);
+    playing.first.socket.close(1_000, 'Queda Casual');
+    await playing.second.waitFor('PAUSED_FOR_RECONNECT');
+    await expireAlarm(stub);
+    const voided = await playing.second.waitFor('MATCH_VOID');
+    expect(voided.result?.viewer).toMatchObject({ knowledgeDelta: 0, result: 'VOID', xpDelta: 0 });
+    const players = await env.CORE_DB.prepare(
+      'SELECT knowledge_delta, xp_delta FROM match_players WHERE match_id = ?1 ORDER BY seat',
+    ).bind(roomId).all<{ knowledge_delta: number; xp_delta: number }>();
+    expect(players.results).toEqual([
+      { knowledge_delta: 0, xp_delta: 0 },
+      { knowledge_delta: 0, xp_delta: 0 },
     ]);
   });
 

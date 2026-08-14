@@ -62,6 +62,27 @@ function startFirstRound(difficulty: Difficulty = 'EASY'): { now: number; state:
   return { now: preparationEnds + 2, state };
 }
 
+function stateInPausablePhase(phase: 'PREPARING' | 'ROUND_READY' | 'ANSWERING' | 'ROUND_RESULT'): {
+  now: number;
+  state: LiveMatchState;
+} {
+  if (phase === 'ANSWERING') return startFirstRound();
+  let state = match();
+  state = command(state, { seat: 1, type: 'CONNECT' }, 1_100);
+  state = command(state, { seat: 2, type: 'CONNECT' }, 1_101);
+  state = command(state, { seat: 1, type: 'LOBBY_READY' }, 1_102);
+  state = command(state, { seat: 2, type: 'LOBBY_READY' }, 1_103);
+  if (phase === 'PREPARING') return { now: 1_104, state };
+  const preparationEnds = state.phaseDeadlineMs ?? 0;
+  state = command(state, { type: 'ALARM' }, preparationEnds);
+  if (phase === 'ROUND_READY') return { now: preparationEnds + 1, state };
+  state = command(state, { roundNumber: 1, seat: 1, type: 'ROUND_READY' }, preparationEnds + 1);
+  state = command(state, { roundNumber: 1, seat: 2, type: 'ROUND_READY' }, preparationEnds + 2);
+  const answerEnds = state.phaseDeadlineMs ?? 0;
+  state = command(state, { type: 'ALARM' }, answerEnds);
+  return { now: answerEnds + 1, state };
+}
+
 describe('partida simultânea autoritativa', () => {
   it('só inicia os 10 segundos depois de ambos READY na rodada', () => {
     let state = match();
@@ -212,6 +233,94 @@ describe('partida simultânea autoritativa', () => {
     expect(state.phaseDeadlineMs).toBe(reconnectedAt + 6_500);
   });
 
+  it.each(['PREPARING', 'ROUND_READY', 'ANSWERING', 'ROUND_RESULT'] as const)(
+    'reconecta dentro da graça preservando integralmente %s',
+    (phase) => {
+      const prepared = stateInPausablePhase(phase);
+      const before = prepared.state;
+      const disconnectedAt = prepared.now;
+      const paused = command(before, { seat: 1, type: 'DISCONNECT' }, disconnectedAt);
+      const phaseRemainingMs = paused.pause?.phaseRemainingMs ?? -1;
+      const reconnectedAt = disconnectedAt + RECONNECT_GRACE_MS - 1;
+      const transition = transitionLiveMatch(paused, { seat: 1, type: 'CONNECT' }, reconnectedAt);
+
+      expect(transition.event.type).toBe('RESUMED');
+      expect(transition.state.phase).toBe(phase);
+      expect(transition.state.phaseDeadlineMs).toBe(reconnectedAt + phaseRemainingMs);
+      expect(transition.state.roundIndex).toBe(before.roundIndex);
+      expect(transition.state.answers).toEqual(before.answers);
+      expect(transition.state.roundHistory).toEqual(before.roundHistory);
+      expect(transition.state.questions[transition.state.roundIndex]?.id)
+        .toBe(before.questions[before.roundIndex]?.id);
+      expect(transition.state.players.map(({ lobbyReady, roundReady, score }) => ({ lobbyReady, roundReady, score })))
+        .toEqual(before.players.map(({ lobbyReady, roundReady, score }) => ({ lobbyReady, roundReady, score })));
+    },
+  );
+
+  it.each([
+    [6_999, 'RESUMED', 'ANSWERING'],
+    [7_000, 'FINALIZE', 'FINALIZING'],
+    [7_001, 'FINALIZE', 'FINALIZING'],
+  ] as const)('decide reconnect em %i ms pela fronteira persistida', (elapsedMs, event, phase) => {
+    const started = startFirstRound();
+    const disconnectedAt = started.now + 100;
+    const paused = command(started.state, { seat: 1, type: 'DISCONNECT' }, disconnectedAt);
+    const transition = transitionLiveMatch(paused, { seat: 1, type: 'CONNECT' }, disconnectedAt + elapsedMs);
+
+    expect(transition.event.type).toBe(event);
+    expect(transition.state.phase).toBe(phase);
+    if (elapsedMs >= RECONNECT_GRACE_MS) {
+      expect(transition.state.pendingOutcome).toEqual({
+        kind: 'VOID', penalizedSeat: 1, reason: 'INDIVIDUAL_DISCONNECT',
+      });
+      expect(transition.state.players[0].connected).toBe(false);
+    }
+  });
+
+  it('produz VOID na corrida CONNECT versus ALARM independentemente da ordem depois do deadline', () => {
+    const started = startFirstRound();
+    const disconnectedAt = started.now + 100;
+    const paused = command(started.state, { seat: 1, type: 'DISCONNECT' }, disconnectedAt);
+    const deadline = paused.pause?.graceDeadlineMs ?? 0;
+
+    const connectFirst = transitionLiveMatch(paused, { seat: 1, type: 'CONNECT' }, deadline).state;
+    const alarmAfterConnect = transitionLiveMatch(connectFirst, { type: 'ALARM' }, deadline + 1).state;
+    expect(alarmAfterConnect.phase).toBe('FINALIZING');
+    expect(alarmAfterConnect.pendingOutcome).toEqual({
+      kind: 'VOID', penalizedSeat: 1, reason: 'INDIVIDUAL_DISCONNECT',
+    });
+
+    const alarmFirst = transitionLiveMatch(paused, { type: 'ALARM' }, deadline).state;
+    expect(alarmFirst.phase).toBe('FINALIZING');
+    expect(() => transitionLiveMatch(alarmFirst, { seat: 1, type: 'CONNECT' }, deadline + 1))
+      .toThrowError(expect.objectContaining({ code: 'MATCH_NOT_ACTIVE' }));
+    expect(alarmFirst.pendingOutcome).toEqual(connectFirst.pendingOutcome);
+  });
+
+  it('usa graceDeadlineMs como autoridade mesmo se o alarm persistido estiver divergente', () => {
+    const started = startFirstRound();
+    const disconnectedAt = started.now + 100;
+    const paused = command(started.state, { seat: 1, type: 'DISCONNECT' }, disconnectedAt);
+    const deadline = paused.pause?.graceDeadlineMs ?? 0;
+    paused.phaseDeadlineMs = deadline + 60_000;
+    const transition = transitionLiveMatch(paused, { seat: 1, type: 'CONNECT' }, deadline);
+    expect(transition.event.type).toBe('FINALIZE');
+    expect(transition.state.phase).toBe('FINALIZING');
+    const alarmTransition = transitionLiveMatch(paused, { type: 'ALARM' }, deadline);
+    expect(alarmTransition.event.type).toBe('FINALIZE');
+    expect(alarmTransition.state.phase).toBe('FINALIZING');
+  });
+
+  it('não projeta pergunta nem resolução durante FINALIZING', () => {
+    const started = startFirstRound();
+    const finalizing = command(started.state, { type: 'SYSTEM_FAILURE' }, started.now + 1);
+    const projection = projectLiveMatchForSeat(finalizing, 1, started.now + 1);
+    expect(projection.phase).toBe('FINALIZING');
+    expect(projection).not.toHaveProperty('question');
+    expect(projection).not.toHaveProperty('round');
+    expect(projection).not.toHaveProperty('resolution');
+  });
+
   it('aguarda 7 segundos exatos, pune somente queda individual e não pune queda dupla', () => {
     const started = startFirstRound();
     const disconnectedAt = started.now + 100;
@@ -255,12 +364,12 @@ describe('partida simultânea autoritativa', () => {
     expect(state.pendingOutcome).toEqual({ kind: 'VOID', penalizedSeat: 2, reason: 'INDIVIDUAL_ABANDONMENT' });
   });
 
-  it('mantém o resultado visível por 2,4 segundos exatos antes da próxima pergunta', () => {
+  it('mantém o resultado visível por 2,9 segundos exatos antes da próxima pergunta', () => {
     const started = startFirstRound();
     const deadline = started.state.phaseDeadlineMs ?? 0;
     let state = command(started.state, { type: 'ALARM' }, deadline);
     const revealEnds = state.phaseDeadlineMs ?? 0;
-    expect(LIVE_ROUND_RESULT_MS).toBe(2_400);
+    expect(LIVE_ROUND_RESULT_MS).toBe(2_900);
     expect(revealEnds).toBe(deadline + LIVE_ROUND_RESULT_MS);
     state = command(state, { type: 'ALARM' }, revealEnds - 1);
     expect(state.phase).toBe('ROUND_RESULT');

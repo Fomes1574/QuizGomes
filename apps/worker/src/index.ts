@@ -3,7 +3,7 @@ import { discoveredCount } from '@quiz-gomes/domain';
 import { bootstrapAdminUids, hasAdminAccess, requireAdmin, requireUser } from './auth/authorize.js';
 import { MatchRoom } from './durable-objects/match-room.js';
 import { MatchmakingQueue } from './durable-objects/matchmaking-queue.js';
-import { PresenceHub } from './durable-objects/presence-hub.js';
+import { PresenceHub, type ActivityState } from './durable-objects/presence-hub.js';
 import { TicketBroker } from './durable-objects/ticket-broker.js';
 import type { Env } from './env.js';
 import { ApiError } from './http/api-error.js';
@@ -47,6 +47,30 @@ function validationError(error: z.ZodError): ApiError {
 
 function ticketBroker(env: Env): DurableObjectStub {
   return env.TICKET_BROKER.get(env.TICKET_BROKER.idFromName('global'));
+}
+
+async function releaseTerminalPresence(
+  env: Env,
+  matches: LiveMatchRepository,
+  uid: string,
+): Promise<void> {
+  const presence = env.PRESENCE_HUB.get(env.PRESENCE_HUB.idFromName(uid));
+  const response = await presence.fetch('https://presence.internal/state');
+  if (!response.ok) return;
+  const state = await response.json<ActivityState>();
+  if (state.activity === 'idle' || state.resource === null ||
+    !['preparing', 'playing', 'reconnecting', 'finished'].includes(state.activity)) return;
+  const membership = await matches.membership(uid, state.resource);
+  if (membership === null || !['FINISHED', 'VOID'].includes(membership.matchStatus)) return;
+  await presence.fetch('https://presence.internal/transition', {
+    body: JSON.stringify({
+      from: state.activity,
+      fromResource: state.resource,
+      resource: null,
+      to: 'idle',
+    }),
+    method: 'POST',
+  });
 }
 
 async function createRealtimeTicket(request: Request, env: Env): Promise<Response> {
@@ -116,9 +140,11 @@ async function realtimeRoute(request: Request, env: Env, url: URL): Promise<Resp
     const userRow = await env.CORE_DB.prepare('SELECT id FROM users WHERE firebase_uid = ?1 AND disabled_at IS NULL')
       .bind(uid).first<{ id: string }>();
     if (userRow === null) throw new ApiError(409, 'PROFILE_REQUIRED', 'Conclua seu perfil antes de jogar.');
-    if (await new LiveMatchRepository(env.CORE_DB, env.QUESTIONS_DB).activeMatchForFirebaseUid(uid) !== null) {
+    const matches = new LiveMatchRepository(env.CORE_DB, env.QUESTIONS_DB);
+    if (await matches.activeMatchForFirebaseUid(uid) !== null) {
       throw new ApiError(409, 'PLAYER_BUSY', 'Você já está em outra partida.');
     }
+    await releaseTerminalPresence(env, matches, uid);
     const ranking = await env.CORE_DB.prepare(
       'SELECT knowledge FROM theme_rankings WHERE user_id = ?1 AND theme_id = ?2',
     ).bind(userRow.id, themeId).first<{ knowledge: number }>();
@@ -149,6 +175,7 @@ async function realtimeRoute(request: Request, env: Env, url: URL): Promise<Resp
   const roomMatch = /^\/api\/realtime\/rooms\/([a-f0-9-]{36})$/i.exec(url.pathname);
   if (roomMatch?.[1] !== undefined) {
     const roomId = roomMatch[1];
+    const terminalOnly = url.searchParams.get('terminal') === '1';
     const uid = await consumeRealtimeTicket(env, ticket, 'room', roomId);
     const membership = await new LiveMatchRepository(env.CORE_DB, env.QUESTIONS_DB).membership(uid, roomId);
     if (membership === null) throw new ApiError(403, 'MATCH_ACCESS_DENIED', 'Você não pertence a esta partida.');
@@ -162,7 +189,11 @@ async function realtimeRoute(request: Request, env: Env, url: URL): Promise<Resp
     }
     const room = env.MATCH_ROOM.get(env.MATCH_ROOM.idFromName(roomId));
     return room.fetch(new Request('https://room.internal/socket', {
-      headers: { Upgrade: 'websocket', 'X-QG-Authenticated-Uid': uid },
+      headers: {
+        Upgrade: 'websocket',
+        'X-QG-Authenticated-Uid': uid,
+        'X-QG-Terminal-Only': terminalOnly ? '1' : '0',
+      },
     }));
   }
 

@@ -1,6 +1,6 @@
 export type PlayerActivity = 'idle' | 'matchmaking' | 'invite' | 'preparing' | 'playing' | 'reconnecting' | 'finished';
 
-interface ActivityState {
+export interface ActivityState {
   activity: PlayerActivity;
   resource: string | null;
   updatedAt: number;

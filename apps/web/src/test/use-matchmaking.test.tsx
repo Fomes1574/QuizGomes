@@ -35,6 +35,7 @@ vi.mock('../pages/live-match-page.js', () => ({ LiveMatchPage: () => null }));
 
 import {
   elapsedSearchSeconds,
+  matchmakingFailureMessage,
   MATCH_FOUND_PRESENTATION_MS,
   useMatchmaking,
 } from '../hooks/use-matchmaking.js';
@@ -180,5 +181,21 @@ describe('orquestração do matchmaking', () => {
     expect(result.current.status).toBe('cancelling');
     await act(async () => vi.advanceTimersByTimeAsync(1));
     expect(result.current.status).toBe('idle');
+  });
+
+  it('traduz somente códigos seguros de inicialização sem expor detalhe interno', () => {
+    expect(matchmakingFailureMessage('PLAYER_BUSY')).toBe('Um dos jogadores já está em outra partida.');
+    expect(matchmakingFailureMessage('PROFILE_REQUIRED')).toBe('Um dos jogadores precisa concluir o perfil.');
+    expect(matchmakingFailureMessage('QUESTION_POOL_EMPTY')).toBe('Este tema ainda não possui perguntas suficientes.');
+    expect(matchmakingFailureMessage('QUESTION_POOL_INCONSISTENT')).toBe('O banco de perguntas deste tema está em manutenção.');
+    expect(matchmakingFailureMessage('QUESTION_POOL_INSUFFICIENT')).toBe(
+      'As perguntas recentes deste tema foram esgotadas para estes jogadores.',
+    );
+    expect(matchmakingFailureMessage('RECENT_QUESTIONS_EXHAUSTED')).toBe(
+      'As perguntas recentes deste tema foram esgotadas para estes jogadores.',
+    );
+    expect(matchmakingFailureMessage('SQLITE_CONSTRAINT active_match_players')).toBe(
+      'Não foi possível formar a partida.',
+    );
   });
 });

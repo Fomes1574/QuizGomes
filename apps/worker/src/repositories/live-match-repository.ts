@@ -59,6 +59,11 @@ interface FinalizedMatchRow {
   winner_user_id: string | null;
 }
 
+interface ActiveMatchRow {
+  match_id: string;
+  status: string;
+}
+
 export interface FinalizedLivePlayer {
   knowledgeAfter: number;
   knowledgeBefore: number;
@@ -254,12 +259,16 @@ export class LiveMatchRepository {
 
   async activeMatchForFirebaseUid(firebaseUid: string): Promise<string | null> {
     const row = await this.coreDb.prepare(
-      `SELECT a.match_id
+      `SELECT a.match_id, m.status
          FROM active_match_players a
          JOIN users u ON u.id = a.user_id
+         JOIN matches m ON m.id = a.match_id
         WHERE u.firebase_uid = ?1 AND u.disabled_at IS NULL`,
-    ).bind(firebaseUid).first<{ match_id: string }>();
-    return row?.match_id ?? null;
+    ).bind(firebaseUid).first<ActiveMatchRow>();
+    if (row === null) return null;
+    if (row.status !== 'FINISHED' && row.status !== 'VOID') return row.match_id;
+    await this.cleanupTerminalLocks(row.match_id);
+    return null;
   }
 
   async membership(firebaseUid: string, matchId: string): Promise<MatchMembership | null> {
@@ -288,7 +297,10 @@ export class LiveMatchRepository {
     const outcome = state.pendingOutcome;
     if (state.phase !== 'FINALIZING' || outcome === null) throw new Error('Partida fora de FINALIZING.');
     const existing = await this.readFinalized(state);
-    if (existing !== null) return existing;
+    if (existing !== null) {
+      await this.cleanupTerminalLocks(state.matchId);
+      return existing;
+    }
 
     const progressStatement = this.coreDb.prepare(
       `SELECT p.user_id, p.total_xp, COALESCE(r.knowledge, 0) AS knowledge
@@ -510,7 +522,7 @@ export class LiveMatchRepository {
     return finalized;
   }
 
-  private async readFinalized(state: LiveMatchState): Promise<FinalizedLiveMatch | null> {
+  async readFinalized(state: LiveMatchState): Promise<FinalizedLiveMatch | null> {
     const match = await this.coreDb.prepare(
       `SELECT status, winner_user_id, result_reason
          FROM matches
@@ -547,5 +559,17 @@ export class LiveMatchRepository {
       status: match.status,
       winnerUserId: match.winner_user_id,
     };
+  }
+
+  private async cleanupTerminalLocks(matchId: string): Promise<void> {
+    await this.coreDb.prepare(
+      `DELETE FROM active_match_players
+        WHERE match_id = ?1
+          AND EXISTS (
+            SELECT 1
+              FROM matches
+             WHERE id = ?1 AND status IN ('FINISHED', 'VOID')
+          )`,
+    ).bind(matchId).run();
   }
 }

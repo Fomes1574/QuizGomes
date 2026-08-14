@@ -9,10 +9,25 @@ interface QueueAttachment {
 }
 
 interface RoomInitializationResult {
+  error?: { code?: string };
   presentations?: Array<{
     presentation?: LiveMatchPresentationProjection;
     uid?: string;
   }>;
+}
+
+const SAFE_MATCH_FAILURE_CODES = new Set([
+  'PLAYER_BUSY',
+  'PROFILE_REQUIRED',
+  'QUESTION_POOL_EMPTY',
+  'QUESTION_POOL_INCONSISTENT',
+  'QUESTION_POOL_INSUFFICIENT',
+]);
+
+function safeMatchFailureCode(value: unknown): string {
+  return typeof value === 'string' && SAFE_MATCH_FAILURE_CODES.has(value)
+    ? value
+    : 'MATCH_INITIALIZATION_FAILED';
 }
 
 function attachment(socket: WebSocket): QueueAttachment | null {
@@ -59,6 +74,7 @@ export class MatchmakingQueue {
       const roomId = crypto.randomUUID();
       const room = this.env.MATCH_ROOM.get(this.env.MATCH_ROOM.idFromName(roomId));
       let initialization: RoomInitializationResult | null;
+      let initializationFailureCode = 'MATCH_INITIALIZATION_FAILED';
       try {
         const response = await room.fetch('https://room.internal/initialize', {
           body: JSON.stringify({
@@ -69,14 +85,16 @@ export class MatchmakingQueue {
           }),
           method: 'POST',
         });
-        initialization = response.ok ? await response.json<RoomInitializationResult>() : null;
+        const result = await response.json<RoomInitializationResult>();
+        initialization = response.ok ? result : null;
+        if (!response.ok) initializationFailureCode = safeMatchFailureCode(result.error?.code);
       } catch {
         initialization = null;
       }
       const currentPresentation = initialization?.presentations?.find((entry) => entry.uid === uid)?.presentation;
       const opponentPresentation = initialization?.presentations?.find((entry) => entry.uid === opponent.value.uid)?.presentation;
       if (currentPresentation === undefined || opponentPresentation === undefined) {
-        const payload = JSON.stringify({ code: 'MATCH_INITIALIZATION_FAILED', type: 'MATCH_FAILED' });
+        const payload = JSON.stringify({ code: initializationFailureCode, type: 'MATCH_FAILED' });
         server.send(payload);
         opponent.socket.send(payload);
         await Promise.all([

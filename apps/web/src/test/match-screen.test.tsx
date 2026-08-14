@@ -158,7 +158,7 @@ describe('interface de partida', () => {
     expect(screen.getByText('10')).toBeInTheDocument();
     expect(screen.queryByText('37')).not.toBeInTheDocument();
     expect(document.querySelector('.match-screen--resolved')).toHaveStyle({
-      '--match-result-duration': '2400ms',
+      '--match-result-duration': '2900ms',
       '--round-opponent-reveal-delay': '250ms',
       '--round-score-reveal-delay': '550ms',
     });
