@@ -54,17 +54,14 @@ function MatchTimer({
   deadlineMs,
   initialRemainingMs,
   onExpire,
-  pausedRemainingMs,
   resolved,
 }: {
   deadlineMs: number;
   initialRemainingMs: number;
   onExpire: () => void;
-  pausedRemainingMs?: number | undefined;
   resolved: boolean;
 }) {
-  const fixedRemaining = resolved ? 0 : pausedRemainingMs;
-  const animationStartRemaining = normalizedRemaining(fixedRemaining ?? initialRemainingMs);
+  const animationStartRemaining = normalizedRemaining(resolved ? 0 : initialRemainingMs);
   const [snapshot, setSnapshot] = useState(() => ({
     remainingMs: animationStartRemaining,
     seconds: displayedSeconds(animationStartRemaining),
@@ -74,7 +71,7 @@ function MatchTimer({
     let timer: number | null = null;
     let expired = false;
     const update = () => {
-      const remainingMs = normalizedRemaining(fixedRemaining ?? remainingAt(Date.now(), deadlineMs));
+      const remainingMs = normalizedRemaining(resolved ? 0 : remainingAt(Date.now(), deadlineMs));
       const seconds = displayedSeconds(remainingMs);
       setSnapshot((current) => (
         current.remainingMs === remainingMs && current.seconds === seconds
@@ -88,7 +85,6 @@ function MatchTimer({
         }
         return;
       }
-      if (fixedRemaining !== undefined) return;
       const remainder = remainingMs % 1_000;
       const untilNextSecond = remainder === 0 ? 1_000 : remainder;
       timer = window.setTimeout(update, Math.min(1_000, Math.max(16, untilNextSecond)));
@@ -98,10 +94,9 @@ function MatchTimer({
     return () => {
       if (timer !== null) window.clearTimeout(timer);
     };
-  }, [deadlineMs, fixedRemaining, onExpire]);
+  }, [deadlineMs, onExpire, resolved]);
 
-  const paused = !resolved && fixedRemaining !== undefined;
-  const running = !resolved && !paused && animationStartRemaining > 0;
+  const running = !resolved && animationStartRemaining > 0;
   const style: MatchTimerStyle = {
     '--timer-duration': `${Math.max(1, animationStartRemaining)}ms`,
     '--timer-from-ratio': animationStartRemaining / QUESTION_DURATION_MS,
@@ -112,8 +107,8 @@ function MatchTimer({
     <div className="match-timer" role="timer" aria-label={`${snapshot.seconds} segundos restantes`}>
       <span
         aria-hidden="true"
-        className={`match-timer__bar${running ? ' match-timer__bar--running' : ''}${paused ? ' match-timer__bar--paused' : ''}`}
-        key={`${resolved ? 'resolved' : paused ? 'paused' : 'running'}:${deadlineMs}:${fixedRemaining ?? ''}`}
+        className={`match-timer__bar${running ? ' match-timer__bar--running' : ''}`}
+        key={`${resolved ? 'resolved' : 'running'}:${deadlineMs}`}
         style={style}
       />
       <strong aria-hidden="true">{snapshot.seconds}</strong>
@@ -127,8 +122,6 @@ export function MatchScreen({
   opponent,
   opponentAnswered = false,
   opponentScore,
-  paused = false,
-  pausedRemainingMs,
   player,
   playerScore,
   preparing = false,
@@ -144,8 +137,6 @@ export function MatchScreen({
   opponent: MatchParticipantView;
   opponentAnswered?: boolean;
   opponentScore: number;
-  paused?: boolean;
-  pausedRemainingMs?: number | undefined;
   player: MatchParticipantView;
   playerScore: number;
   preparing?: boolean;
@@ -165,7 +156,7 @@ export function MatchScreen({
   const [questionEntranceDelayMs] = useState(questionPresentationDelayMs);
   const resolved = resolution !== undefined;
   const selected = resolved ? resolution.viewer.selectedOption : selectedOption ?? localSelected;
-  const visuallyExpired = !paused && (expiredDeadline === deadlineMs || remainingMs <= 0);
+  const visuallyExpired = expiredDeadline === deadlineMs || remainingMs <= 0;
   const opponentSelected = resolution?.opponent.selectedOption ?? null;
   const handleExpire = useCallback(() => setExpiredDeadline(deadlineMs), [deadlineMs]);
   const screenStyle: MatchScreenStyle = {
@@ -190,7 +181,7 @@ export function MatchScreen({
   return (
     <main
       aria-hidden={preparing || undefined}
-      className={`match-screen${resolved ? ' match-screen--resolved' : ''}${paused ? ' match-screen--paused' : ''}${preparing ? ' match-screen--preparing' : ''}`}
+      className={`match-screen${resolved ? ' match-screen--resolved' : ''}${preparing ? ' match-screen--preparing' : ''}`}
       style={screenStyle}
     >
       <header className="match-scoreboard">
@@ -246,7 +237,7 @@ export function MatchScreen({
               <button
                 aria-label={`${OPTION_LABELS[index]}: ${option}${correct ? ' — correta' : incorrect ? ' — incorreta' : ''}${viewerRevealedHere ? ' — sua resposta' : ''}${opponentRevealedHere ? ' — resposta do adversário' : ''}`}
                 className={className}
-                disabled={preparing || paused || selected !== null || visuallyExpired || resolved}
+                disabled={preparing || selected !== null || visuallyExpired || resolved}
                 key={OPTION_LABELS[index]}
                 onClick={() => { setLocalSelected(index); onAnswer(index); }}
                 type="button"
@@ -282,9 +273,8 @@ export function MatchScreen({
           <MatchTimer
             deadlineMs={deadlineMs}
             initialRemainingMs={remainingMs}
-            key={`${deadlineMs}:${paused ? pausedRemainingMs ?? 0 : 'running'}:${resolved ? 'resolved' : 'active'}`}
+            key={`${deadlineMs}:${resolved ? 'resolved' : 'active'}`}
             onExpire={handleExpire}
-            pausedRemainingMs={paused ? (pausedRemainingMs ?? 0) : undefined}
             resolved={resolved}
           />
         )}

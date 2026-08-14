@@ -450,6 +450,9 @@ h1, h2, h3, .brand-lockup__name, .hero-stat strong, .level-card > strong, .count
 .avatar-editor__controls small { color: var(--text-secondary); font-size: .68rem; line-height: 1.5; }
 
 .dialog-backdrop { position: fixed; z-index: 100; inset: 0; display: grid; overflow-y: auto; place-items: center; padding: 20px; background: rgb(13 7 9 / .64); backdrop-filter: blur(9px); animation: fade-in 180ms ease both; }
+.matchmaking-modal { width: 100%; max-width: none; height: 100dvh; max-height: none; margin: 0; border: 0; color: var(--text-primary); }
+.matchmaking-modal::backdrop { background: transparent; }
+.matchmaking-modal:focus { outline: 0; }
 .dialog { display: grid; width: min(100%, 470px); gap: 24px; padding: 26px; border: 1px solid var(--border); border-radius: 28px; background: var(--surface-raised); box-shadow: var(--shadow-lg); animation: dialog-in 240ms cubic-bezier(.2, .8, .2, 1) both; }
 .dialog__intro h1 { margin-bottom: 8px; font-size: 1.65rem; letter-spacing: -.04em; }
 .dialog__intro p { margin-bottom: 0; color: var(--text-secondary); font-size: .85rem; line-height: 1.55; }
@@ -533,11 +536,10 @@ h1, h2, h3, .brand-lockup__name, .hero-stat strong, .level-card > strong, .count
 .answer-option__choice-avatar--viewer { animation: viewer-answer-in 250ms cubic-bezier(.2, .75, .25, 1) both; }
 .answer-option__choice-avatar--opponent { animation: opponent-answer-in 300ms cubic-bezier(.2, .75, .25, 1) var(--round-opponent-reveal-delay) both; }
 .answer-option:disabled { cursor: default; }
-.match-screen--resolved:not(.match-screen--paused) .match-scoreboard, .match-screen--resolved:not(.match-screen--paused) .question-stage { animation: round-result-out 300ms cubic-bezier(.4, 0, .2, 1) calc(var(--match-result-duration) - 300ms) both; }
+.match-screen--resolved .match-scoreboard, .match-screen--resolved .question-stage { animation: round-result-out 300ms cubic-bezier(.4, 0, .2, 1) calc(var(--match-result-duration) - 300ms) both; }
 .match-timer { position: relative; height: calc(30px + env(safe-area-inset-bottom)); overflow: hidden; border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent); background: var(--background-subtle); }
 .match-timer__bar { position: absolute; inset: 0; background: linear-gradient(90deg, var(--brand-strong), var(--brand-active)); transform: scaleX(0); transform-origin: left center; }
 .match-timer__bar--running { will-change: transform; animation: match-timer-drain var(--timer-duration) linear forwards; }
-.match-timer__bar--paused { transform: scaleX(var(--timer-from-ratio)); }
 .match-timer > strong { position: absolute; z-index: 1; top: 6px; right: max(12px, env(safe-area-inset-right)); color: var(--text-on-brand); font: 700 .72rem/1 Sora, sans-serif; font-variant-numeric: tabular-nums; text-shadow: 0 1px 2px rgb(0 0 0 / .25); }
 .match-timer--preparing { pointer-events: none; }
 .match-lobby-screen { position: fixed; inset: 0; display: grid; place-items: center; align-content: center; gap: 24px; padding: 28px; text-align: center; background: radial-gradient(circle at 50% 45%, color-mix(in srgb, var(--brand) 12%, transparent), transparent 30rem), var(--background); }
@@ -548,9 +550,18 @@ h1, h2, h3, .brand-lockup__name, .hero-stat strong, .level-card > strong, .count
 .round-transition > span { color: var(--brand); font: 800 .68rem/1 Sora, sans-serif; letter-spacing: .24em; }
 .round-transition > strong { display: flex; align-items: baseline; gap: 9px; font: 750 clamp(4rem, 18vw, 8.5rem)/.86 Sora, sans-serif; letter-spacing: -.08em; }
 .round-transition > strong small { color: var(--text-secondary); font-size: .28em; letter-spacing: -.04em; }
-.match-pause-overlay { position: fixed; z-index: 240; inset: 0; display: grid; place-items: center; align-content: center; gap: 10px; padding: 24px; text-align: center; background: color-mix(in srgb, var(--background) 82%, transparent); backdrop-filter: blur(12px); }
-.match-pause-overlay strong { color: var(--brand); font: 750 clamp(1.4rem, 6vw, 2.7rem)/1.1 Sora, sans-serif; }
-.match-pause-overlay span { color: var(--text-secondary); font-size: .82rem; }
+.match-connection-screen { position: fixed; z-index: 240; inset: 0; display: grid; overflow: hidden; place-items: center; padding: 28px; text-align: center; background: radial-gradient(circle at 50% 45%, color-mix(in srgb, var(--brand) 10%, transparent), transparent 31rem), var(--background); animation: match-connection-in 180ms cubic-bezier(.2, .75, .25, 1) both; }
+:root[data-theme='dark'] .match-connection-screen { background: radial-gradient(circle at 50% 45%, rgb(154 25 35 / .16), transparent 31rem), #0e0b0c; }
+.match-connection-screen--leaving { pointer-events: none; animation: match-connection-out 180ms cubic-bezier(.4, 0, .2, 1) both; }
+.match-connection-card { display: grid; width: min(100%, 460px); justify-items: center; gap: 10px; }
+.match-connection-card__signal { display: flex; height: 45px; align-items: end; gap: 6px; margin-bottom: 10px; color: var(--brand); }
+.match-connection-card__signal i { width: 8px; border-radius: 99px; background: currentColor; opacity: .34; animation: match-connection-signal 1.2s ease-in-out infinite; }
+.match-connection-card__signal i:nth-child(1) { height: 15px; }
+.match-connection-card__signal i:nth-child(2) { height: 28px; animation-delay: 120ms; }
+.match-connection-card__signal i:nth-child(3) { height: 41px; animation-delay: 240ms; }
+.match-connection-card h1 { margin: 0; color: var(--brand); font-size: clamp(1.55rem, 7vw, 3.1rem); line-height: 1.05; letter-spacing: -.045em; }
+.match-connection-card p { margin: 0; color: var(--text-secondary); font-size: clamp(.82rem, 3vw, 1rem); }
+.match-connection-countdown { margin-top: 18px; color: var(--text-primary); font: 750 clamp(4.3rem, 22vw, 8.5rem)/.82 Sora, sans-serif; font-variant-numeric: tabular-nums; letter-spacing: -.08em; }
 .match-result-screen { position: fixed; inset: 0; display: grid; overflow-y: auto; place-items: center; align-content: safe center; gap: clamp(16px, 2.7vh, 26px); padding: max(24px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(28px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left)); text-align: center; background: radial-gradient(circle at 50% 38%, color-mix(in srgb, var(--brand) 11%, transparent), transparent 34rem), var(--background); animation: match-result-in 320ms ease-out both; }
 :root[data-theme='dark'] .match-result-screen { background: radial-gradient(circle at 50% 38%, rgb(154 25 35 / .16), transparent 34rem), #0e0b0c; }
 .match-result-heading { display: grid; gap: 4px; }
@@ -619,6 +630,9 @@ h1, h2, h3, .brand-lockup__name, .hero-stat strong, .level-card > strong, .count
 @keyframes round-result-out { from { opacity: 1; transform: translateY(0) scale(1); } to { opacity: 0; transform: translateY(-6px) scale(.997); } }
 @keyframes round-transition-sequence { 0% { opacity: 0; transform: translateY(8px) scale(.985); } 20%, 80% { opacity: 1; transform: translateY(0) scale(1); } 100% { opacity: 0; transform: translateY(-5px) scale(.995); } }
 @keyframes round-transition-backdrop { from { opacity: 1; } to { opacity: 0; } }
+@keyframes match-connection-in { from { opacity: 0; transform: translateY(5px) scale(.997); } }
+@keyframes match-connection-out { from { opacity: 1; transform: translateY(0) scale(1); } to { opacity: 0; transform: translateY(-4px) scale(.998); } }
+@keyframes match-connection-signal { 0%, 100% { opacity: .28; transform: scaleY(.88); } 50% { opacity: 1; transform: scaleY(1); } }
 @keyframes match-result-in { from { opacity: 0; } }
 @keyframes result-player-in { from { opacity: 0; transform: translateY(6px); } }
 @keyframes result-progress-in { from { opacity: 0; transform: translateY(7px); } }
@@ -724,4 +738,7 @@ h1, h2, h3, .brand-lockup__name, .hero-stat strong, .level-card > strong, .count
   .match-timer__bar--running { animation: none !important; transform: scaleX(var(--timer-reduced-ratio)); will-change: auto; }
   .match-screen--resolved .match-scoreboard, .match-screen--resolved .question-stage, .round-transition, .score-gain { opacity: 1; transform: none; animation: none !important; }
   .round-transition-overlay { opacity: 1; animation: none !important; }
+  .match-connection-card__signal i { opacity: 1; transform: none; animation: none !important; }
+  .match-connection-screen { opacity: 1; transform: none; }
+  .match-connection-screen--leaving { opacity: 0; }
 }

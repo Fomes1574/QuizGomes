@@ -18,7 +18,11 @@ vi.mock('../lib/api.js', () => ({
   websocketUrl: (path: string) => `wss://quiz.test${path}`,
 }));
 
-import { LiveMatchPage } from '../pages/live-match-page.js';
+import {
+  LiveMatchPage,
+  MATCH_CONNECTION_EXIT_MS,
+  MATCH_PONG_TIMEOUT_MS,
+} from '../pages/live-match-page.js';
 import { prepareMatchRoom } from '../lib/preloaded-match-room.js';
 
 type FakeListener = (event: { data?: string }) => void;
@@ -147,7 +151,10 @@ describe('página da partida em tempo real', () => {
     expect(socket?.send).not.toHaveBeenCalledWith(JSON.stringify({ roundNumber: 1, type: 'ROUND_READY' }));
 
     await act(async () => vi.advanceTimersByTimeAsync(1));
-    expect(socket?.send).toHaveBeenCalledTimes(1);
+    const roundReadyMessages = socket?.send.mock.calls.filter(([message]) => (
+      message === JSON.stringify({ roundNumber: 1, type: 'ROUND_READY' })
+    ));
+    expect(roundReadyMessages).toHaveLength(1);
     expect(socket?.send).toHaveBeenCalledWith(JSON.stringify({ roundNumber: 1, type: 'ROUND_READY' }));
 
     act(() => socket?.emitMessage({
@@ -223,8 +230,15 @@ describe('página da partida em tempo real', () => {
     act(() => {
       window.dispatchEvent(new Event('offline'));
     });
-    expect(playingSocket?.close).toHaveBeenCalledWith(1_001, 'Rede indisponível');
-    await act(async () => vi.advanceTimersByTimeAsync(7_250));
+    expect(playingSocket?.close).toHaveBeenCalledWith(4_001, 'Rede indisponível');
+    expect(screen.getByRole('heading', { name: 'CONEXÃO PERDIDA' })).toBeInTheDocument();
+    expect(screen.getByText('Tentando reconectar...')).toBeInTheDocument();
+    expect(screen.getByRole('timer')).toHaveAccessibleName('7 segundos restantes');
+    expect(screen.queryByText('Pergunta que não pode congelar?')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'A: A' })).not.toBeInTheDocument();
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    expect(screen.getByRole('timer')).toHaveAccessibleName('6 segundos restantes');
+    await act(async () => vi.advanceTimersByTimeAsync(6_250));
 
     expect(screen.getByRole('heading', { name: 'Confirmando encerramento da partida...' })).toBeInTheDocument();
     expect(screen.queryByText('Pergunta que não pode congelar?')).not.toBeInTheDocument();
@@ -256,6 +270,115 @@ describe('página da partida em tempo real', () => {
     expect(screen.getByRole('heading', { name: 'Partida anulada' })).toBeInTheDocument();
     expect(screen.getByText('A partida foi anulada por perda de conexão.')).toBeInTheDocument();
     expect(screen.queryByText('Pergunta que não pode congelar?')).not.toBeInTheDocument();
+  });
+
+  it('oculta a questão quando PONG para de responder mesmo com navigator online', async () => {
+    Object.defineProperty(window.navigator, 'onLine', { configurable: true, value: true });
+    render(
+      <MemoryRouter initialEntries={['/partida/room-silent-network']}>
+        <Routes>
+          <Route element={<LiveMatchPage />} path="/partida/:roomId" />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const socket = FakeWebSocket.instances[0];
+    act(() => socket?.emitMessage({ match: activeMatch, type: 'ROUND_STARTED' }));
+    expect(screen.getByText('Pergunta que não pode congelar?')).toBeInTheDocument();
+    expect(window.navigator.onLine).toBe(true);
+
+    await act(async () => vi.advanceTimersByTimeAsync(MATCH_PONG_TIMEOUT_MS - 1));
+    expect(screen.getByText('Pergunta que não pode congelar?')).toBeInTheDocument();
+
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+    expect(socket?.close).toHaveBeenCalledWith(4_001, 'Conexão sem resposta');
+    expect(screen.getByRole('heading', { name: 'CONEXÃO PERDIDA' })).toBeInTheDocument();
+    expect(screen.queryByText('Pergunta que não pode congelar?')).not.toBeInTheDocument();
+    expect(screen.queryAllByRole('button')).toHaveLength(0);
+  });
+
+  it('faz a pausa local sair suavemente e restaura a mesma pergunta com o tempo autoritativo', async () => {
+    render(
+      <MemoryRouter initialEntries={['/partida/room-resume']}>
+        <Routes>
+          <Route element={<LiveMatchPage />} path="/partida/:roomId" />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const firstSocket = FakeWebSocket.instances[0];
+    act(() => firstSocket?.emitMessage({ match: activeMatch, type: 'ROUND_STARTED' }));
+    act(() => {
+      window.dispatchEvent(new Event('offline'));
+    });
+    expect(screen.getByRole('heading', { name: 'CONEXÃO PERDIDA' })).toBeInTheDocument();
+    expect(screen.queryByText('Pergunta que não pode congelar?')).not.toBeInTheDocument();
+
+    await act(async () => {
+      vi.advanceTimersByTime(200);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const resumedSocket = FakeWebSocket.instances.at(-1);
+    expect(resumedSocket).not.toBe(firstSocket);
+    act(() => resumedSocket?.emitMessage({
+      match: { ...activeMatch, remainingMs: 6_000 },
+      type: 'RESUMED',
+    }));
+
+    expect(document.querySelector('.match-connection-screen--leaving')).toBeInTheDocument();
+    expect(screen.queryByText('Pergunta que não pode congelar?')).not.toBeInTheDocument();
+    await act(async () => vi.advanceTimersByTimeAsync(MATCH_CONNECTION_EXIT_MS - 1));
+    expect(screen.queryByText('Pergunta que não pode congelar?')).not.toBeInTheDocument();
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+
+    expect(screen.getByText('Pergunta que não pode congelar?')).toBeInTheDocument();
+    expect(screen.getByRole('timer')).toHaveAccessibleName('6 segundos restantes');
+    expect(screen.getAllByRole('button')).toHaveLength(4);
+  });
+
+  it('remove a questão também para o adversário que recebe PAUSED_FOR_RECONNECT', async () => {
+    render(
+      <MemoryRouter initialEntries={['/partida/room-opponent-paused']}>
+        <Routes>
+          <Route element={<LiveMatchPage />} path="/partida/:roomId" />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const socket = FakeWebSocket.instances[0];
+    act(() => socket?.emitMessage({ match: activeMatch, type: 'ROUND_STARTED' }));
+    act(() => socket?.emitMessage({
+      match: {
+        ...activeMatch,
+        phase: 'PAUSED',
+        paused: { graceRemainingMs: 7_000, phase: 'ANSWERING', phaseRemainingMs: 9_000 },
+        remainingMs: undefined,
+      },
+      type: 'PAUSED_FOR_RECONNECT',
+    }));
+
+    expect(screen.getByRole('heading', { name: 'AGUARDANDO JOGADOR' })).toBeInTheDocument();
+    expect(screen.getByText('A partida está pausada.')).toBeInTheDocument();
+    expect(screen.getByRole('timer')).toHaveAccessibleName('7 segundos restantes');
+    expect(screen.queryByText('Pergunta que não pode congelar?')).not.toBeInTheDocument();
+    expect(screen.queryAllByRole('button')).toHaveLength(0);
   });
 
   it('trata FINALIZING como encerramento neutro e nunca volta a projetar pergunta', async () => {

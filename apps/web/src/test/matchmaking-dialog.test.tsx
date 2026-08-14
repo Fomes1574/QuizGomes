@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MatchmakingDialog } from '../components/matchmaking-dialog.js';
 import {
@@ -81,5 +81,127 @@ describe('fechamento visual do matchmaking', () => {
     expect(MATCH_FOUND_EXIT_MS).toBe(900);
     expect(MATCH_FOUND_ENTRY_MS + MATCH_FOUND_HOLD_MS + MATCH_FOUND_EXIT_MS)
       .toBe(MATCH_FOUND_PRESENTATION_MS);
+  });
+
+  it('abre no top layer, torna o AppShell inerte e confina Tab no Cancelar', () => {
+    const navigate = vi.fn();
+    render(
+      <>
+        <div className="app-shell">
+          <header><button aria-label="Abrir perfil" onClick={navigate} type="button">Perfil</button></header>
+          <nav aria-label="Navegação principal">
+            {['Temas', 'Social', 'Criar', 'Perfil'].map((label) => (
+              <button key={label} onClick={navigate} type="button">{label}</button>
+            ))}
+          </nav>
+        </div>
+        <MatchmakingDialog
+          elapsedSeconds={8}
+          onCancel={() => undefined}
+          onClose={() => undefined}
+          opponent={null}
+          preparing={false}
+          status="searching"
+          theme={theme}
+        />
+      </>,
+    );
+
+    const shell = document.querySelector('.app-shell');
+    const dialog = screen.getByRole('dialog', { name: 'PROCURANDO ADVERSÁRIO' });
+    const cancel = screen.getByRole('button', { name: 'Cancelar' });
+    expect(dialog).toBeInstanceOf(HTMLDialogElement);
+    expect(dialog).toHaveAttribute('open');
+    expect(shell).toHaveAttribute('inert');
+    expect(shell).toHaveAttribute('aria-hidden', 'true');
+    expect(cancel).toHaveFocus();
+
+    for (const button of document.querySelectorAll('.app-shell button')) fireEvent.click(button);
+    expect(navigate).not.toHaveBeenCalled();
+    fireEvent.keyDown(cancel, { key: 'Tab' });
+    expect(cancel).toHaveFocus();
+    fireEvent.keyDown(cancel, { key: 'Tab', shiftKey: true });
+    expect(cancel).toHaveFocus();
+  });
+
+  it('Escape equivale a Cancelar durante a busca', () => {
+    const onCancel = vi.fn();
+    render(<MatchmakingDialog
+      elapsedSeconds={3}
+      onCancel={onCancel}
+      onClose={() => undefined}
+      opponent={null}
+      preparing={false}
+      status="searching"
+      theme={theme}
+    />);
+
+    const event = new Event('cancel', { cancelable: true });
+    fireEvent(screen.getByRole('dialog'), event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it('mantém o fundo bloqueado na apresentação do adversário', () => {
+    const navigate = vi.fn();
+    render(
+      <>
+        <div className="app-shell"><button onClick={navigate} type="button">Temas</button></div>
+        <MatchmakingDialog
+          elapsedSeconds={12}
+          onCancel={() => undefined}
+          onClose={() => undefined}
+          opponent={{
+            customAvatarUrl: null,
+            displayName: 'Adversário Real',
+            frameId: null,
+            knowledge: 500,
+            photoUrl: null,
+          }}
+          preparing={false}
+          status="presenting-opponent"
+          theme={theme}
+        />
+      </>,
+    );
+
+    expect(document.querySelector('.app-shell')).toHaveAttribute('inert');
+    fireEvent.click(screen.getByRole('button', { name: 'Temas', hidden: true }));
+    expect(navigate).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog')).toHaveFocus();
+    expect(screen.getByRole('button', { name: 'Cancelar', hidden: true })).toBeDisabled();
+  });
+
+  it('mantém timeout modal até Voltar ao tema e então restaura interação e foco', () => {
+    const searchButton = document.createElement('button');
+    searchButton.textContent = 'Buscar partida';
+    const appShell = document.createElement('div');
+    appShell.className = 'app-shell';
+    appShell.append(searchButton);
+    document.body.append(appShell);
+    searchButton.focus();
+    const onClose = vi.fn();
+    const view = render(<MatchmakingDialog
+      elapsedSeconds={60}
+      onCancel={() => undefined}
+      onClose={onClose}
+      opponent={null}
+      preparing={false}
+      status="timed-out"
+      theme={theme}
+    />);
+
+    const close = screen.getByRole('button', { name: 'Voltar ao tema' });
+    expect(appShell).toHaveAttribute('inert');
+    expect(close).toHaveFocus();
+    fireEvent.click(close);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(appShell).toHaveAttribute('inert');
+
+    view.unmount();
+    expect(appShell).not.toHaveAttribute('inert');
+    expect(appShell).not.toHaveAttribute('aria-hidden');
+    expect(searchButton).toHaveFocus();
+    appShell.remove();
   });
 });

@@ -72,31 +72,6 @@ describe('interface de partida', () => {
     expect(onAnswer).not.toHaveBeenCalled();
   });
 
-  it('congela no remainingMs autoritativo enquanto a partida está pausada', async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date('2026-08-10T12:00:00Z'));
-    render(<MatchScreen
-      deadlineMs={Date.now() + 2_000}
-      onAnswer={() => undefined}
-      opponent={{ name: 'Ana' }}
-      opponentScore={11}
-      paused
-      pausedRemainingMs={6_432}
-      player={PLAYER}
-      playerScore={10}
-      question={QUESTION}
-      remainingMs={6_432}
-    />);
-
-    expect(screen.getByRole('timer')).toHaveAccessibleName('7 segundos restantes');
-    expect(document.querySelector('.match-timer__bar--paused')).toHaveStyle({
-      '--timer-from-ratio': '0.6432',
-    });
-    expect(screen.getAllByRole('button').every((button) => button.hasAttribute('disabled'))).toBe(true);
-    await act(async () => vi.advanceTimersByTimeAsync(2_000));
-    expect(screen.getByRole('timer')).toHaveAccessibleName('7 segundos restantes');
-  });
-
   it('mostra indicador amarelo sem alterar o score revelado', () => {
     render(<MatchScreen
       deadlineMs={Date.now() + 8_000}

@@ -29,6 +29,7 @@ interface TestMessage {
     viewer: { knowledgeAfter: number; knowledgeDelta: number; result: string; score: number; xpDelta: number };
   };
   roomId?: string;
+  serverNow?: number;
   timeoutAt?: number;
   type?: string;
   voidReason?: string;
@@ -412,6 +413,33 @@ describe('Milestone 8 no runtime Workers simulado', () => {
     }
   });
 
+  it('fecha a fila no Cancelar e devolve a Presence para idle', async () => {
+    const fixture = await seedMatchFixture('queuecancel', 0, 'CASUAL');
+    const presence = env.PRESENCE_HUB.get(env.PRESENCE_HUB.idFromName(fixture.uids[0]));
+    const reserved = await presence.fetch('https://presence.internal/transition', {
+      body: JSON.stringify({ from: 'idle', resource: fixture.resource, to: 'matchmaking' }),
+      method: 'POST',
+    });
+    expect(reserved.ok).toBe(true);
+
+    const queue = env.MATCHMAKING_QUEUE.get(env.MATCHMAKING_QUEUE.idFromName(fixture.resource));
+    const response = await queue.fetch(new Request('https://queue.internal/socket', {
+      headers: {
+        Upgrade: 'websocket',
+        'X-QG-Authenticated-Uid': fixture.uids[0],
+        'X-QG-Match-Resource': fixture.resource,
+        'X-QG-Theme-Knowledge': '0',
+      },
+    }));
+    expect(response.status).toBe(101);
+    const waiting = capture(response.webSocket as WebSocket);
+    await waiting.waitFor('SEARCHING');
+    waiting.socket.close(1_000, 'Cancelado pelo jogador');
+
+    await expect.poll(() => presenceState(fixture.uids[0]), { interval: 20, timeout: 2_000 })
+      .toEqual({ activity: 'idle', resource: null });
+  });
+
   it('executa WebSocket, persiste/reconecta e aplica resultado idempotente no D1', async () => {
     const fixture = await seedMatchFixture('complete');
     const { roomId, stub } = await initializeRoom(fixture);
@@ -432,6 +460,10 @@ describe('Milestone 8 no runtime Workers simulado', () => {
     const first = await openRoom(stub, fixture.uids[0]);
     const second = await openRoom(stub, fixture.uids[1]);
     await Promise.all([first.waitFor('ROOM_STATE'), second.waitFor('ROOM_STATE')]);
+    first.socket.send(JSON.stringify({ type: 'HEARTBEAT' }));
+    const pong = await first.waitFor('PONG');
+    expect(pong.type).toBe('PONG');
+    expect(pong.serverNow).toBeTypeOf('number');
     first.socket.send(JSON.stringify({ type: 'READY' }));
     second.socket.send(JSON.stringify({ type: 'READY' }));
     await Promise.all([first.waitFor('PREPARING'), second.waitFor('PREPARING')]);

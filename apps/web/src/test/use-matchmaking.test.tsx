@@ -183,6 +183,22 @@ describe('orquestração do matchmaking', () => {
     expect(result.current.status).toBe('idle');
   });
 
+  it('mantém o timeout explícito até Voltar ao tema concluir a saída', async () => {
+    const { result } = renderHook(() => useMatchmaking());
+    const socket = await startSearch(result);
+
+    act(() => socket.emitMessage({ type: 'TIMEOUT' }));
+    expect(result.current.status).toBe('timed-out');
+    expect(result.current.elapsedSeconds).toBe(60);
+
+    act(() => result.current.cancel());
+    expect(result.current.status).toBe('cancelling');
+    await act(async () => vi.advanceTimersByTimeAsync(259));
+    expect(result.current.status).toBe('cancelling');
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+    expect(result.current.status).toBe('idle');
+  });
+
   it('traduz somente códigos seguros de inicialização sem expor detalhe interno', () => {
     expect(matchmakingFailureMessage('PLAYER_BUSY')).toBe('Um dos jogadores já está em outra partida.');
     expect(matchmakingFailureMessage('PROFILE_REQUIRED')).toBe('Um dos jogadores precisa concluir o perfil.');
