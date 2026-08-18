@@ -208,7 +208,7 @@ describe('página da partida em tempo real', () => {
     expect(mocks.apiRequest).toHaveBeenCalledTimes(1);
   });
 
-  it('remove a pergunta após a graça local e recupera somente o resultado terminal quando a rede volta', async () => {
+  it('remove a pergunta sem inventar contagem ou resultado antes da resposta autoritativa', async () => {
     render(
       <MemoryRouter initialEntries={['/partida/room-terminal']}>
         <Routes>
@@ -233,16 +233,20 @@ describe('página da partida em tempo real', () => {
     expect(playingSocket?.close).toHaveBeenCalledWith(4_001, 'Rede indisponível');
     expect(screen.getByRole('heading', { name: 'CONEXÃO PERDIDA' })).toBeInTheDocument();
     expect(screen.getByText('Tentando reconectar...')).toBeInTheDocument();
-    expect(screen.getByRole('timer')).toHaveAccessibleName('7 segundos restantes');
+    expect(screen.queryByRole('timer')).not.toBeInTheDocument();
+    expect(document.querySelector('[data-pause-authority="local"]')).toBeInTheDocument();
     expect(screen.queryByText('Pergunta que não pode congelar?')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'A: A' })).not.toBeInTheDocument();
-    await act(async () => vi.advanceTimersByTimeAsync(1_000));
-    expect(screen.getByRole('timer')).toHaveAccessibleName('6 segundos restantes');
-    await act(async () => vi.advanceTimersByTimeAsync(6_250));
+    await act(async () => vi.advanceTimersByTimeAsync(3_000));
 
-    expect(screen.getByRole('heading', { name: 'Confirmando encerramento da partida...' })).toBeInTheDocument();
+    expect(screen.getByText('Aguardando conexão para verificar a partida...')).toBeInTheDocument();
+    expect(screen.queryByRole('timer')).not.toBeInTheDocument();
     expect(screen.queryByText('Pergunta que não pode congelar?')).not.toBeInTheDocument();
     expect(screen.queryByText('AGUARDANDO JOGADOR')).not.toBeInTheDocument();
+
+    await act(async () => vi.advanceTimersByTimeAsync(4_250));
+    expect(screen.queryByText('Partida anulada')).not.toBeInTheDocument();
+    expect(screen.getByText('Aguardando conexão para verificar a partida...')).toBeInTheDocument();
 
     mocks.apiRequest.mockResolvedValue({ ticket: 'ticket-terminal' });
     await act(async () => {
@@ -253,7 +257,7 @@ describe('página da partida em tempo real', () => {
     });
     const terminalSocket = FakeWebSocket.instances.at(-1);
     expect(terminalSocket).not.toBe(playingSocket);
-    expect(terminalSocket?.url).toContain('terminal=1');
+    expect(terminalSocket?.url).not.toContain('terminal=1');
     act(() => terminalSocket?.emitMessage({
       match: {
         ...activeMatch,
@@ -302,7 +306,7 @@ describe('página da partida em tempo real', () => {
     expect(screen.queryAllByRole('button')).toHaveLength(0);
   });
 
-  it('faz a pausa local sair suavemente e restaura a mesma pergunta com o tempo autoritativo', async () => {
+  it('restaura o estado ANSWERING atual sem reiniciar ou reembolsar tempo', async () => {
     render(
       <MemoryRouter initialEntries={['/partida/room-resume']}>
         <Routes>
@@ -332,9 +336,10 @@ describe('página da partida em tempo real', () => {
     });
     const resumedSocket = FakeWebSocket.instances.at(-1);
     expect(resumedSocket).not.toBe(firstSocket);
+    expect(resumedSocket?.url).not.toContain('terminal=1');
     act(() => resumedSocket?.emitMessage({
       match: { ...activeMatch, remainingMs: 6_000 },
-      type: 'RESUMED',
+      type: 'ROOM_STATE',
     }));
 
     expect(document.querySelector('.match-connection-screen--leaving')).toBeInTheDocument();
@@ -346,6 +351,102 @@ describe('página da partida em tempo real', () => {
     expect(screen.getByText('Pergunta que não pode congelar?')).toBeInTheDocument();
     expect(screen.getByRole('timer')).toHaveAccessibleName('6 segundos restantes');
     expect(screen.getAllByRole('button')).toHaveLength(4);
+  });
+
+  it('não transforma sete segundos locais em decisão terminal se a sala ainda está ANSWERING', async () => {
+    render(
+      <MemoryRouter initialEntries={['/partida/room-answering-after-local-wait']}>
+        <Routes>
+          <Route element={<LiveMatchPage />} path="/partida/:roomId" />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const firstSocket = FakeWebSocket.instances[0];
+    act(() => firstSocket?.emitMessage({ match: activeMatch, type: 'ROUND_STARTED' }));
+    mocks.apiRequest.mockRejectedValue(new Error('offline'));
+    act(() => {
+      window.dispatchEvent(new Event('offline'));
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(7_250));
+    expect(screen.getByText('Aguardando conexão para verificar a partida...')).toBeInTheDocument();
+    expect(screen.queryByRole('timer')).not.toBeInTheDocument();
+
+    mocks.apiRequest.mockResolvedValue({ ticket: 'ticket-answering' });
+    await act(async () => {
+      window.dispatchEvent(new Event('online'));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const recoveredSocket = FakeWebSocket.instances.at(-1);
+    expect(recoveredSocket?.url).not.toContain('terminal=1');
+    act(() => recoveredSocket?.emitMessage({
+      match: { ...activeMatch, remainingMs: 2_000 },
+      type: 'ROOM_STATE',
+    }));
+    await act(async () => vi.advanceTimersByTimeAsync(MATCH_CONNECTION_EXIT_MS));
+
+    expect(screen.getByText('Pergunta que não pode congelar?')).toBeInTheDocument();
+    expect(screen.getByRole('timer')).toHaveAccessibleName('2 segundos restantes');
+  });
+
+  it('usa a graça já consumida quando o cliente volta durante PAUSED', async () => {
+    render(
+      <MemoryRouter initialEntries={['/partida/room-paused-reconnect']}>
+        <Routes>
+          <Route element={<LiveMatchPage />} path="/partida/:roomId" />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const firstSocket = FakeWebSocket.instances[0];
+    act(() => firstSocket?.emitMessage({ match: activeMatch, type: 'ROUND_STARTED' }));
+    act(() => {
+      window.dispatchEvent(new Event('offline'));
+    });
+    expect(screen.queryByRole('timer')).not.toBeInTheDocument();
+
+    await act(async () => {
+      vi.advanceTimersByTime(200);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const reconnectedSocket = FakeWebSocket.instances.at(-1);
+    expect(reconnectedSocket).not.toBe(firstSocket);
+    act(() => reconnectedSocket?.emitMessage({
+      match: {
+        ...activeMatch,
+        phase: 'PAUSED',
+        paused: { graceRemainingMs: 4_000, phase: 'ANSWERING', phaseRemainingMs: 9_000 },
+        remainingMs: undefined,
+      },
+      type: 'PAUSED_FOR_RECONNECT',
+    }));
+
+    expect(screen.getByRole('heading', { name: 'RECONECTANDO' })).toBeInTheDocument();
+    expect(screen.getByRole('timer')).toHaveAccessibleName('4 segundos restantes');
+    expect(document.querySelector('[data-pause-authority="server"]')).toBeInTheDocument();
+
+    act(() => reconnectedSocket?.emitMessage({
+      match: { ...activeMatch, remainingMs: 9_000 },
+      type: 'RESUMED',
+    }));
+    await act(async () => vi.advanceTimersByTimeAsync(MATCH_CONNECTION_EXIT_MS));
+
+    expect(screen.getByText('Pergunta que não pode congelar?')).toBeInTheDocument();
+    expect(screen.getByRole('timer')).toHaveAccessibleName('9 segundos restantes');
   });
 
   it('remove a questão também para o adversário que recebe PAUSED_FOR_RECONNECT', async () => {
@@ -368,7 +469,7 @@ describe('página da partida em tempo real', () => {
       match: {
         ...activeMatch,
         phase: 'PAUSED',
-        paused: { graceRemainingMs: 7_000, phase: 'ANSWERING', phaseRemainingMs: 9_000 },
+        paused: { graceRemainingMs: 6_842, phase: 'ANSWERING', phaseRemainingMs: 9_000 },
         remainingMs: undefined,
       },
       type: 'PAUSED_FOR_RECONNECT',
@@ -377,6 +478,8 @@ describe('página da partida em tempo real', () => {
     expect(screen.getByRole('heading', { name: 'AGUARDANDO JOGADOR' })).toBeInTheDocument();
     expect(screen.getByText('A partida está pausada.')).toBeInTheDocument();
     expect(screen.getByRole('timer')).toHaveAccessibleName('7 segundos restantes');
+    await act(async () => vi.advanceTimersByTimeAsync(842));
+    expect(screen.getByRole('timer')).toHaveAccessibleName('6 segundos restantes');
     expect(screen.queryByText('Pergunta que não pode congelar?')).not.toBeInTheDocument();
     expect(screen.queryAllByRole('button')).toHaveLength(0);
   });

@@ -554,11 +554,7 @@ h1, h2, h3, .brand-lockup__name, .hero-stat strong, .level-card > strong, .count
 :root[data-theme='dark'] .match-connection-screen { background: radial-gradient(circle at 50% 45%, rgb(154 25 35 / .16), transparent 31rem), #0e0b0c; }
 .match-connection-screen--leaving { pointer-events: none; animation: match-connection-out 180ms cubic-bezier(.4, 0, .2, 1) both; }
 .match-connection-card { display: grid; width: min(100%, 460px); justify-items: center; gap: 10px; }
-.match-connection-card__signal { display: flex; height: 45px; align-items: end; gap: 6px; margin-bottom: 10px; color: var(--brand); }
-.match-connection-card__signal i { width: 8px; border-radius: 99px; background: currentColor; opacity: .34; animation: match-connection-signal 1.2s ease-in-out infinite; }
-.match-connection-card__signal i:nth-child(1) { height: 15px; }
-.match-connection-card__signal i:nth-child(2) { height: 28px; animation-delay: 120ms; }
-.match-connection-card__signal i:nth-child(3) { height: 41px; animation-delay: 240ms; }
+.match-connection-card__signal { width: 44px; height: 44px; margin-bottom: 10px; border: 4px solid color-mix(in srgb, var(--brand) 20%, transparent); border-top-color: var(--brand); border-radius: 50%; animation: match-connection-signal 1.15s linear infinite; }
 .match-connection-card h1 { margin: 0; color: var(--brand); font-size: clamp(1.55rem, 7vw, 3.1rem); line-height: 1.05; letter-spacing: -.045em; }
 .match-connection-card p { margin: 0; color: var(--text-secondary); font-size: clamp(.82rem, 3vw, 1rem); }
 .match-connection-countdown { margin-top: 18px; color: var(--text-primary); font: 750 clamp(4.3rem, 22vw, 8.5rem)/.82 Sora, sans-serif; font-variant-numeric: tabular-nums; letter-spacing: -.08em; }
@@ -632,7 +628,7 @@ h1, h2, h3, .brand-lockup__name, .hero-stat strong, .level-card > strong, .count
 @keyframes round-transition-backdrop { from { opacity: 1; } to { opacity: 0; } }
 @keyframes match-connection-in { from { opacity: 0; transform: translateY(5px) scale(.997); } }
 @keyframes match-connection-out { from { opacity: 1; transform: translateY(0) scale(1); } to { opacity: 0; transform: translateY(-4px) scale(.998); } }
-@keyframes match-connection-signal { 0%, 100% { opacity: .28; transform: scaleY(.88); } 50% { opacity: 1; transform: scaleY(1); } }
+@keyframes match-connection-signal { to { transform: rotate(1turn); } }
 @keyframes match-result-in { from { opacity: 0; } }
 @keyframes result-player-in { from { opacity: 0; transform: translateY(6px); } }
 @keyframes result-progress-in { from { opacity: 0; transform: translateY(7px); } }
@@ -738,7 +734,7 @@ h1, h2, h3, .brand-lockup__name, .hero-stat strong, .level-card > strong, .count
   .match-timer__bar--running { animation: none !important; transform: scaleX(var(--timer-reduced-ratio)); will-change: auto; }
   .match-screen--resolved .match-scoreboard, .match-screen--resolved .question-stage, .round-transition, .score-gain { opacity: 1; transform: none; animation: none !important; }
   .round-transition-overlay { opacity: 1; animation: none !important; }
-  .match-connection-card__signal i { opacity: 1; transform: none; animation: none !important; }
+  .match-connection-card__signal { opacity: 1; transform: none; animation: none !important; }
   .match-connection-screen { opacity: 1; transform: none; }
   .match-connection-screen--leaving { opacity: 0; }
 }

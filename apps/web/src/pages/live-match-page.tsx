@@ -47,12 +47,16 @@ export const MATCH_PONG_TIMEOUT_MS = 3_000;
 export const MATCH_CONNECTION_EXIT_MS = 180;
 export const MATCH_SOCKET_OPEN_TIMEOUT_MS = 2_000;
 const CLIENT_CONNECTION_LOSS_CODE = 4_001;
-const TERMINAL_RECOVERY_RETRY_MS = 3_000;
+const SLOW_CONNECTION_RETRY_MS = 3_000;
 
 interface PauseVisualState {
-  deadlineMs: number;
+  authoritativePause?: {
+    graceRemainingMs: number;
+    receivedAtMonotonicMs: number;
+  };
   kind: MatchConnectionScreenKind;
   leaving: boolean;
+  localLossStartedAtMonotonicMs?: number;
 }
 
 export function LiveMatchPage() {
@@ -72,12 +76,11 @@ export function LiveMatchPage() {
 
   useEffect(() => {
     let disposed = false;
-    let retryStartedAt: number | null = null;
+    let retryStartedAtMonotonicMs: number | null = null;
     let retryTimer: number | null = null;
     let roundReadyTimer: number | null = null;
     let countdownTimer: number | null = null;
     let heartbeatTimer: number | null = null;
-    let localGraceTimer: number | null = null;
     let pauseExitTimer: number | null = null;
     let socketOpenTimer: number | null = null;
     let generation = 0;
@@ -97,10 +100,6 @@ export function LiveMatchPage() {
       if (heartbeatTimer !== null) window.clearInterval(heartbeatTimer);
       heartbeatTimer = null;
     };
-    const clearLocalGrace = () => {
-      if (localGraceTimer !== null) window.clearTimeout(localGraceTimer);
-      localGraceTimer = null;
-    };
     const clearSocketOpen = () => {
       if (socketOpenTimer !== null) window.clearTimeout(socketOpenTimer);
       socketOpenTimer = null;
@@ -114,10 +113,25 @@ export function LiveMatchPage() {
       pauseKind = null;
       setPauseVisual(null);
     };
-    const showPause = (kind: MatchConnectionScreenKind, deadlineMs: number) => {
+    const showLocalLoss = (startedAtMonotonicMs: number) => {
+      clearPauseExit();
+      pauseKind = 'local';
+      setPauseVisual((current) => current?.authoritativePause === undefined
+        ? {
+          kind: 'local',
+          leaving: false,
+          localLossStartedAtMonotonicMs: current?.localLossStartedAtMonotonicMs ?? startedAtMonotonicMs,
+        }
+        : { ...current, kind: 'local', leaving: false });
+    };
+    const showAuthoritativePause = (kind: MatchConnectionScreenKind, graceRemainingMs: number) => {
       clearPauseExit();
       pauseKind = kind;
-      setPauseVisual({ deadlineMs, kind, leaving: false });
+      setPauseVisual({
+        authoritativePause: { graceRemainingMs, receivedAtMonotonicMs: performance.now() },
+        kind,
+        leaving: false,
+      });
     };
     const leavePauseAfterResume = () => {
       if (pauseKind === null) {
@@ -159,7 +173,6 @@ export function LiveMatchPage() {
       terminalRecovery = true;
       updateConnectionState('TERMINAL_RECOVERY');
       clearHeartbeat();
-      clearLocalGrace();
       clearSocketOpen();
       hidePauseImmediately();
       clearRoundReady();
@@ -169,20 +182,6 @@ export function LiveMatchPage() {
       setRoundIntro(null);
       setError(null);
       setStatusMessage('Confirmando encerramento da partida...');
-    };
-    const armLocalGrace = () => {
-      if (retryStartedAt === null || localGraceTimer !== null) return;
-      localGraceTimer = window.setTimeout(() => {
-        localGraceTimer = null;
-        if (disposed || terminalReached || retryStartedAt === null || connectionState === 'CONNECTED') return;
-        const socket = socketRef.current;
-        socketRef.current = null;
-        clearSocketOpen();
-        clearRetry();
-        enterTerminalRecovery();
-        socket?.close(CLIENT_CONNECTION_LOSS_CODE, 'Graça local encerrada');
-        scheduleRetry(0);
-      }, Math.max(0, retryStartedAt + RECONNECT_GRACE_MS - Date.now()));
     };
     const updateCountdown = (match: LiveMatchProjection) => {
       clearCountdown();
@@ -226,7 +225,7 @@ export function LiveMatchPage() {
       }
       if (match.phase === 'PAUSED' && match.paused !== undefined) {
         const kind = connectionState === 'CONNECTED' ? 'opponent' : 'local';
-        showPause(kind, Date.now() + match.paused.graceRemainingMs);
+        showAuthoritativePause(kind, match.paused.graceRemainingMs);
       }
     };
 
@@ -240,7 +239,7 @@ export function LiveMatchPage() {
         return;
       }
       if (payload.type === 'PONG') {
-        if (socketRef.current === socket) lastPongAt = Date.now();
+        if (socketRef.current === socket) lastPongAt = performance.now();
         return;
       }
       if (payload.type === 'ERROR') {
@@ -255,7 +254,6 @@ export function LiveMatchPage() {
         terminalReached = true;
         terminalRecovery = false;
         clearHeartbeat();
-        clearLocalGrace();
         clearSocketOpen();
         hidePauseImmediately();
         clearRetry();
@@ -277,8 +275,7 @@ export function LiveMatchPage() {
       if (payload.match !== undefined) {
         if ((payload.type === 'RESUMED' || payload.type === 'ROOM_STATE') && payload.match.phase !== 'PAUSED') {
           terminalRecovery = false;
-          retryStartedAt = null;
-          clearLocalGrace();
+          retryStartedAtMonotonicMs = null;
           leavePauseAfterResume();
         }
         applyProjection(payload.match);
@@ -304,23 +301,21 @@ export function LiveMatchPage() {
       clearSocketOpen();
       clearRoundReady();
       setRoundIntro(null);
-      const now = Date.now();
-      retryStartedAt ??= now;
-      armLocalGrace();
-      if (!terminalRecovery && now - retryStartedAt < RECONNECT_GRACE_MS) {
+      const now = performance.now();
+      retryStartedAtMonotonicMs ??= now;
+      if (!terminalRecovery) {
         updateConnectionState(suspected ? 'SUSPECTED_LOSS' : 'RECONNECTING');
-        showPause('local', retryStartedAt + RECONNECT_GRACE_MS);
+        showLocalLoss(retryStartedAtMonotonicMs);
         setStatusMessage('Reconectando à partida');
-        scheduleRetry(200);
+        scheduleRetry(now - retryStartedAtMonotonicMs < RECONNECT_GRACE_MS ? 200 : SLOW_CONNECTION_RETRY_MS);
       } else {
-        enterTerminalRecovery();
-        scheduleRetry(TERMINAL_RECOVERY_RETRY_MS);
+        scheduleRetry(SLOW_CONNECTION_RETRY_MS);
       }
     };
 
     const startHeartbeat = (socket: WebSocket) => {
       clearHeartbeat();
-      lastPongAt = Date.now();
+      lastPongAt = performance.now();
       if (socket.readyState === WebSocket.OPEN) {
         socket.send(JSON.stringify({ type: 'HEARTBEAT' }));
       }
@@ -329,7 +324,7 @@ export function LiveMatchPage() {
           clearHeartbeat();
           return;
         }
-        if (Date.now() - lastPongAt >= MATCH_PONG_TIMEOUT_MS) {
+        if (performance.now() - lastPongAt >= MATCH_PONG_TIMEOUT_MS) {
           handleConnectionLoss(socket, true);
           socket.close(CLIENT_CONNECTION_LOSS_CODE, 'Conexão sem resposta');
           return;
@@ -408,7 +403,7 @@ export function LiveMatchPage() {
       bindSocket(prepared.socket, prepared.messages);
     }
     const recoverConnectionNow = () => {
-      if (retryStartedAt === null || disposed || terminalReached || socketRef.current !== null || connecting) return;
+      if (retryStartedAtMonotonicMs === null || disposed || terminalReached || socketRef.current !== null || connecting) return;
       clearRetry();
       if (connect !== null) void connect();
     };
@@ -442,7 +437,6 @@ export function LiveMatchPage() {
       clearRoundReady();
       clearCountdown();
       clearHeartbeat();
-      clearLocalGrace();
       clearPauseExit();
       clearSocketOpen();
       const socket = socketRef.current;
@@ -494,9 +488,10 @@ export function LiveMatchPage() {
   if (pauseVisual !== null) {
     return (
       <MatchConnectionScreen
-        deadlineMs={pauseVisual.deadlineMs}
+        authoritativePause={pauseVisual.authoritativePause}
         kind={pauseVisual.kind}
         leaving={pauseVisual.leaving}
+        localLossStartedAtMonotonicMs={pauseVisual.localLossStartedAtMonotonicMs}
       />
     );
   }
