@@ -23,3 +23,16 @@ export interface SocialSnapshot {
   incoming: SocialRequest[];
   outgoing: SocialRequest[];
 }
+
+export type FriendPresence = 'ONLINE' | 'MATCHMAKING' | 'IN_MATCH' | 'RECONNECTING' | 'OFFLINE';
+
+export interface FriendPresenceEntry {
+  presence: FriendPresence;
+  publicId: string;
+  revision: number;
+}
+
+export interface FriendPresenceSnapshot {
+  friends: FriendPresenceEntry[];
+  revision: number;
+}
