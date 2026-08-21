@@ -49,6 +49,9 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 - [x] 2026-08-21 — smoke físico final de sincronização visual aprovado pelo proprietário nos dois aparelhos; perda local sem contador fictício e graça exclusivamente autoritativa.
 - [x] 2026-08-21 — Milestones 8 e 8.5 oficialmente FROZEN após aprovação física em produção; motor, reconexão e matchmaking permanecem congelados, exceto integração mínima obrigatória de bloqueios na fila ou regressão comprovada.
 - [x] 2026-08-21 — Milestone 9A Social Foundation implementado e validado localmente: descoberta pública, amizades, recusas direcionais, bloqueios, compatibilidade na fila e FCM opcional por instalação.
+- [x] 2026-08-21 — smoke físico parcial do 9A aprovado: busca nominal/ID, pedido, primeira recusa, bloqueio, invisibilidade e incompatibilidade competitiva.
+- [x] 2026-08-21 — Milestone 9A.1 implementado e validado localmente: cancelamento pré-partida identificado, retorno ao tema e canal Social hibernável com contador global/invalidações realtime.
+- [ ] Milestone 9A.1 — smoke físico pós-deploy: cancelamento por nome/contexto, usuários online únicos e pedidos atualizados com Social aberta.
 - [ ] Milestone 9A — smoke físico pós-deploy pelo proprietário: descoberta, pedidos, três recusas direcionais, bloqueios/pareamento e push real somente após configuração opcional do Firebase/Cloudflare.
 - [ ] Milestone 9B — presença social real.
 - [ ] Milestone 9C — desafio simultâneo entre amigos.
@@ -94,6 +97,9 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 34. **Recusas e bloqueios são conceitos independentes.** Três recusas explícitas contam exclusivamente para remetente → destinatário e impõem 30 dias; expiração reseta sob demanda, aceite limpa o ciclo, cancelamento não incrementa. `D1Database.batch()`, nonce de resolução e índice único parcial da dupla impedem pedidos cruzados/efeitos duplicados. Bloquear remove amizade/pedidos, preserva cooldown e não interrompe partida existente.
 35. **Cloud Messaging gratuito é a única exceção Firebase autorizada além do Google Auth.** Firebase JS SDK `12.17.1` usa `register()`/`onRegistered()` e Firebase Installation IDs; FCM HTTP v1 recebe `message.fid`, sem APIs/token legados. A chave VAPID pública pode estar no bundle; `FCM_SERVICE_ACCOUNT_JSON` existe somente como secret de runtime Cloudflare. Push é opt-in, multi-device, pós-persistência, best-effort e inexistente com credencial ausente.
 36. **Workbox e push compartilham um único service worker.** `injectManifest` preserva shell offline, precache, atualização e APIs `NetworkOnly`; a registration existente é entregue explicitamente ao Firebase Messaging. Foreground atualiza badge/lista, background cria uma notificação controlada e o clique abre Social/Pedidos. Não há segundo root scope, polling, billing, Firestore, Storage ou Functions.
+37. **Cancelamento pré-partida tem semântica própria sem efeito competitivo.** `VOID/CANCELLED` persiste somente o assento do jogador autoritativo e projeta nome público real; o adversário não vê placar nem UID, quem cancelou retorna imediatamente, e route state preserva tema/dificuldade/modalidade. A alteração mínima de domínio/projeção não toca reconexão, timers, score, XP, Knowledge, locks ou demais voids.
+38. **Presença global não é presença individual.** `SocialRealtimeHub` global aceita tickets curtos autenticados, conta IDs internos únicos entre sockets hibernáveis e publica somente `ONLINE_COUNT`; várias abas não duplicam usuários. Amigos online/offline, last-seen, desafios e Milestones 9B/9C permanecem pendentes.
+39. **Realtime social acorda somente por mudança real.** Mutação persistida aciona `waitUntil` com `SOCIAL_INVALIDATED` genérico para todas as sessões das pessoas afetadas; o cliente atualiza summary/snapshot sob demanda, sem revelar bloqueio. `PING/PONG` a cada 45 s usa auto-response Cloudflare sem acordar o DO, sem polling HTTP/D1 e sem depender de FCM.
 
 ## Descobertas e riscos
 
@@ -612,7 +618,42 @@ Cobertura local:
 - os testes históricos preservam a fronteira `6.999 / 7.000 / 7.001`, corrida `CONNECT`/`ALARM`, recuperação terminal, Presence, cleanup e segunda partida com a mesma dupla;
 - lint, typecheck, builds PWA/Worker, migrations Core vazio e upgrade `0006→0007`, rollback, npm audit e varredura de secrets fazem parte do gate final; FCM real depende apenas da configuração manual opcional documentada em `docs/DEPLOYMENT.md`.
 
-O smoke físico do Milestone 9A **permanece pendente da aprovação explícita do proprietário**. Os Milestones 9B/9C, presença social real, desafio direto, assíncrono, chat, mensagens, grupos e recomendação não foram iniciados.
+O smoke físico completo do Milestone 9A **permanece pendente da aprovação explícita do proprietário**. Os Milestones 9B/9C, presença individual social, desafio direto, assíncrono, chat, mensagens, grupos e recomendação não foram iniciados.
+
+### 2026-08-21 — Milestone 9A.1: cancelamento pré-partida e realtime social
+
+O proprietário aprovou em produção a busca nominal/ID, pedido, primeira recusa,
+bloqueio, invisibilidade e filtro de bloqueio no matchmaking. Foram identificadas
+somente duas lacunas: `CANCELLED` antes do início aparecia como `VOID` genérico
+com placar fictício; Social dependia de foco/navegação/FCM para atualizar pedidos.
+
+- domínio preserva `VOID/CANCELLED`, zero XP/Knowledge/score e grava somente o
+  assento do cancelador; a projeção terminal acrescenta `{ seat, displayName }`
+  derivado do jogador autoritativo, nunca UID ou dado privado;
+- tela específica mostra “Partida cancelada por {nome}” sem `0 × 0`; route state
+  devolve ao tema original com dificuldade e modalidade selecionadas;
+- migration Durable Objects SQLite `v2` registra exclusivamente
+  `SocialRealtimeHub`; não há migration D1, banco, SQL manual ou produto pago;
+- ticket curto `scope: social` autentica o WebSocket; anexos/tags mantêm o ID
+  interno, e o total publicado conta usuários únicos entre abas/dispositivos;
+- criação/aceite/recusa/cancelamento de pedido, remoção de amizade e
+  bloqueio/desbloqueio publicam apenas `SOCIAL_INVALIDATED` depois da escrita;
+  todas as sessões afetadas recarregam o estado real, sem polling nem motivo do
+  bloqueio;
+- heartbeat social de 45 s e watchdog de 15 s utilizam
+  `setWebSocketAutoResponse`, sem acordar o DO, sem timers server-side e sem
+  alterar o heartbeat competitivo de 1.500 ms;
+- 30 usuários por 24 h representam 57.600 heartbeats, até 2.880 requests DO
+  equivalentes na razão conservadora 20:1, zero writes/reads D1 periódicos e
+  duração ociosa nula por hibernação;
+- Firebase Messaging permanece opcional apenas para background; Social aberto
+  atualiza mesmo sem qualquer VAPID/service-account configurada.
+- build medido: startup `214,83 / 67,69 KB gzip`, Social lazy inalterado
+  `7,49 / 2,31 KB gzip`, sala `19,59 / 6,52 KB gzip`, precache
+  `15 entradas / 480,69 KiB` e Worker `742,1 KB`.
+
+O smoke físico do 9A.1 permanece **pendente**. Presença individual 9B, desafio
+9C e demais milestones futuros não foram iniciados.
 
 ## Critério de saída desta execução
 

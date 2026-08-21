@@ -42,9 +42,18 @@ As únicas permissões de escrita do token do Workers Builds são Workers Script
 - matchmaking: mensagens/eventos no DO, sem writes periódicos D1;
 - busca social: prefixo nominal indexado com limite de 20 resultados ou lookup exato do ID público;
 - push social: somente uma tentativa best-effort por instalação autorizada após criação real de pedido; zero polling, no máximo 20 instalações consultadas;
+- realtime social: um hub hibernável global; `PING/PONG` automático a cada 45 segundos, nenhum tick/alarme no servidor, nenhuma escrita D1 para presença e invalidações somente após mutação real;
 - rodada: estado principal no DO; D1 recebe finalização/agregados em batch, não ticks do timer;
 - histórico: uma row compacta usuário+pool em vez de uma row por pergunta;
 - estatísticas: incremento agregado ao final/resolução, não evento analítico duplicado.
+
+Com 30 usuários continuamente conectados durante 24 horas, a presença social
+recebe até `30 × 86.400 / 45 = 57.600` mensagens diárias. Usando a razão oficial
+conservadora de 20 mensagens WebSocket por request DO, isso equivale a no máximo
+`2.880` requests, ou **2,88% de 100.000/dia**; a auto-response não acorda o
+objeto nem incorre duração. São zero reads/writes D1 periódicos, zero polling HTTP
+e zero timers de servidor. Conexões, tickets, snapshots por invalidação e ações
+reais são adicionais e continuam proporcionais ao uso, não aos segundos online.
 
 ## Alertas operacionais
 

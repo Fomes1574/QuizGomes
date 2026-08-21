@@ -25,7 +25,7 @@ Os dois bancos foram criados manualmente no Dashboard e permanecem no Workers Fr
 | `CORE_DB` | `quiz-gomes-core` | `3260deba-54ab-4e47-8c7f-a4d088dad728` |
 | `QUESTIONS_DB` | `quiz-gomes-questions-01` | `40ea8ac4-9dd6-40a8-b032-89cb3cede229` |
 
-Não execute `wrangler d1 create`, não altere esses nomes e não crie outros bancos. Os comandos remotos usam `--experimental-provision=false` para impedir provisionamento inferido; o deploy ainda aplica normalmente as classes Durable Objects SQLite declaradas explicitamente na migration `v1`.
+Não execute `wrangler d1 create`, não altere esses nomes e não crie outros bancos. Os comandos remotos usam `--experimental-provision=false` para impedir provisionamento inferido; o deploy ainda aplica normalmente as classes Durable Objects SQLite declaradas explicitamente nas migrations `v1` e `v2`. A `v2` acrescenta somente `SocialRealtimeHub`, sem novo D1, sem billing e sem SQL manual.
 
 ## 3. Workers Builds conectado ao GitHub
 
@@ -165,7 +165,7 @@ O build do Worker usa `apps/web/dist` como static assets e `not_found_handling: 
 
 ## 6. Primeiro deploy e smoke tests reais
 
-O primeiro push/build bem-sucedido cria o Worker `quiz-gomes`, aplica a migration Durable Objects SQLite `v1` e publica uma URL semelhante a:
+O primeiro push/build bem-sucedido cria o Worker `quiz-gomes`, aplica as migrations Durable Objects SQLite declaradas (`v1`; `v2` para o hub social quando pendente) e publica uma URL semelhante a:
 
 ```text
 https://quiz-gomes.<seu-subdominio>.workers.dev

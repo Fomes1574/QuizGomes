@@ -79,6 +79,24 @@ O Milestone 9A reutiliza `users`, `user_profiles.public_id`, `friend_requests` e
 
 Cada `push_installations` associa um Firebase Installation ID (FID) ao usuário autenticado; vários dispositivos são possíveis e FID de outro proprietário não pode ser sobrescrito. Firebase JS SDK 12.17.1 usa `register()`/`onRegistered()` em vez dos registration tokens depreciados. O Worker autentica FCM HTTP v1 com OAuth RS256 via Web Crypto e envia `message.fid` após a persistência usando `waitUntil`. Credencial ausente, FCM indisponível ou instalação inválida nunca revertem o pedido; destinos inválidos são desativados. A chave VAPID pública fica em `VITE_FIREBASE_VAPID_PUBLIC_KEY`; somente o runtime Secret `FCM_SERVICE_ACCOUNT_JSON` contém a Service Account, nunca o repositório/bundle.
 
+O Milestone 9A.1 acrescenta `SocialRealtimeHub`, um Durable Object SQLite global
+com WebSocket Hibernation. Um ticket curto autenticado autoriza o socket sem
+expor Firebase ID Token na URL; cada anexo contém somente o ID interno validado
+pelo Worker. O total online usa um `Set` dos IDs associados aos sockets ativos,
+portanto múltiplas abas/dispositivos continuam contando como um único usuário.
+Tags direcionam uma invalidação genérica e sem ator para todas as sessões da
+dupla após a persistência social; nenhum payload revela bloqueio, UID ou email.
+O navegador atualiza summary/lista somente quando recebe essa invalidação ou
+reconecta. Heartbeat de 45 segundos usa `setWebSocketAutoResponse`, preserva
+hibernação e nunca grava D1/storage; FCM continua opcional para background.
+Presença individual de amigos e desafios não fazem parte dessa fundação.
+
+Cancelamento anterior a `startedAtMs` permanece `VOID/CANCELLED`, sem qualquer
+efeito competitivo. O domínio retém apenas o assento do autor e a projeção
+terminal expõe exclusivamente `{ seat, displayName }`, permitindo exibir
+“Partida cancelada por {nome}” sem placar. O retorno usa route state com tema,
+dificuldade e modalidade; desconexão, abandono iniciado e demais voids não mudam.
+
 ## Consistência e idempotência
 
 - `active_match_players.user_id` exclusivo impede o mesmo usuário em duas partidas.
