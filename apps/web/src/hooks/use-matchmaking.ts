@@ -57,6 +57,12 @@ interface RealtimeMessage {
   type?: string;
 }
 
+interface MatchOrigin {
+  difficulty: Difficulty;
+  mode: MatchMode;
+  returnTo: string;
+}
+
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }
@@ -102,6 +108,7 @@ export function useMatchmaking() {
   const exitTimerRef = useRef<number | null>(null);
   const presentationGenerationRef = useRef(0);
   const preparedRoomRef = useRef<string | null>(null);
+  const originRef = useRef<MatchOrigin | null>(null);
   const navigatingRef = useRef(false);
   const statusRef = useRef<MatchmakingStatus>('idle');
   const [status, setStatusState] = useState<MatchmakingStatus>('idle');
@@ -180,7 +187,9 @@ export function useMatchmaking() {
       await delay(MATCH_FOUND_EXIT_MS);
       if (generation !== presentationGenerationRef.current) return;
       navigatingRef.current = true;
-      void navigate(`/partida/${message.roomId}`);
+      const origin = originRef.current;
+      if (origin === null) void navigate(`/partida/${message.roomId}`);
+      else void navigate(`/partida/${message.roomId}`, { state: { matchOrigin: origin } });
     } catch (preloadError) {
       if (generation !== presentationGenerationRef.current) return;
       discardPreparedMatchRoom(message.roomId);
@@ -190,7 +199,12 @@ export function useMatchmaking() {
     }
   }, [getToken, navigate, setStatus]);
 
-  const start = useCallback(async (themeId: string, difficulty: Difficulty, mode: MatchMode) => {
+  const start = useCallback(async (themeId: string, difficulty: Difficulty, mode: MatchMode, themeSlug?: string) => {
+    originRef.current = themeSlug === undefined ? null : {
+      difficulty,
+      mode,
+      returnTo: `/temas/${encodeURIComponent(themeSlug)}`,
+    };
     setError(null);
     setOpponent(null);
     setPreparing(false);

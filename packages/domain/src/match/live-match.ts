@@ -64,7 +64,7 @@ export type LiveVoidReason =
 
 export type LivePendingOutcome =
   | { kind: 'COMPLETED'; reason: 'COMPLETED' }
-  | { kind: 'VOID'; penalizedSeat: LiveSeat | null; reason: LiveVoidReason };
+  | { cancelledBySeat?: LiveSeat; kind: 'VOID'; penalizedSeat: LiveSeat | null; reason: LiveVoidReason };
 
 export interface LivePause {
   disconnectedSeats: LiveSeat[];
@@ -411,7 +411,12 @@ export function transitionLiveMatch(
 
   if (command.type === 'CANCEL') {
     return state.startedAtMs === null
-      ? beginVoid(state, 'CANCELLED', null)
+      ? beginFinalization(state, {
+        cancelledBySeat: command.seat,
+        kind: 'VOID',
+        penalizedSeat: null,
+        reason: 'CANCELLED',
+      })
       : beginVoid(state, 'INDIVIDUAL_ABANDONMENT', command.seat);
   }
 

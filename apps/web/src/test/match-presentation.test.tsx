@@ -68,4 +68,26 @@ describe('apresentação da partida', () => {
     expect(screen.getByText('A partida foi anulada por perda de conexão.')).toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'Progressão da partida' })).not.toBeInTheDocument();
   });
+
+  it('apresenta cancelamento antes do início com autor real, sem duelo, placar ou progressão', () => {
+    const onBack = vi.fn();
+    render(<MatchResultScreen
+      cancelledBy={{ displayName: 'Fomes', seat: 2 }}
+      knowledgeAfter={0}
+      knowledgeDelta={0}
+      onBack={onBack}
+      opponent={{ name: 'Fomes', result: 'VOID', score: 0 }}
+      viewer={{ name: 'Gomes', result: 'VOID', score: 0 }}
+      voidReason="CANCELLED"
+      xpDelta={0}
+    />);
+
+    expect(screen.getByRole('heading', { name: 'Partida cancelada' })).toBeInTheDocument();
+    expect(screen.getByText('Partida cancelada por Fomes')).toBeInTheDocument();
+    expect(screen.queryByText('Partida anulada')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Placar final')).not.toBeInTheDocument();
+    expect(screen.queryByText('pontos')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Voltar ao tema' }));
+    expect(onBack).toHaveBeenCalledOnce();
+  });
 });

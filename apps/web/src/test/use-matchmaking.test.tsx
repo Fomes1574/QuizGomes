@@ -170,6 +170,20 @@ describe('orquestração do matchmaking', () => {
     expect(mocks.navigate).toHaveBeenCalledWith(`/partida/${foundPayload.roomId}`);
   });
 
+  it('preserva tema, dificuldade e modalidade na navegação para a sala', async () => {
+    const { result } = renderHook(() => useMatchmaking());
+    await act(async () => result.current.start('theme-elden', 'HARD', 'RANKED', 'elden-ring'));
+    const socket = FakeWebSocket.instances.at(-1);
+    if (socket === undefined) throw new Error('Socket de matchmaking ausente.');
+    act(() => socket.emitMessage(foundPayload));
+    await act(async () => vi.advanceTimersByTimeAsync(MATCH_FOUND_PRESENTATION_MS));
+    expect(mocks.navigate).toHaveBeenCalledWith(`/partida/${foundPayload.roomId}`, {
+      state: {
+        matchOrigin: { difficulty: 'HARD', mode: 'RANKED', returnTo: '/temas/elden-ring' },
+      },
+    });
+  });
+
   it('cancela no servidor imediatamente e conserva a composição durante a saída curta', async () => {
     const { result } = renderHook(() => useMatchmaking());
     const socket = await startSearch(result);

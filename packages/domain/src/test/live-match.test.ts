@@ -357,7 +357,12 @@ describe('partida simultânea autoritativa', () => {
     let state = match();
     state = command(state, { seat: 1, type: 'CONNECT' }, 1_100);
     state = command(state, { seat: 1, type: 'CANCEL' }, 1_101);
-    expect(state.pendingOutcome).toEqual({ kind: 'VOID', penalizedSeat: null, reason: 'CANCELLED' });
+    expect(state.pendingOutcome).toEqual({
+      cancelledBySeat: 1,
+      kind: 'VOID',
+      penalizedSeat: null,
+      reason: 'CANCELLED',
+    });
 
     const started = startFirstRound();
     state = command(started.state, { seat: 2, type: 'CANCEL' }, started.now + 1);

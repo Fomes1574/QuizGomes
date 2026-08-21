@@ -15,6 +15,7 @@ import { LiveMatchRepository } from '../repositories/live-match-repository.js';
 import { SocialRepository } from '../repositories/social-repository.js';
 
 interface TestMessage {
+  cancelledBy?: { displayName: string; seat: number };
   code?: string;
   match?: LiveMatchProjection;
   opponent?: {
@@ -335,6 +336,34 @@ beforeAll(async () => {
 });
 
 describe('Milestone 8 no runtime Workers simulado', () => {
+  it('identifica cancelamento antes da partida por nome/assento sem UID, placar competitivo ou penalidade', async () => {
+    const fixture = await seedMatchFixture('precancel', 500, 'RANKED');
+    const { roomId, stub } = await initializeRoom(fixture);
+    const first = await openRoom(stub, fixture.uids[0]);
+    const second = await openRoom(stub, fixture.uids[1]);
+    await Promise.all([first.waitFor('ROOM_STATE'), second.waitFor('ROOM_STATE')]);
+    first.socket.send(JSON.stringify({ type: 'CANCEL' }));
+    const [cancelled, notified] = await Promise.all([
+      first.waitFor('MATCH_VOID'),
+      second.waitFor('MATCH_VOID'),
+    ]);
+    expect(cancelled.voidReason).toBe('CANCELLED');
+    expect(notified.cancelledBy).toEqual({ displayName: 'precancel Jogador 1', seat: 1 });
+    expect(JSON.stringify(notified.cancelledBy)).not.toContain(fixture.uids[0]);
+    expect(notified.result?.viewer).toMatchObject({ knowledgeDelta: 0, result: 'VOID', xpDelta: 0 });
+    expect(await env.CORE_DB.prepare(
+      'SELECT SUM(knowledge_delta) AS knowledge, SUM(xp_delta) AS xp FROM match_players WHERE match_id = ?1',
+    ).bind(roomId).first()).toEqual({ knowledge: 0, xp: 0 });
+    expect(await env.CORE_DB.prepare(
+      'SELECT COUNT(*) AS total FROM active_match_players WHERE match_id = ?1',
+    ).bind(roomId).first()).toEqual({ total: 0 });
+    const recovered = await openRoom(stub, fixture.uids[1]);
+    expect(await recovered.waitFor('MATCH_VOID')).toMatchObject({
+      cancelledBy: { displayName: 'precancel Jogador 1', seat: 1 },
+      voidReason: 'CANCELLED',
+    });
+  });
+
   it('emite SEARCHING autoritativo e MATCH_FOUND individual sem resposta nem pergunta futura', async () => {
     const fixture = await seedMatchFixture('matchfound', 0, 'CASUAL');
     const avatarBytes = Uint8Array.from(atob(

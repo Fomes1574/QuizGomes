@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
-import { act, cleanup, render, screen } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
@@ -92,6 +92,12 @@ const voidResult = {
   },
 } as const;
 
+function RestoredTheme() {
+  const location = useLocation();
+  const restored = location.state as { difficulty?: string; mode?: string } | null;
+  return <p>{`Tema restaurado: ${restored?.difficulty ?? '?'} / ${restored?.mode ?? '?'}`}</p>;
+}
+
 describe('página da partida em tempo real', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -106,6 +112,62 @@ describe('página da partida em tempo real', () => {
     vi.unstubAllGlobals();
     vi.clearAllMocks();
     vi.useRealTimers();
+  });
+
+  it('exibe CANCELLED com nome real sem duelo e retorna exatamente ao tema/dificuldade/modalidade', async () => {
+    render(
+      <MemoryRouter initialEntries={[{
+        pathname: '/partida/room-cancelled',
+        state: { matchOrigin: { difficulty: 'HARD', mode: 'RANKED', returnTo: '/temas/elden-ring' } },
+      }]}>
+        <Routes>
+          <Route element={<LiveMatchPage />} path="/partida/:roomId" />
+          <Route element={<RestoredTheme />} path="/temas/:slug" />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const socket = FakeWebSocket.instances[0];
+    act(() => socket?.emitMessage({
+      cancelledBy: { displayName: 'Fomes', seat: 2 },
+      match: { ...activeMatch, phase: 'VOID', question: undefined },
+      result: voidResult,
+      type: 'MATCH_VOID',
+      voidReason: 'CANCELLED',
+    }));
+    expect(screen.getByRole('heading', { name: 'Partida cancelada' })).toBeInTheDocument();
+    expect(screen.getByText('Partida cancelada por Fomes')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Placar final')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Voltar ao tema' }));
+    expect(screen.getByText('Tema restaurado: HARD / RANKED')).toBeInTheDocument();
+  });
+
+  it('quem cancela envia CANCEL imediatamente e retorna ao contexto original sem tela de duelo', async () => {
+    render(
+      <MemoryRouter initialEntries={[{
+        pathname: '/partida/room-cancel-self',
+        state: { matchOrigin: { difficulty: 'MEDIUM', mode: 'CASUAL', returnTo: '/temas/minecraft' } },
+      }]}>
+        <Routes>
+          <Route element={<LiveMatchPage />} path="/partida/:roomId" />
+          <Route element={<RestoredTheme />} path="/temas/:slug" />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const socket = FakeWebSocket.instances[0];
+    fireEvent.click(screen.getByRole('button', { name: 'Cancelar e voltar' }));
+    expect(socket?.send).toHaveBeenCalledWith(JSON.stringify({ type: 'CANCEL' }));
+    expect(screen.getByText('Tema restaurado: MEDIUM / CASUAL')).toBeInTheDocument();
+    expect(screen.queryByText('Partida anulada')).not.toBeInTheDocument();
   });
 
   it('envia ROUND_READY uma única vez somente ao fim da apresentação de 1.900 ms', async () => {

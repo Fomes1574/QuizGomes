@@ -1,6 +1,6 @@
 import { questionsForDifficulty, type Difficulty, type MatchMode } from '@quiz-gomes/domain';
 import { useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useLocation, useParams } from 'react-router-dom';
 import { Avatar } from '../components/avatar.js';
 import { AvatarFrame } from '../components/avatar-frame.js';
 import { Button } from '../components/button.js';
@@ -18,11 +18,15 @@ const difficultyLabel: Record<Difficulty, string> = { EASY: 'Fácil', MEDIUM: 'M
 
 export function ThemeDetailPage() {
   const { slug = '' } = useParams();
+  const location = useLocation();
+  const restored = location.state as { difficulty?: Difficulty; mode?: MatchMode } | null;
   const { getToken, profile, signIn } = useAuth();
   const [data, setData] = useState<ThemeDetailResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [difficulty, setDifficulty] = useState<Difficulty>('EASY');
-  const [mode, setMode] = useState<MatchMode>('CASUAL');
+  const [difficulty, setDifficulty] = useState<Difficulty>(
+    restored?.difficulty === 'MEDIUM' || restored?.difficulty === 'HARD' ? restored.difficulty : 'EASY',
+  );
+  const [mode, setMode] = useState<MatchMode>(restored?.mode === 'RANKED' ? 'RANKED' : 'CASUAL');
   const [reload, setReload] = useState(0);
   const matchmaking = useMatchmaking();
 
@@ -67,7 +71,7 @@ export function ThemeDetailPage() {
           {matchmaking.error && <p className="form-error">{matchmaking.error}</p>}
           {profile === null
             ? <Button onClick={() => void signIn()}>Entrar para jogar</Button>
-            : <Button disabled={!canPlay || !realtimeEnabled} onClick={() => void matchmaking.start(data.theme.id, difficulty, mode)}>Buscar partida</Button>}
+            : <Button disabled={!canPlay || !realtimeEnabled} onClick={() => void matchmaking.start(data.theme.id, difficulty, mode, slug)}>Buscar partida</Button>}
         </div>
 
         <aside className="leaderboard-card">

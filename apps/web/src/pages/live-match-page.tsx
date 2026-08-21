@@ -1,6 +1,6 @@
 import { RECONNECT_GRACE_MS, type LiveMatchProjection, type MatchResult } from '@quiz-gomes/domain';
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { Button } from '../components/button.js';
 import { Logo } from '../components/logo.js';
 import {
@@ -31,6 +31,7 @@ interface TerminalResult {
 }
 
 interface RoomMessage {
+  cancelledBy?: { displayName: string; seat: number };
   code?: string;
   match?: LiveMatchProjection;
   message?: string;
@@ -61,6 +62,7 @@ interface PauseVisualState {
 
 export function LiveMatchPage() {
   const { roomId = '' } = useParams();
+  const location = useLocation();
   const { getToken } = useAuth();
   const navigate = useNavigate();
   const socketRef = useRef<WebSocket | null>(null);
@@ -69,7 +71,11 @@ export function LiveMatchPage() {
   const [roundIntro, setRoundIntro] = useState<{ durationMs: number; number: number; total: number } | null>(null);
   const [statusMessage, setStatusMessage] = useState('Conectando à sala');
   const [error, setError] = useState<string | null>(null);
-  const [terminal, setTerminal] = useState<{ result: TerminalResult; voidReason?: string } | null>(null);
+  const [terminal, setTerminal] = useState<{
+    cancelledBy?: { displayName: string; seat: number };
+    result: TerminalResult;
+    voidReason?: string;
+  } | null>(null);
   const [countdown, setCountdown] = useState<number | null>(null);
   const [localConnectionState, setLocalConnectionState] = useState<LocalConnectionState>('CONNECTED');
   const [pauseVisual, setPauseVisual] = useState<PauseVisualState | null>(null);
@@ -262,9 +268,11 @@ export function LiveMatchPage() {
         updateConnectionState('CONNECTED');
         setRoundIntro(null);
         if (payload.match !== undefined) setProjection(payload.match);
-        setTerminal(payload.voidReason === undefined
-          ? { result: payload.result }
-          : { result: payload.result, voidReason: payload.voidReason });
+        setTerminal({
+          ...(payload.cancelledBy === undefined ? {} : { cancelledBy: payload.cancelledBy }),
+          ...(payload.voidReason === undefined ? {} : { voidReason: payload.voidReason }),
+          result: payload.result,
+        });
         return;
       }
       if (payload.type === 'MATCH_FINALIZING' ||
@@ -445,13 +453,27 @@ export function LiveMatchPage() {
     };
   }, [getToken, roomId]);
 
+  const matchOrigin = (location.state as {
+    matchOrigin?: { difficulty?: string; mode?: string; returnTo?: string };
+  } | null)?.matchOrigin;
+  const backToTheme = () => {
+    if (typeof matchOrigin?.returnTo === 'string' && matchOrigin.returnTo.startsWith('/temas/')) {
+      void navigate(matchOrigin.returnTo, {
+        state: { difficulty: matchOrigin.difficulty, mode: matchOrigin.mode },
+      });
+      return;
+    }
+    void navigate('/');
+  };
+
   if (terminal !== null) {
     const { viewer, opponent } = terminal.result;
     return (
       <MatchResultScreen
+        cancelledBy={terminal.cancelledBy}
         knowledgeAfter={viewer.knowledgeAfter}
         knowledgeDelta={viewer.knowledgeDelta}
-        onBack={() => { void navigate('/'); }}
+        onBack={backToTheme}
         opponent={{
           customAvatarUrl: projection?.opponent.customAvatarUrl ?? null,
           frameId: projection?.opponent.frameId ?? null,
@@ -571,7 +593,7 @@ export function LiveMatchPage() {
       {countdown !== null && <strong className="countdown">{countdown}</strong>}
       {canCancel && <Button onClick={() => {
         socketRef.current?.send(JSON.stringify({ type: 'CANCEL' }));
-        void navigate('/');
+        backToTheme();
       }} variant="ghost">Cancelar e voltar</Button>}
     </main>
   );

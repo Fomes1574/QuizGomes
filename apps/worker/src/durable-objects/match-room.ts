@@ -459,7 +459,17 @@ export class MatchRoom {
     const viewer = summary.players[attachment.seat - 1];
     const opponent = summary.players[attachment.seat === 1 ? 1 : 0];
     if (viewer === undefined || opponent === undefined) return;
+    const cancelledBySeat = state.pendingOutcome?.kind === 'VOID'
+      && state.pendingOutcome.reason === 'CANCELLED'
+      ? state.pendingOutcome.cancelledBySeat
+      : undefined;
+    const cancelledByPlayer = cancelledBySeat === undefined
+      ? undefined
+      : state.players[cancelledBySeat - 1];
     this.safeSend(socket, {
+      ...(cancelledByPlayer === undefined ? {} : {
+        cancelledBy: { displayName: cancelledByPlayer.displayName, seat: cancelledByPlayer.seat },
+      }),
       match: projectLiveMatchForSeat(state, attachment.seat, Date.now()),
       result: {
         opponent: { result: opponent.result, score: opponent.score },

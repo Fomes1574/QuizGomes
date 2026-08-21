@@ -56,6 +56,7 @@ function ResultPlayer({ participant, relation }: {
 }
 
 export function MatchResultScreen({
+  cancelledBy,
   knowledgeAfter,
   knowledgeDelta,
   onBack,
@@ -64,6 +65,7 @@ export function MatchResultScreen({
   voidReason,
   xpDelta,
 }: {
+  cancelledBy?: { displayName: string; seat: number } | undefined;
   knowledgeAfter: number;
   knowledgeDelta: number;
   onBack: () => void;
@@ -75,21 +77,26 @@ export function MatchResultScreen({
   const rank = rankForKnowledge(knowledgeAfter);
   const knowledgeStyle: KnowledgeProgressStyle = { '--knowledge-progress': rank.progress };
   const resultClass = viewer.result.toLocaleLowerCase();
+  const cancelledBeforeStart = viewer.result === 'VOID' && voidReason === 'CANCELLED';
 
   return (
     <main className={`match-result-screen match-result-screen--${resultClass}`}>
       <Logo />
       <header className="match-result-heading">
-        <span>RESULTADO</span>
-        <h1>{RESULT_LABELS[viewer.result]}</h1>
+        <span>{cancelledBeforeStart ? 'AVISO' : 'RESULTADO'}</span>
+        <h1>{cancelledBeforeStart ? 'Partida cancelada' : RESULT_LABELS[viewer.result]}</h1>
       </header>
-      <section aria-label="Placar final" className="match-result-duel">
-        <ResultPlayer participant={viewer} relation="Você" />
-        <span aria-hidden="true" className="match-result-versus">×</span>
-        <ResultPlayer participant={opponent} relation="Adversário" />
-      </section>
+      {!cancelledBeforeStart && (
+        <section aria-label="Placar final" className="match-result-duel">
+          <ResultPlayer participant={viewer} relation="Você" />
+          <span aria-hidden="true" className="match-result-versus">×</span>
+          <ResultPlayer participant={opponent} relation="Adversário" />
+        </section>
+      )}
       {viewer.result === 'VOID'
-        ? <p>{VOID_LABELS[voidReason ?? 'SYSTEM_FAILURE'] ?? 'A partida foi anulada.'}</p>
+        ? <p>{cancelledBeforeStart && cancelledBy !== undefined
+          ? `Partida cancelada por ${cancelledBy.displayName}`
+          : VOID_LABELS[voidReason ?? 'SYSTEM_FAILURE'] ?? 'A partida foi anulada.'}</p>
         : (
           <section aria-label="Progressão da partida" className="match-result-progress">
             <article>
@@ -120,7 +127,7 @@ export function MatchResultScreen({
           </section>
         )}
       <div className="match-result-actions">
-        <Button onClick={onBack}>Voltar aos temas</Button>
+        <Button onClick={onBack}>{cancelledBeforeStart ? 'Voltar ao tema' : 'Voltar aos temas'}</Button>
       </div>
     </main>
   );
