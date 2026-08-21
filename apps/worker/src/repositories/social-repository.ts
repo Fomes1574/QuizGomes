@@ -24,6 +24,11 @@ export interface SocialRequest {
   user: SocialUser;
 }
 
+export interface FriendPresenceTarget {
+  publicId: string;
+  userId: string;
+}
+
 interface PersonRow {
   custom_avatar_version: number | null;
   display_name: string;
@@ -164,6 +169,24 @@ export class SocialRepository {
           )`,
     ).bind(actorUserId).first<{ total: number }>();
     return row?.total ?? 0;
+  }
+
+  async friendPresenceTargets(actorUserId: string): Promise<FriendPresenceTarget[]> {
+    const result = await this.db.prepare(
+      `SELECT p.public_id, p.user_id
+         FROM friendships f
+         JOIN user_profiles p ON p.user_id =
+           CASE WHEN f.user_low_id = ?1 THEN f.user_high_id ELSE f.user_low_id END
+         JOIN users u ON u.id = p.user_id AND u.disabled_at IS NULL
+        WHERE (f.user_low_id = ?1 OR f.user_high_id = ?1)
+          AND NOT EXISTS (
+            SELECT 1 FROM user_blocks b
+             WHERE (b.blocker_user_id = ?1 AND b.blocked_user_id = p.user_id)
+                OR (b.blocker_user_id = p.user_id AND b.blocked_user_id = ?1)
+          )
+        ORDER BY p.public_id LIMIT 100`,
+    ).bind(actorUserId).all<{ public_id: string; user_id: string }>();
+    return result.results.map((row) => ({ publicId: row.public_id, userId: row.user_id }));
   }
 
   async sendRequest(actorUserId: string, targetPublicId: string): Promise<{

@@ -163,7 +163,12 @@ async function realtimeRoute(request: Request, env: Env, url: URL): Promise<Resp
     const profile = await new UserRepository(env.CORE_DB).findByFirebaseUid(uid);
     if (profile === null) throw new ApiError(409, 'PROFILE_REQUIRED', 'Conclua seu perfil antes de acessar o Social.');
     return socialRealtimeHub(env).fetch(new Request('https://social.internal/socket', {
-      headers: { Upgrade: 'websocket', 'X-QG-Authenticated-User-Id': profile.userId },
+      headers: {
+        Upgrade: 'websocket',
+        'X-QG-Authenticated-Public-Id': profile.publicId,
+        'X-QG-Authenticated-User-Id': profile.userId,
+        'X-QG-Presence-Object-Id': env.PRESENCE_HUB.idFromName(uid).toString(),
+      },
     }));
   }
 
@@ -422,6 +427,29 @@ async function socialRoute(request: Request, env: Env, url: URL, context: Execut
   }
   if (url.pathname === '/api/social/summary' && request.method === 'GET') {
     return json({ pendingCount: await social.pendingCount(profile.userId), pushConfigured: push.configured });
+  }
+  if (url.pathname === '/api/social/presence' && request.method === 'GET') {
+    const friends = await social.friendPresenceTargets(profile.userId);
+    if (friends.length === 0) return json({ friends: [], revision: 0 });
+    const response = await socialRealtimeHub(env).fetch('https://social.internal/snapshot', {
+      body: JSON.stringify({ userIds: friends.map((friend) => friend.userId) }),
+      method: 'POST',
+    });
+    if (!response.ok) {
+      throw new ApiError(503, 'SOCIAL_PRESENCE_UNAVAILABLE', 'A presença dos seus amigos está indisponível.');
+    }
+    const snapshot = await response.json<{
+      friends: Array<{ presence: string; revision: number; userId: string }>;
+      revision: number;
+    }>();
+    const identities = new Map(friends.map((friend) => [friend.userId, friend.publicId]));
+    return json({
+      friends: snapshot.friends.flatMap((friend) => {
+        const publicId = identities.get(friend.userId);
+        return publicId === undefined ? [] : [{ presence: friend.presence, publicId, revision: friend.revision }];
+      }),
+      revision: snapshot.revision,
+    });
   }
   if (url.pathname === '/api/social/search' && request.method === 'GET') {
     return json({ users: await social.search(profile.userId, url.searchParams.get('q') ?? '') });

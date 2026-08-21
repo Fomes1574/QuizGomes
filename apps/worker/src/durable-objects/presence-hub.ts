@@ -1,3 +1,5 @@
+import type { Env } from '../env.js';
+
 export type PlayerActivity = 'idle' | 'matchmaking' | 'invite' | 'preparing' | 'playing' | 'reconnecting' | 'finished';
 
 export interface ActivityState {
@@ -9,7 +11,10 @@ export interface ActivityState {
 const IDLE: ActivityState = { activity: 'idle', resource: null, updatedAt: 0 };
 
 export class PresenceHub {
-  constructor(private readonly ctx: DurableObjectState) {}
+  constructor(
+    private readonly ctx: DurableObjectState,
+    private readonly env: Env,
+  ) {}
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
@@ -32,6 +37,16 @@ export class PresenceHub {
       const next: ActivityState = { activity: input.to, resource: input.resource, updatedAt: Date.now() };
       await this.ctx.storage.put('activity', next);
       for (const socket of this.ctx.getWebSockets()) socket.send(JSON.stringify({ type: 'PRESENCE', ...next }));
+      if (state.activity !== next.activity) {
+        this.ctx.waitUntil(this.env.SOCIAL_REALTIME_HUB
+          .get(this.env.SOCIAL_REALTIME_HUB.idFromName('global'))
+          .fetch('https://social.internal/activity', {
+            body: JSON.stringify({ activity: next.activity, presenceObjectId: this.ctx.id.toString() }),
+            method: 'POST',
+          }).then(() => undefined).catch(() => {
+            console.error(JSON.stringify({ code: 'SOCIAL_PRESENCE_UNAVAILABLE', event: 'friend_presence_failed' }));
+          }));
+      }
       return Response.json(next);
     }
     if (request.method === 'POST' && url.pathname === '/claim') {
