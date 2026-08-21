@@ -12,6 +12,7 @@ import { env } from 'cloudflare:workers';
 import { runDurableObjectAlarm, runInDurableObject } from 'cloudflare:test';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { LiveMatchRepository } from '../repositories/live-match-repository.js';
+import { SocialRepository } from '../repositories/social-repository.js';
 
 interface TestMessage {
   code?: string;
@@ -438,6 +439,82 @@ describe('Milestone 8 no runtime Workers simulado', () => {
 
     await expect.poll(() => presenceState(fixture.uids[0]), { interval: 20, timeout: 2_000 })
       .toEqual({ activity: 'idle', resource: null });
+  });
+
+  it('mantém dupla bloqueada procurando e pareia somente um terceiro compatível sem revelar bloqueio', async () => {
+    const fixture = await seedMatchFixture('queueblocked', 500, 'CASUAL');
+    const thirdUid = 'queueblocked-firebase-3';
+    const thirdUserId = 'queueblocked-user-3';
+    await env.CORE_DB.batch([
+      env.CORE_DB.prepare('INSERT INTO users (id, firebase_uid) VALUES (?1, ?2)').bind(thirdUserId, thirdUid),
+      env.CORE_DB.prepare(
+        "INSERT INTO user_profiles (user_id, public_id, display_name) VALUES (?1, '#QGBLOCKTHIRD3', 'Terceiro compatível')",
+      ).bind(thirdUserId),
+      env.CORE_DB.prepare(
+        'INSERT INTO user_blocks (blocker_user_id, blocked_user_id) VALUES (?1, ?2)',
+      ).bind(fixture.userIds[0], fixture.userIds[1]),
+    ]);
+
+    for (const uid of [...fixture.uids, thirdUid]) {
+      const presence = env.PRESENCE_HUB.get(env.PRESENCE_HUB.idFromName(uid));
+      const reserved = await presence.fetch('https://presence.internal/transition', {
+        body: JSON.stringify({ from: 'idle', resource: fixture.resource, to: 'matchmaking' }),
+        method: 'POST',
+      });
+      expect(reserved.ok).toBe(true);
+    }
+    const queue = env.MATCHMAKING_QUEUE.get(env.MATCHMAKING_QUEUE.idFromName(fixture.resource));
+    const openQueue = async (uid: string) => {
+      const response = await queue.fetch(new Request('https://queue.internal/socket', {
+        headers: {
+          Upgrade: 'websocket',
+          'X-QG-Authenticated-Uid': uid,
+          'X-QG-Match-Resource': fixture.resource,
+          'X-QG-Theme-Knowledge': '500',
+        },
+      }));
+      expect(response.status).toBe(101);
+      return capture(response.webSocket as WebSocket);
+    };
+
+    const first = await openQueue(fixture.uids[0]);
+    await first.waitFor('SEARCHING');
+    const second = await openQueue(fixture.uids[1]);
+    await second.waitFor('SEARCHING');
+    expect(await env.CORE_DB.prepare('SELECT COUNT(*) AS total FROM matches WHERE theme_id = ?1')
+      .bind(fixture.themeId).first()).toEqual({ total: 0 });
+    expect(await presenceState(fixture.uids[0])).toEqual({ activity: 'matchmaking', resource: fixture.resource });
+    expect(await presenceState(fixture.uids[1])).toEqual({ activity: 'matchmaking', resource: fixture.resource });
+
+    const third = await openQueue(thirdUid);
+    const [firstMatch, thirdMatch] = await Promise.all([
+      first.waitFor('MATCH_FOUND'),
+      third.waitFor('MATCH_FOUND'),
+    ]);
+    expect(firstMatch.roomId).toBe(thirdMatch.roomId);
+    expect(firstMatch.opponent?.displayName).toBe('Terceiro compatível');
+    expect(await presenceState(fixture.uids[1])).toEqual({ activity: 'matchmaking', resource: fixture.resource });
+    expect(JSON.stringify(firstMatch)).not.toContain('BLOCK');
+    second.socket.close(1_000, 'Fixture concluída');
+  });
+
+  it('bloquear uma dupla com sala já criada não anula, pausa ou altera a partida existente', async () => {
+    const fixture = await seedMatchFixture('activeblock', 500, 'CASUAL');
+    const { roomId, stub } = await initializeRoom(fixture);
+    const first = await openRoom(stub, fixture.uids[0]);
+    const second = await openRoom(stub, fixture.uids[1]);
+    await Promise.all([first.waitFor('ROOM_STATE'), second.waitFor('ROOM_STATE')]);
+    const social = new SocialRepository(env.CORE_DB);
+    await social.block(fixture.userIds[0], `#QGACTIVEBLOCK2`);
+
+    expect(await env.CORE_DB.prepare('SELECT status, winner_user_id, result_version FROM matches WHERE id = ?1')
+      .bind(roomId).first()).toEqual({ result_version: 0, status: 'PREPARING', winner_user_id: null });
+    expect(await env.CORE_DB.prepare('SELECT COUNT(*) AS total FROM active_match_players WHERE match_id = ?1')
+      .bind(roomId).first()).toEqual({ total: 2 });
+    first.socket.send(JSON.stringify({ type: 'HEARTBEAT' }));
+    expect((await first.waitFor('PONG')).type).toBe('PONG');
+    second.socket.send(JSON.stringify({ type: 'HEARTBEAT' }));
+    expect((await second.waitFor('PONG')).type).toBe('PONG');
   });
 
   it('executa WebSocket, persiste/reconecta e aplica resultado idempotente no D1', async () => {

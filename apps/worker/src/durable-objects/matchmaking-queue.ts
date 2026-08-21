@@ -69,7 +69,13 @@ export class MatchmakingQueue {
         return distance !== 0 ? distance : left.value.joinedAt - right.value.joinedAt;
       });
 
-    const opponent = candidates[0];
+    let opponent: (typeof candidates)[number] | undefined;
+    for (const candidate of candidates) {
+      if (await this.sociallyCompatible(uid, candidate.value.uid)) {
+        opponent = candidate;
+        break;
+      }
+    }
     if (opponent !== undefined) {
       const roomId = crypto.randomUUID();
       const room = this.env.MATCH_ROOM.get(this.env.MATCH_ROOM.idFromName(roomId));
@@ -171,6 +177,19 @@ export class MatchmakingQueue {
       method: 'POST',
     });
     return response.ok;
+  }
+
+  private async sociallyCompatible(firstUid: string, secondUid: string): Promise<boolean> {
+    const blocked = await this.env.CORE_DB.prepare(
+      `SELECT 1 AS incompatible
+         FROM user_blocks b
+         JOIN users blocker ON blocker.id = b.blocker_user_id
+         JOIN users blocked ON blocked.id = b.blocked_user_id
+        WHERE (blocker.firebase_uid = ?1 AND blocked.firebase_uid = ?2)
+           OR (blocker.firebase_uid = ?2 AND blocked.firebase_uid = ?1)
+        LIMIT 1`,
+    ).bind(firstUid, secondUid).first();
+    return blocked === null;
   }
 
   private async release(uid: string, queueResource: string, roomId: string): Promise<void> {

@@ -27,7 +27,9 @@ import { PoolStateRepository } from './repositories/pool-state-repository.js';
 import { ThemeRepository } from './repositories/theme-repository.js';
 import { UserRepository } from './repositories/user-repository.js';
 import { LiveMatchRepository, parseMatchResource } from './repositories/live-match-repository.js';
+import { SocialRepository } from './repositories/social-repository.js';
 import { QuestionImportService } from './services/question-import-service.js';
+import { SocialPushService } from './services/social-push-service.js';
 import { inspectWebp, THEME_ARTWORK_MAX_BYTES } from './storage/webp.js';
 import { CUSTOM_AVATAR_BYTES, CUSTOM_AVATAR_DIMENSION } from './storage/custom-avatar.js';
 
@@ -36,6 +38,14 @@ export { MatchRoom, MatchmakingQueue, PresenceHub, TicketBroker };
 const ticketSchema = z.object({
   resource: z.string().min(1).max(256),
   scope: z.enum(['matchmaking', 'presence', 'room']),
+}).strict();
+
+const socialTargetSchema = z.object({
+  publicId: z.string().regex(/^#QG[A-Z0-9]{4,32}$/i),
+}).strict();
+
+const pushInstallationSchema = z.object({
+  installationId: z.string().regex(/^[A-Za-z0-9_-]{10,200}$/),
 }).strict();
 
 function validationError(error: z.ZodError): ApiError {
@@ -374,7 +384,72 @@ async function themeArtworkRoute(
   return new Response(request.method === 'HEAD' ? null : artwork.data, { headers });
 }
 
-async function apiRoute(request: Request, env: Env, url: URL): Promise<Response> {
+async function socialRoute(request: Request, env: Env, url: URL, context: ExecutionContext): Promise<Response> {
+  const identity = await requireUser(request, env);
+  const profile = await new UserRepository(env.CORE_DB).findByFirebaseUid(identity.uid);
+  if (profile === null) throw new ApiError(409, 'PROFILE_REQUIRED', 'Conclua seu perfil antes de acessar o Social.');
+  const social = new SocialRepository(env.CORE_DB);
+  const push = new SocialPushService(env, social);
+
+  if (url.pathname === '/api/social' && request.method === 'GET') {
+    return json(await social.snapshot(profile.userId));
+  }
+  if (url.pathname === '/api/social/summary' && request.method === 'GET') {
+    return json({ pendingCount: await social.pendingCount(profile.userId), pushConfigured: push.configured });
+  }
+  if (url.pathname === '/api/social/search' && request.method === 'GET') {
+    return json({ users: await social.search(profile.userId, url.searchParams.get('q') ?? '') });
+  }
+  if (url.pathname === '/api/social/requests' && request.method === 'POST') {
+    const parsed = socialTargetSchema.safeParse(await readJson(request));
+    if (!parsed.success) throw validationError(parsed.error);
+    const result = await social.sendRequest(profile.userId, parsed.data.publicId);
+    if (result.created && push.configured) {
+      context.waitUntil(push.sendFriendRequest({
+        origin: url.origin,
+        requestId: result.requestId,
+        senderDisplayName: profile.displayName,
+        senderUserId: profile.userId,
+        targetUserId: result.targetUserId,
+      }));
+    }
+    return json({ created: result.created, request: { id: result.requestId } }, { status: result.created ? 201 : 200 });
+  }
+  const requestAction = /^\/api\/social\/requests\/([a-f0-9-]{36})\/(accept|reject|cancel)$/i.exec(url.pathname);
+  if (requestAction?.[1] !== undefined && requestAction[2] !== undefined && request.method === 'POST') {
+    if (requestAction[2] === 'accept') await social.acceptRequest(profile.userId, requestAction[1]);
+    if (requestAction[2] === 'reject') await social.rejectRequest(profile.userId, requestAction[1]);
+    if (requestAction[2] === 'cancel') await social.cancelRequest(profile.userId, requestAction[1]);
+    return json({ ok: true });
+  }
+  if (url.pathname === '/api/social/friends' && request.method === 'DELETE') {
+    const parsed = socialTargetSchema.safeParse(await readJson(request));
+    if (!parsed.success) throw validationError(parsed.error);
+    await social.removeFriend(profile.userId, parsed.data.publicId);
+    return json({ ok: true });
+  }
+  if (url.pathname === '/api/social/blocks') {
+    if (request.method === 'GET') return json({ users: await social.blockedUsers(profile.userId) });
+    if (request.method === 'POST' || request.method === 'DELETE') {
+      const parsed = socialTargetSchema.safeParse(await readJson(request));
+      if (!parsed.success) throw validationError(parsed.error);
+      if (request.method === 'POST') await social.block(profile.userId, parsed.data.publicId);
+      else await social.unblock(profile.userId, parsed.data.publicId);
+      return json({ ok: true });
+    }
+  }
+  if (url.pathname === '/api/social/push/installations'
+    && (request.method === 'POST' || request.method === 'DELETE')) {
+    const parsed = pushInstallationSchema.safeParse(await readJson(request));
+    if (!parsed.success) throw validationError(parsed.error);
+    if (request.method === 'POST') await social.registerInstallation(profile.userId, parsed.data.installationId);
+    else await social.unregisterInstallation(profile.userId, parsed.data.installationId);
+    return json({ enabled: request.method === 'POST' });
+  }
+  throw new ApiError(404, 'NOT_FOUND', 'Rota social não encontrada.');
+}
+
+async function apiRoute(request: Request, env: Env, url: URL, context: ExecutionContext): Promise<Response> {
   if (!isRequestOriginAllowed(request, env.ALLOWED_ORIGINS)) {
     throw new ApiError(403, 'ORIGIN_NOT_ALLOWED', 'Origem não autorizada.');
   }
@@ -384,6 +459,9 @@ async function apiRoute(request: Request, env: Env, url: URL): Promise<Response>
   }
   if (url.pathname === '/api/profile/me') return profileRoute(request, env);
   if (url.pathname === '/api/profile/avatar') return profileAvatarRoute(request, env);
+  if (url.pathname === '/api/social' || url.pathname.startsWith('/api/social/')) {
+    return socialRoute(request, env, url, context);
+  }
   if (url.pathname === '/api/realtime/tickets' && request.method === 'POST') return createRealtimeTicket(request, env);
   if (url.pathname.startsWith('/api/realtime/') && request.headers.get('Upgrade') !== null) return realtimeRoute(request, env, url);
   if (url.pathname === '/api/admin/questions/import') return adminImportRoute(request, env);
@@ -469,11 +547,11 @@ async function apiRoute(request: Request, env: Env, url: URL): Promise<Response>
   throw new ApiError(404, 'NOT_FOUND', 'Rota não encontrada.');
 }
 
-async function handle(request: Request, env: Env): Promise<Response> {
+async function handle(request: Request, env: Env, context: ExecutionContext): Promise<Response> {
   const url = new URL(request.url);
   if (url.pathname.startsWith('/api/')) {
     try {
-      return applyCors(await apiRoute(request, env, url), request, env.ALLOWED_ORIGINS);
+      return applyCors(await apiRoute(request, env, url, context), request, env.ALLOWED_ORIGINS);
     } catch (error) {
       return applyCors(apiErrorResponse(error), request, env.ALLOWED_ORIGINS);
     }
@@ -482,7 +560,7 @@ async function handle(request: Request, env: Env): Promise<Response> {
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
-    return withSecurityHeaders(await handle(request, env));
+  async fetch(request: Request, env: Env, context: ExecutionContext): Promise<Response> {
+    return withSecurityHeaders(await handle(request, env, context));
   },
 } satisfies ExportedHandler<Env>;

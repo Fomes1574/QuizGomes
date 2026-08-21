@@ -155,7 +155,12 @@ function assertFinalSchema(scenario) {
   const schemaObjects = query(scenario, `
     SELECT name, type
       FROM sqlite_master
-     WHERE name IN ('theme_artwork_blobs', 'themes_artwork_parent_key', 'user_custom_avatars')
+     WHERE name IN (
+       'theme_artwork_blobs', 'themes_artwork_parent_key', 'user_custom_avatars',
+       'friend_request_pair_state', 'user_blocks', 'push_installations',
+       'idx_friend_requests_pending_unordered_pair', 'idx_user_blocks_blocked_blocker',
+       'idx_push_installations_user_enabled'
+     )
         OR type = 'trigger'
      ORDER BY type, name
   `);
@@ -171,6 +176,22 @@ function assertFinalSchema(scenario) {
     schemaObjects.some(({ name, type }) => name === 'user_custom_avatars' && type === 'table'),
     `${scenario.name}: tabela user_custom_avatars ausente`,
   );
+  for (const tableName of ['friend_request_pair_state', 'user_blocks', 'push_installations']) {
+    assert(
+      schemaObjects.some(({ name, type }) => name === tableName && type === 'table'),
+      `${scenario.name}: tabela social ${tableName} ausente`,
+    );
+  }
+  for (const indexName of [
+    'idx_friend_requests_pending_unordered_pair',
+    'idx_user_blocks_blocked_blocker',
+    'idx_push_installations_user_enabled',
+  ]) {
+    assert(
+      schemaObjects.some(({ name, type }) => name === indexName && type === 'index'),
+      `${scenario.name}: índice social ${indexName} ausente`,
+    );
+  }
   assert(!schemaObjects.some(({ type }) => type === 'trigger'), `${scenario.name}: migration criou trigger remoto frágil`);
 
   const themeColumns = query(scenario, 'PRAGMA table_info(themes)');
@@ -205,8 +226,8 @@ function assertFinalSchema(scenario) {
 
   const appliedMigrations = query(scenario, 'SELECT name FROM d1_migrations ORDER BY id');
   assert(
-    appliedMigrations.at(-1)?.name === '0006_expand_synthetic_smoke_test.sql',
-    `${scenario.name}: 0006 não foi registrada como última migration`,
+    appliedMigrations.at(-1)?.name === '0007_social_foundation.sql',
+    `${scenario.name}: 0007 social não foi registrada como última migration`,
   );
   const upgradedTheme = query(scenario, `
     SELECT artwork_kind, artwork_icon_key, artwork_version, active_question_count
@@ -221,6 +242,42 @@ function assertFinalSchema(scenario) {
       && upgradedTheme[0].active_question_count === 250,
     `${scenario.name}: defaults da 0004 não preservaram o tema vindo da 0003`,
   );
+}
+
+/** @param {MigrationScenario} scenario */
+function assertSocialInvariants(scenario) {
+  const first = `social-a-${scenario.name}`;
+  const second = `social-b-${scenario.name}`;
+  executeSql(scenario, `
+    INSERT INTO users (id, firebase_uid)
+    VALUES ('${first}', 'firebase-${first}'), ('${second}', 'firebase-${second}');
+    INSERT INTO friend_requests (id, sender_user_id, recipient_user_id)
+    VALUES ('pending-${scenario.name}', '${first}', '${second}');
+  `);
+  executeSql(scenario, `
+    INSERT INTO friend_requests (id, sender_user_id, recipient_user_id)
+    VALUES ('crossed-${scenario.name}', '${second}', '${first}')
+  `, true);
+  executeSql(scenario, `
+    INSERT INTO user_blocks (blocker_user_id, blocked_user_id)
+    VALUES ('${first}', '${first}')
+  `, true);
+  executeSql(scenario, `
+    INSERT INTO friend_request_pair_state
+      (requester_user_id, target_user_id, rejection_count, cooldown_until)
+    VALUES ('${first}', '${second}', 3, NULL)
+  `, true);
+  executeSql(scenario, `
+    INSERT INTO push_installations (installation_id, user_id)
+    VALUES ('fid-synthetic-${scenario.name}', '${first}')
+  `);
+  const requests = query(scenario, `
+    SELECT COUNT(*) AS total FROM friend_requests
+     WHERE status = 'PENDING'
+       AND ((sender_user_id = '${first}' AND recipient_user_id = '${second}')
+         OR (sender_user_id = '${second}' AND recipient_user_id = '${first}'))
+  `);
+  assert(requests[0]?.total === 1, `${scenario.name}: índice social permitiu pedidos cruzados`);
 }
 
 /** @param {MigrationScenario} scenario */
@@ -353,7 +410,7 @@ function assertArtworkInvariants(scenario) {
 
 /** @param {MigrationScenario} scenario */
 async function assertRollback(scenario) {
-  const rollbackMigrationName = '0007_rollback_probe.sql';
+  const rollbackMigrationName = '0008_rollback_probe.sql';
   await writeFile(join(scenario.migrationsDirectory, rollbackMigrationName), `
     CREATE TABLE theme_artwork_rollback_probe (id INTEGER PRIMARY KEY);
     INSERT INTO theme_artwork_rollback_probe (id) VALUES (1);
@@ -447,6 +504,7 @@ try {
   assert(migrationNames.includes('0004_theme_artwork.sql'), 'Migration 0004_theme_artwork.sql ausente');
   assert(migrationNames.includes('0005_user_custom_avatars.sql'), 'Migration 0005_user_custom_avatars.sql ausente');
   assert(migrationNames.includes('0006_expand_synthetic_smoke_test.sql'), 'Migration Core 0006 ausente');
+  assert(migrationNames.includes('0007_social_foundation.sql'), 'Migration Core 0007 social ausente');
   assert(questionMigrationNames.includes('0003_expand_synthetic_smoke_test.sql'), 'Migration Questions 0003 ausente');
 
   await assertRemoteParser(coreSourceMigrationsDirectory, migrationNames);
@@ -458,6 +516,7 @@ try {
   assertFinalSchema(emptyDatabase);
   assertArtworkInvariants(emptyDatabase);
   assertAvatarInvariants(emptyDatabase);
+  assertSocialInvariants(emptyDatabase);
 
   const upgradeDatabase = await createScenario(
     'upgrade-0003',
@@ -465,6 +524,7 @@ try {
       '0004_theme_artwork.sql',
       '0005_user_custom_avatars.sql',
       '0006_expand_synthetic_smoke_test.sql',
+      '0007_social_foundation.sql',
     ].includes(name)),
   );
   console.log('Validando upgrade D1 exato de 0003 para 0004...');
@@ -498,7 +558,14 @@ try {
     join(upgradeDatabase.migrationsDirectory, '0006_expand_synthetic_smoke_test.sql'),
   );
   applyMigrations(upgradeDatabase);
+  console.log('Validando upgrade D1 atual exato de 0006 para 0007 Social Foundation...');
+  await copyFile(
+    join(coreSourceMigrationsDirectory, '0007_social_foundation.sql'),
+    join(upgradeDatabase.migrationsDirectory, '0007_social_foundation.sql'),
+  );
+  applyMigrations(upgradeDatabase);
   assertFinalSchema(upgradeDatabase);
+  assertSocialInvariants(upgradeDatabase);
   console.log('Validando rollback transacional de migration com erro...');
   await assertRollback(upgradeDatabase);
 
@@ -537,7 +604,7 @@ try {
   applyMigrations(upgradeQuestions);
   assertFinalQuestionDataset(upgradeQuestions);
 
-  console.log('Migrations D1 aprovadas: parser Wrangler, bancos vazios, upgrades Core 0003→0004→0005→0006 e Questions 0002→0003, invariantes, rollback e schemas finais.');
+  console.log('Migrations D1 aprovadas: parser Wrangler, bancos vazios, upgrades Core 0003→0004→0005→0006→0007 e Questions 0002→0003, invariantes sociais, rollback e schemas finais.');
 } finally {
   await rm(temporaryRoot, { force: true, recursive: true });
 }

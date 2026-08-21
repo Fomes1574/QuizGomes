@@ -3,6 +3,7 @@ export interface Env {
   ALLOWED_ORIGINS?: string;
   ASSETS: Fetcher;
   CORE_DB: D1Database;
+  FCM_SERVICE_ACCOUNT_JSON?: string;
   FIREBASE_PROJECT_ID: string;
   MATCH_ROOM: DurableObjectNamespace;
   MATCHMAKING_QUEUE: DurableObjectNamespace;
