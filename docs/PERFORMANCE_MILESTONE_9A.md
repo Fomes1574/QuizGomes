@@ -71,3 +71,78 @@ Fontes oficiais revisadas em 21/08/2026:
 - https://developers.cloudflare.com/durable-objects/api/state/
 - https://developers.cloudflare.com/durable-objects/platform/pricing/
 - https://developers.cloudflare.com/durable-objects/best-practices/websockets/
+
+## Milestone 9B — presença privada entre amigos
+
+Não existe segundo WebSocket, Durable Object, migration, serviço, dependência de
+animação ou produto Firebase. O canal global hibernável do 9A.1 transporta
+também `FRIEND_PRESENCE_CHANGED` somente para amigos autorizados; `PresenceHub`
+continua sendo a autoridade da atividade competitiva existente.
+
+| Artefato | 9A.1 aprovado | 9B | Impacto |
+|---|---:|---:|---:|
+| JavaScript inicial | 214,83 KB / 67,69 KB gzip | 215,00 KB / 67,76 KB gzip | +0,17 KB / +0,07 KB gzip |
+| Página Social lazy | 7,49 KB / 2,31 KB gzip | 10,87 KB / 3,49 KB gzip | +3,38 KB / +1,18 KB gzip; somente ao abrir Social |
+| CSS global | 57,80 KB / 11,67 KB gzip | 62,20 KB / 12,50 KB gzip | +4,40 KB / +0,83 KB gzip |
+| Sala de partida lazy | 19,59 KB / 6,52 KB gzip | 19,59 KB / 6,52 KB gzip | zero alteração no motor/UI congelados |
+| Service worker único | 69,43 KB / 21,60 KB gzip | 69,43 KB / 21,60 KB gzip | zero alteração em PWA/FCM |
+| Precache | 15 entradas / 480,69 KiB | 15 entradas / 486,12 KiB | +5,43 KiB; Social continua lazy e fora do precache |
+| Worker | 742,1 KB | 748,7 KB | +6,6 KB sem binding ou classe adicional |
+
+### Requests e acesso a dados
+
+- startup autenticado mantém o ticket/socket social aprovado e
+  `GET /api/social/summary`; adiciona **um**
+  `GET /api/social/presence` autenticado para o snapshot inicial de amizades;
+- abrir Social continua realizando somente `GET /api/social`; não existe
+  download de todos os usuários, lista de bloqueados ou consulta pública por ID;
+- mudança de presença usa apenas o WebSocket existente: **zero requests HTTP**
+  do navegador e zero refresh global/header por amigo alterado;
+- aceitar/remover/bloquear continua emitindo invalidação somente após a mutação
+  persistida; uma atualização real recarrega summary, presença e, quando a aba
+  Social está aberta, o snapshot social;
+- cada mudança real de atividade encaminha **um** request interno DO para o hub
+  social e executa **uma** query indexada das amizades válidas; não há query por
+  heartbeat. Se o usuário não possui socket, a atividade não executa query D1;
+- snapshot usa uma consulta de amizades e somente lê `PresenceHub` de amigos
+  efetivamente online; offline nunca consulta activity residual;
+- presença cria **zero D1 writes**, nenhum last-seen, nenhum alarm, nenhum
+  `setInterval` server-side e nenhum push FCM;
+- o heartbeat permanece em 45 s, watchdog 15 s e `PING/PONG` por
+  `setWebSocketAutoResponse`, preservando hibernação e o orçamento do 9A.1.
+
+### Cenário conservador: 30 usuários únicos por 24 horas
+
+Assumindo uma sessão por usuário, 30 snapshots iniciais, até 29 amizades por
+pessoa e **10 mudanças reais de activity por usuário/dia**:
+
+| Operação | Base 9A.1 | Incremento 9B |
+|---|---:|---:|
+| Heartbeats sociais | 57.600/dia | 0; mesma cadência de 45 s |
+| Requests DO equivalentes de heartbeat | até 2.880/dia | 0 |
+| Eventos reais de activity | — | 300 requests internos SocialRealtimeHub |
+| Snapshots iniciais | — | até 30 requests ao hub + até 870 reads DO de amigos online no pior caso completo |
+| Activity inicial dos primeiros sockets | — | até 30 reads DO |
+| D1 statements para fanout/snapshot/conexão | — | cerca de 360 reads, somente por evento/snapshot real |
+| D1 rows de amizades, pior caso de 29 por consulta | — | até aproximadamente 10.440 rows/dia, antes dos índices seletivos |
+| D1 writes/last-seen/heartbeat | 0 | 0 |
+| Segundo WebSocket, alarm ou produto pago | 0 | 0 |
+
+Mesmo no cenário deliberadamente superestimado, heartbeat + fanout + snapshots
+permanecem em torno de **4.110 requests DO/dia**, antes dos poucos tickets e
+conexões já existentes: aproximadamente **4,1%** da franquia oficial de
+100.000 requests/dia. Reads D1 ficam muito abaixo de 5 milhões de rows/dia;
+mensagens server → client não são cobradas como requests, e auto-responses não
+acordam o objeto nem geram duração ociosa. Não houve ativação de billing.
+
+Validação visual neste ambiente: DOM responsivo em `390 px` e `1.440 px`, dark
+mode, avatar customizado/moldura, estados acessíveis e fallback
+`prefers-reduced-motion`/FLIP. Chromium e dispositivos físicos não estão
+instalados/disponíveis; a confirmação visual em navegador/aparelho real pertence
+ao smoke físico pós-deploy do proprietário.
+
+Documentação oficial Cloudflare revisada novamente em 21/08/2026:
+
+- https://developers.cloudflare.com/durable-objects/api/state/
+- https://developers.cloudflare.com/durable-objects/platform/pricing/
+- https://developers.cloudflare.com/durable-objects/best-practices/websockets/

@@ -51,9 +51,11 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 - [x] 2026-08-21 — Milestone 9A Social Foundation implementado e validado localmente: descoberta pública, amizades, recusas direcionais, bloqueios, compatibilidade na fila e FCM opcional por instalação.
 - [x] 2026-08-21 — smoke físico parcial do 9A aprovado: busca nominal/ID, pedido, primeira recusa, bloqueio, invisibilidade e incompatibilidade competitiva.
 - [x] 2026-08-21 — Milestone 9A.1 implementado e validado localmente: cancelamento pré-partida identificado, retorno ao tema e canal Social hibernável com contador global/invalidações realtime.
-- [ ] Milestone 9A.1 — smoke físico pós-deploy: cancelamento por nome/contexto, usuários online únicos e pedidos atualizados com Social aberta.
+- [x] 2026-08-21 — smoke físico integral do Milestone 9A.1 aprovado pelo proprietário em produção: cancelamento por nome/contexto, usuários online únicos e pedidos atualizados com Social aberta.
+- [x] 2026-08-21 — Milestone 9A.1 oficialmente concluído após aprovação física; M8/M8.5, Social Foundation e realtime global permanecem preservados.
 - [ ] Milestone 9A — smoke físico pós-deploy pelo proprietário: descoberta, pedidos, três recusas direcionais, bloqueios/pareamento e push real somente após configuração opcional do Firebase/Cloudflare.
-- [ ] Milestone 9B — presença social real.
+- [x] 2026-08-21 — Milestone 9B implementado e validado localmente: presença privada/autoritativa entre amigos, snapshot versionado, fanout direcionado e Social responsivo refinado.
+- [ ] Milestone 9B — smoke físico pós-deploy pelo proprietário: amigos online/busca/partida/reconexão/offline, múltiplas sessões e transições visuais em aparelhos reais.
 - [ ] Milestone 9C — desafio simultâneo entre amigos.
 - [ ] Milestone 10 — assíncrono selado e revelação progressiva.
 - [ ] Milestone 11 — criação/moderação/import/admin.
@@ -98,8 +100,11 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 35. **Cloud Messaging gratuito é a única exceção Firebase autorizada além do Google Auth.** Firebase JS SDK `12.17.1` usa `register()`/`onRegistered()` e Firebase Installation IDs; FCM HTTP v1 recebe `message.fid`, sem APIs/token legados. A chave VAPID pública pode estar no bundle; `FCM_SERVICE_ACCOUNT_JSON` existe somente como secret de runtime Cloudflare. Push é opt-in, multi-device, pós-persistência, best-effort e inexistente com credencial ausente.
 36. **Workbox e push compartilham um único service worker.** `injectManifest` preserva shell offline, precache, atualização e APIs `NetworkOnly`; a registration existente é entregue explicitamente ao Firebase Messaging. Foreground atualiza badge/lista, background cria uma notificação controlada e o clique abre Social/Pedidos. Não há segundo root scope, polling, billing, Firestore, Storage ou Functions.
 37. **Cancelamento pré-partida tem semântica própria sem efeito competitivo.** `VOID/CANCELLED` persiste somente o assento do jogador autoritativo e projeta nome público real; o adversário não vê placar nem UID, quem cancelou retorna imediatamente, e route state preserva tema/dificuldade/modalidade. A alteração mínima de domínio/projeção não toca reconexão, timers, score, XP, Knowledge, locks ou demais voids.
-38. **Presença global não é presença individual.** `SocialRealtimeHub` global aceita tickets curtos autenticados, conta IDs internos únicos entre sockets hibernáveis e publica somente `ONLINE_COUNT`; várias abas não duplicam usuários. Amigos online/offline, last-seen, desafios e Milestones 9B/9C permanecem pendentes.
+38. **Presença global e individual compartilham um único canal.** `SocialRealtimeHub` global aceita tickets curtos autenticados, conta IDs internos únicos entre sockets hibernáveis e mantém `ONLINE_COUNT`; várias abas não duplicam usuários. O 9B acrescenta presença privada somente entre amizades válidas, sem presença pública, last-seen, desafios ou canal adicional.
 39. **Realtime social acorda somente por mudança real.** Mutação persistida aciona `waitUntil` com `SOCIAL_INVALIDATED` genérico para todas as sessões das pessoas afetadas; o cliente atualiza summary/snapshot sob demanda, sem revelar bloqueio. `PING/PONG` a cada 45 s usa auto-response Cloudflare sem acordar o DO, sem polling HTTP/D1 e sem depender de FCM.
+40. **Conectividade e atividade têm autoridades separadas.** A última sessão `SocialRealtimeHub` encerrada sempre produz `OFFLINE`, mesmo se `PresenceHub` conservar atividade competitiva; sessão ativa combina `idle/invite → ONLINE`, `matchmaking → MATCHMAKING`, `preparing/playing/finished → IN_MATCH` e `reconnecting → RECONNECTING`. Nenhuma informação de sala, UID, recurso ou adversário cruza o socket social.
+41. **Fanout e snapshot de presença são privados e versionados.** D1 resolve amizades válidas sem bloqueio somente diante de mudança/snapshot real; o navegador nunca escolhe destinatários. Revisão lógica é reservada antes de awaits, snapshot antigo não substitui evento novo e gerações descartam respostas HTTP obsoletas após remoção/bloqueio.
+42. **Motion social usa somente CSS e WAAPI/FLIP.** Amigos online/offline são ordenados por disponibilidade, busca, partida e nome; verde/amarelo/cinza têm tokens próprios, estado textual acessível e animações pontuais. Dark/mobile/desktop/reduced-motion não exigem dependências, loops de animação, polling ou segundo WebSocket.
 
 ## Descobertas e riscos
 
@@ -652,14 +657,53 @@ com placar fictício; Social dependia de foco/navegação/FCM para atualizar ped
   `7,49 / 2,31 KB gzip`, sala `19,59 / 6,52 KB gzip`, precache
   `15 entradas / 480,69 KiB` e Worker `742,1 KB`.
 
-O smoke físico do 9A.1 permanece **pendente**. Presença individual 9B, desafio
-9C e demais milestones futuros não foram iniciados.
+O smoke físico do 9A.1 foi posteriormente **aprovado integralmente pelo
+proprietário em produção**, autorizando exclusivamente o início do 9B. Desafio
+9C e demais milestones futuros permanecem não iniciados.
+
+### 2026-08-21 — Milestone 9B: presença privada e experiência Social refinada
+
+Antes da implementação, o gate físico do 9A.1 foi marcado como aprovado e o
+milestone como concluído. M8/M8.5 permanecem **FROZEN**; `MatchRoom`, fila,
+reconexão, scoring, Knowledge, XP, perguntas, locks, marca, avatar e FCM ficaram
+fora do diff funcional.
+
+- `PresenceHub` comunica somente mudanças reais de atividade ao
+  `SocialRealtimeHub` global já existente; o identificador do objeto é associado
+  server-side à sessão autenticada, sem UID/room ID no evento público;
+- somente a primeira/última sessão lógica altera online/offline. `OFFLINE`
+  vence qualquer atividade antiga; segunda aba/aparelho não duplica presença;
+- `/api/social/presence` autentica o ator, resolve amigos e bloqueios no D1 e
+  consulta `PresenceHub` apenas para amigos com socket ativo. Busca pública e
+  não-amigos não possuem lookup individual nem recebem eventos;
+- `FRIEND_PRESENCE_CHANGED` contém apenas ID público, enum de atividade geral e
+  revisão lógica. Fanout resolve novamente amizades válidas imediatamente antes
+  da entrega; remoção/bloqueio limpa mapas por invalidação/snapshot;
+- snapshots capturam revision antes dos awaits e o frontend compara revisões e
+  gerações de request, impedindo sobrescrita por evento/resposta antiga;
+- `SocialContext` mantém mapa privado em contexto separado; status de um amigo
+  não exige atualização do header global, busca, requests ou segundo socket;
+- Social separa online/offline, ordena disponibilidade → busca → partida →
+  reconexão → nome, mostra dot verde/amarelo/cinza, moldura/avatar reais e usa
+  FLIP/WAAPI de 390 ms apenas quando necessário, com fallback reduced-motion;
+- heartbeat social permanece em 45 s com watchdog 15 s e auto-response
+  hibernável; não existe timer/alarm no DO, polling HTTP, escrita D1 periódica,
+  migration, serviço extra, biblioteca de motion, billing ou push de presença;
+- baseline e impacto ficam registrados em `docs/PERFORMANCE_MILESTONE_9A.md`;
+  build inicial passou de `214,83 / 67,69 KB gzip` para
+  `215,00 / 67,76 KB gzip`, e a sala congelada permanece em
+  `19,59 / 6,52 KB gzip`.
+
+O smoke físico do Milestone 9B permanece **pendente da aprovação explícita do
+proprietário**. Desafio direto, convite, assíncrono, chat, last-seen e Milestone
+9C **não foram iniciados**.
 
 ## Critério de saída desta execução
 
 - Milestones 8 e 8.5 aprovados fisicamente e congelados;
-- Social Foundation 9A implementada, validada localmente e publicada em commits lógicos na `main` por fast-forward;
+- Social Foundation 9A e realtime global 9A.1 preservados; smoke físico do 9A.1 aprovado e registrado;
+- presença privada 9B implementada/validada localmente e publicada em commits lógicos na `main` por fast-forward;
 - suíte unitária, runtime Workers/WebSocket, PWA, Worker, migrations, rollback, npm audit e secrets verdes;
 - push FCM opcional sem impedir amizades/bloqueios quando não configurado;
-- smoke físico do 9A registrado como pendente até confirmação externa do proprietário;
-- Milestones 9B/9C não iniciados; sem preview de branch, R2, billing ou produto pago.
+- smoke físico completo do 9A e smoke físico do 9B continuam pendentes até confirmação externa do proprietário;
+- Milestone 9C não iniciado; sem preview de branch, R2, billing, migration adicional ou produto pago.
