@@ -32,13 +32,18 @@
       { "name": "MATCH_ROOM", "class_name": "MatchRoom" },
       { "name": "MATCHMAKING_QUEUE", "class_name": "MatchmakingQueue" },
       { "name": "PRESENCE_HUB", "class_name": "PresenceHub" },
-      { "name": "TICKET_BROKER", "class_name": "TicketBroker" }
+      { "name": "TICKET_BROKER", "class_name": "TicketBroker" },
+      { "name": "SOCIAL_REALTIME_HUB", "class_name": "SocialRealtimeHub" }
     ]
   },
   "migrations": [
     {
       "tag": "v1",
       "new_sqlite_classes": ["MatchRoom", "MatchmakingQueue", "PresenceHub", "TicketBroker"]
+    },
+    {
+      "tag": "v2",
+      "new_sqlite_classes": ["SocialRealtimeHub"]
     }
   ]
 }

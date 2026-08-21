@@ -4,6 +4,7 @@ import { bootstrapAdminUids, hasAdminAccess, requireAdmin, requireUser } from '.
 import { MatchRoom } from './durable-objects/match-room.js';
 import { MatchmakingQueue } from './durable-objects/matchmaking-queue.js';
 import { PresenceHub, type ActivityState } from './durable-objects/presence-hub.js';
+import { SocialRealtimeHub } from './durable-objects/social-realtime-hub.js';
 import { TicketBroker } from './durable-objects/ticket-broker.js';
 import type { Env } from './env.js';
 import { ApiError } from './http/api-error.js';
@@ -33,11 +34,11 @@ import { SocialPushService } from './services/social-push-service.js';
 import { inspectWebp, THEME_ARTWORK_MAX_BYTES } from './storage/webp.js';
 import { CUSTOM_AVATAR_BYTES, CUSTOM_AVATAR_DIMENSION } from './storage/custom-avatar.js';
 
-export { MatchRoom, MatchmakingQueue, PresenceHub, TicketBroker };
+export { MatchRoom, MatchmakingQueue, PresenceHub, SocialRealtimeHub, TicketBroker };
 
 const ticketSchema = z.object({
   resource: z.string().min(1).max(256),
-  scope: z.enum(['matchmaking', 'presence', 'room']),
+  scope: z.enum(['matchmaking', 'presence', 'room', 'social']),
 }).strict();
 
 const socialTargetSchema = z.object({
@@ -57,6 +58,19 @@ function validationError(error: z.ZodError): ApiError {
 
 function ticketBroker(env: Env): DurableObjectStub {
   return env.TICKET_BROKER.get(env.TICKET_BROKER.idFromName('global'));
+}
+
+function socialRealtimeHub(env: Env): DurableObjectStub {
+  return env.SOCIAL_REALTIME_HUB.get(env.SOCIAL_REALTIME_HUB.idFromName('global'));
+}
+
+function invalidateSocial(env: Env, context: ExecutionContext, userIds: string[]): void {
+  context.waitUntil(socialRealtimeHub(env).fetch('https://social.internal/invalidate', {
+    body: JSON.stringify({ userIds }),
+    method: 'POST',
+  }).then(() => undefined).catch(() => {
+    console.error(JSON.stringify({ code: 'SOCIAL_REALTIME_UNAVAILABLE', event: 'social_invalidation_failed' }));
+  }));
 }
 
 async function releaseTerminalPresence(
@@ -104,6 +118,9 @@ async function createRealtimeTicket(request: Request, env: Env): Promise<Respons
       throw new ApiError(403, 'MATCH_ACCESS_DENIED', 'Você não pertence a esta partida.');
     }
   }
+  if (parsed.data.scope === 'social' && parsed.data.resource !== 'social') {
+    throw new ApiError(400, 'INVALID_REALTIME_RESOURCE', 'Canal social inválido.');
+  }
   const resource = parsed.data.scope === 'presence' ? user.uid : parsed.data.resource;
   return ticketBroker(env).fetch('https://tickets.internal/create', {
     body: JSON.stringify({ expiresAt: 0, resource, scope: parsed.data.scope, uid: user.uid }),
@@ -115,7 +132,7 @@ async function createRealtimeTicket(request: Request, env: Env): Promise<Respons
 async function consumeRealtimeTicket(
   env: Env,
   ticket: string,
-  scope: 'matchmaking' | 'presence' | 'room',
+  scope: 'matchmaking' | 'presence' | 'room' | 'social',
   resource: string,
 ): Promise<string> {
   const response = await ticketBroker(env).fetch('https://tickets.internal/consume', {
@@ -139,6 +156,15 @@ async function realtimeRoute(request: Request, env: Env, url: URL): Promise<Resp
     const uid = await consumeRealtimeTicket(env, ticket, 'presence', resource);
     const stub = env.PRESENCE_HUB.get(env.PRESENCE_HUB.idFromName(uid));
     return stub.fetch(new Request('https://presence.internal/socket', { headers: { Upgrade: 'websocket' } }));
+  }
+
+  if (url.pathname === '/api/realtime/social') {
+    const uid = await consumeRealtimeTicket(env, ticket, 'social', 'social');
+    const profile = await new UserRepository(env.CORE_DB).findByFirebaseUid(uid);
+    if (profile === null) throw new ApiError(409, 'PROFILE_REQUIRED', 'Conclua seu perfil antes de acessar o Social.');
+    return socialRealtimeHub(env).fetch(new Request('https://social.internal/socket', {
+      headers: { Upgrade: 'websocket', 'X-QG-Authenticated-User-Id': profile.userId },
+    }));
   }
 
   if (url.pathname === '/api/realtime/matchmaking') {
@@ -404,6 +430,7 @@ async function socialRoute(request: Request, env: Env, url: URL, context: Execut
     const parsed = socialTargetSchema.safeParse(await readJson(request));
     if (!parsed.success) throw validationError(parsed.error);
     const result = await social.sendRequest(profile.userId, parsed.data.publicId);
+    if (result.created) invalidateSocial(env, context, [profile.userId, result.targetUserId]);
     if (result.created && push.configured) {
       context.waitUntil(push.sendFriendRequest({
         origin: url.origin,
@@ -420,12 +447,19 @@ async function socialRoute(request: Request, env: Env, url: URL, context: Execut
     if (requestAction[2] === 'accept') await social.acceptRequest(profile.userId, requestAction[1]);
     if (requestAction[2] === 'reject') await social.rejectRequest(profile.userId, requestAction[1]);
     if (requestAction[2] === 'cancel') await social.cancelRequest(profile.userId, requestAction[1]);
+    const affected = await env.CORE_DB.prepare(
+      'SELECT sender_user_id, recipient_user_id FROM friend_requests WHERE id = ?1',
+    ).bind(requestAction[1]).first<{ recipient_user_id: string; sender_user_id: string }>();
+    if (affected !== null) invalidateSocial(env, context, [affected.sender_user_id, affected.recipient_user_id]);
     return json({ ok: true });
   }
   if (url.pathname === '/api/social/friends' && request.method === 'DELETE') {
     const parsed = socialTargetSchema.safeParse(await readJson(request));
     if (!parsed.success) throw validationError(parsed.error);
     await social.removeFriend(profile.userId, parsed.data.publicId);
+    const target = await env.CORE_DB.prepare('SELECT user_id FROM user_profiles WHERE public_id = ?1 COLLATE NOCASE')
+      .bind(parsed.data.publicId).first<{ user_id: string }>();
+    if (target !== null) invalidateSocial(env, context, [profile.userId, target.user_id]);
     return json({ ok: true });
   }
   if (url.pathname === '/api/social/blocks') {
@@ -435,6 +469,9 @@ async function socialRoute(request: Request, env: Env, url: URL, context: Execut
       if (!parsed.success) throw validationError(parsed.error);
       if (request.method === 'POST') await social.block(profile.userId, parsed.data.publicId);
       else await social.unblock(profile.userId, parsed.data.publicId);
+      const target = await env.CORE_DB.prepare('SELECT user_id FROM user_profiles WHERE public_id = ?1 COLLATE NOCASE')
+        .bind(parsed.data.publicId).first<{ user_id: string }>();
+      if (target !== null) invalidateSocial(env, context, [profile.userId, target.user_id]);
       return json({ ok: true });
     }
   }

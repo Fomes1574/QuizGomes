@@ -140,6 +140,11 @@ h1, h2, h3, .brand-lockup__name, .hero-stat strong, .level-card > strong, .count
 .brand-lockup__name { font-size: .92rem; font-weight: 700; letter-spacing: .04em; }
 .brand-lockup--compact .brand-lockup__mark { width: 44px; height: 44px; }
 
+.header-brand { display: flex; min-width: 0; align-items: center; gap: 12px; }
+.header-online { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 5px; color: var(--text-secondary); font-size: .72rem; font-weight: 600; }
+.header-online__dot { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50%; background: #32b76c; box-shadow: 0 0 0 3px rgb(50 183 108 / .12); }
+@media (width <= 420px) { .header-online__label { display: none; } .header-brand { gap: 8px; } }
+
 .header-profile { display: flex; align-items: center; gap: 10px; border-radius: 18px; }
 .header-profile__copy { display: none; text-align: right; }
 .header-profile__copy small, .header-profile__copy strong { display: block; }

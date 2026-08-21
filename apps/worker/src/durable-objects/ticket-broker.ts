@@ -3,7 +3,7 @@ import { ApiError } from '../http/api-error.js';
 interface TicketRecord {
   expiresAt: number;
   resource: string;
-  scope: 'matchmaking' | 'presence' | 'room';
+  scope: 'matchmaking' | 'presence' | 'room' | 'social';
   uid: string;
 }
 

@@ -15,12 +15,21 @@ const destinations: Array<{ icon: IconName; label: string; to: string }> = [
 
 export function AppShell() {
   const { firebaseUser, profile } = useAuth();
-  const { pendingCount } = useSocial();
+  const { onlineCount, pendingCount } = useSocial();
   const location = useLocation();
   return (
     <div className="app-shell">
       <header className="app-header">
-        <Logo />
+        <div className="header-brand">
+          <Logo />
+          {typeof onlineCount === 'number' && (
+            <span aria-label={`${onlineCount} usuários online`} className="header-online" role="status">
+              <span aria-hidden="true" className="header-online__dot" />
+              <span>{onlineCount}</span>
+              <span className="header-online__label">online</span>
+            </span>
+          )}
+        </div>
         <NavLink className="header-profile" to="/perfil" aria-label="Abrir perfil">
           <span className="header-profile__copy">
             <small>{profile ? `Nível ${1}` : firebaseUser ? 'Complete seu perfil' : 'Visitante'}</small>
