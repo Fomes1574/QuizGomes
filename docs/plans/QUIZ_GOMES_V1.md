@@ -35,19 +35,22 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 - [x] 2026-08-11 — calibração final do Milestone 8.5 implementada localmente com resultado em 2.000 ms e apresentação da próxima pergunta em 1.600 ms.
 - [x] 2026-08-11 — reteste real da cadência `2.000 / 1.600` melhorou novamente a partida e motivou uma última calibração pequena.
 - [x] 2026-08-11 — calibração `2.400 / 1.900` e revelação autoritativa das duas escolhas implementadas e validadas localmente.
-- [ ] Milestone 8.5 — repetir uma partida Fácil real em dois usuários após o deploy da calibração atual `2.900 / 1.900`, cobrindo acerto, erro e timeout.
+- [x] 2026-08-21 — smoke físico aprovado pelo proprietário: partida Fácil real com dois usuários, cadência `2.900 / 1.900`, acerto, erro e timeout.
 - [x] 2026-08-12 — sistema unificado de arte dos temas implementado e validado localmente, com ícones próprios, upload ADMIN em D1 e auditoria de carregamento.
 - [x] 2026-08-12 — falha remota da migration de arte isolada no parser multi-statement do D1; `0004` pendente tornada robusta sem triggers e coberta por gate pré-deploy.
 - [x] 2026-08-18 — smoke real do Theme Artwork aprovado pelo proprietário em produção: arte e migration D1-safe `0004` operantes, sem regressão reportada.
 - [x] 2026-08-13 — correção de escopo do Milestone 8.5 concluída localmente: matchmaking visual/autoritativo, apresentação do adversário, preload seguro, marca oficial e avatar personalizado.
-- [ ] Milestone 8.5 — smoke real pós-deploy da nova apresentação e do upload/troca/remoção de avatar com dois usuários autenticados.
+- [x] 2026-08-21 — smoke físico aprovado pelo proprietário: apresentação real do adversário e upload/troca/remoção de avatar com usuários autenticados.
 - [x] 2026-08-14 — correção final do Milestone 8 concluída localmente: deadline de reconexão autoritativo, recuperação terminal, cleanup/self-healing, códigos seguros e pool sintético ampliado.
 - [x] 2026-08-14 — produção aprovou o fluxo `partida 1 → queda >7 s → VOID → partida 2 imediata` com as mesmas contas; não houve lock terminal persistente.
 - [x] 2026-08-14 — hardening final de UX/liveness concluído localmente: questão removida na perda local/`PAUSED`, heartbeat leve e matchmaking modal de verdade.
 - [x] 2026-08-18 — smoke físico de modo avião e modalidade real aprovado: pergunta removida localmente, pausa/retomada/VOID corretos, revanche imediata e navegação integralmente bloqueada durante matchmaking.
 - [x] 2026-08-18 — sincronização visual pré-9A concluída localmente: perda local sem contador fictício e graça visual derivada somente de `graceRemainingMs` autoritativo com relógio monotônico.
-- [ ] Milestone 8/8.5 — repetir em produção o smoke final de sincronização visual nos dois aparelhos; após aprovação, registrar o congelamento oficial sem iniciar o Milestone 9A.
-- [ ] Milestone 9 — social e desafio direto.
+- [x] 2026-08-21 — smoke físico final de sincronização visual aprovado pelo proprietário nos dois aparelhos; perda local sem contador fictício e graça exclusivamente autoritativa.
+- [x] 2026-08-21 — Milestones 8 e 8.5 oficialmente FROZEN após aprovação física em produção; motor, reconexão e matchmaking permanecem congelados, exceto integração mínima obrigatória de bloqueios na fila ou regressão comprovada.
+- [ ] Milestone 9A — Social Foundation: descoberta pública, amizades, recusas direcionais, bloqueios e notificações opcionais.
+- [ ] Milestone 9B — presença social real.
+- [ ] Milestone 9C — desafio simultâneo entre amigos.
 - [ ] Milestone 10 — assíncrono selado e revelação progressiva.
 - [ ] Milestone 11 — criação/moderação/import/admin.
 - [ ] Milestone 12 — e2e, performance, acessibilidade, segurança e deploy.
