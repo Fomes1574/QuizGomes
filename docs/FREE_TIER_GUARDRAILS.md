@@ -10,7 +10,8 @@ Revisado em 11 de agosto de 2026. Limites mudam; confirmar no painel e nas fonte
 | Workers | API + assets | 100.000 requests/dia | assets estáticos não invocam Worker quando possível; endpoints enxutos |
 | D1 | core + shard inicial | 5 milhões rows lidas/dia, 100.000 escritas/dia, 5 GB | índices, paginação, ausência de scans aleatórios, agregação compacta |
 | Durable Objects SQLite | filas, presença e salas | 100.000 requests/dia, 13.000 GB-s/dia; storage com limites equivalentes ao D1 | WebSocket Hibernation, sem polling/heartbeat agressivo, objetos encerram estado ocioso |
-| Firebase Authentication | login Google | cota Spark aplicável | somente Auth; sem banco/storage/functions/hosting |
+| Firebase Authentication | login Google | cota Spark aplicável | sem banco/storage/functions/hosting |
+| Firebase Cloud Messaging | push opcional de pedidos de amizade | envio FCM sem produto pago adicional | somente após permissão explícita; FIDs limitados por usuário, best-effort, sem Functions/Firestore/Blaze |
 
 Fontes Cloudflare atuais:
 
@@ -39,6 +40,8 @@ As únicas permissões de escrita do token do Workers Builds são Workers Script
 - arte de tema: zero BLOB na listagem; no máximo uma row WebP de 60 KB por tema, lida somente pela URL versionada quando a arte aparece;
 - avatar personalizado: zero BLOB em perfil/ranking/partida; no máximo uma row WebP de 50 KB por usuário, lida somente pela URL versionada;
 - matchmaking: mensagens/eventos no DO, sem writes periódicos D1;
+- busca social: prefixo nominal indexado com limite de 20 resultados ou lookup exato do ID público;
+- push social: somente uma tentativa best-effort por instalação autorizada após criação real de pedido; zero polling, no máximo 20 instalações consultadas;
 - rodada: estado principal no DO; D1 recebe finalização/agregados em batch, não ticks do timer;
 - histórico: uma row compacta usuário+pool em vez de uma row por pergunta;
 - estatísticas: incremento agregado ao final/resolução, não evento analítico duplicado.

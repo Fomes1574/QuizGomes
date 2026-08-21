@@ -1,6 +1,6 @@
 # Deployment
 
-Atualizado em 14 de agosto de 2026. O destino é um único Cloudflare Worker que serve API, PWA e Durable Objects em `workers.dev`, usando somente **Workers Free**.
+Atualizado em 21 de agosto de 2026. O destino é um único Cloudflare Worker que serve API, PWA e Durable Objects em `workers.dev`, usando somente **Workers Free**. Firebase Cloud Messaging opcional permanece no plano gratuito.
 
 Se o painel solicitar cartão, billing, Workers Paid, upgrade ou qualquer produto pago, cancele e pare. Não use deploy temporário, não crie R2 e não habilite recursos ausentes deste documento.
 
@@ -14,7 +14,7 @@ No console do projeto `quizgomes-cbc48`:
 4. faça o primeiro login e copie o Firebase UID do proprietário em Authentication → Users → selecione a conta → User UID;
 5. grave esse UID como o secret de runtime `ADMIN_FIREBASE_UIDS` no Worker.
 
-A configuração Web existente é pública e está no bundle, como previsto pelo Firebase. A API key deve permanecer restrita no Google Cloud às APIs Firebase necessárias e aos domínios autorizados. Nunca adicione JSON de Service Account, chave privada ou credencial do Firebase Admin SDK.
+A configuração Web existente é pública e está no bundle, como previsto pelo Firebase. A API key deve permanecer restrita no Google Cloud às APIs Firebase necessárias e aos domínios autorizados. Nunca adicione JSON de Service Account, chave privada ou credencial do Firebase Admin SDK ao Git, ao browser ou às variáveis `VITE_`; a credencial FCM opcional pertence exclusivamente ao runtime Secret do Worker.
 
 ## 2. Recursos D1 existentes
 
@@ -65,6 +65,7 @@ Em **Build variables and secrets**, adicione somente variáveis públicas:
 |---|---|---|
 | `SKIP_DEPENDENCY_INSTALL` | `1` | impede a instalação automática duplicada; o script executa `npm ci` |
 | `VITE_ENABLE_REALTIME_MATCHES` | `true` | libera a interface do Milestone 8 no bundle de teste |
+| `VITE_FIREBASE_VAPID_PUBLIC_KEY` | chave **pública** Web Push do Firebase; opcional | habilita a inscrição FCM no PWA sem expor a chave privada |
 
 Não adicione `CLOUDFLARE_API_TOKEN` manualmente: o token selecionado no campo próprio do Workers Builds é a credencial do pipeline. O arquivo `.node-version` fixa Node 22, suportado pela imagem oficial.
 
@@ -96,7 +97,21 @@ Para vários administradores, use UIDs separados por vírgula. Nunca use email, 
 
 `ADMIN_FIREBASE_UIDS` não participa da verificação do ID Token. O Worker primeiro exige assinatura RS256 válida e confere `kid`, `aud`, `iss`, `exp`, `iat`, `auth_time` e `sub`; somente depois disso consulta o UID autenticado para autorização administrativa.
 
-### 3.4. Diagnóstico seguro da autenticação
+### 3.4. Firebase Cloud Messaging opcional e gratuito
+
+Busca, pedidos, amizades, recusas, bloqueios e matchmaking funcionam integralmente sem configurar push. Nesse estado, Perfil mostra `Notificações ainda não configuradas` e nenhuma operação social falha. Para ativar o envio real:
+
+1. Firebase Console → projeto `quizgomes-cbc48` → Project settings → **Cloud Messaging**. Confirme que **Firebase Cloud Messaging API (V1)** está habilitada; não habilite Firestore, Storage, Functions, Blaze ou billing.
+2. Ainda em **Cloud Messaging** → **Web configuration** → **Web Push certificates**, gere um par Web Push/VAPID ou importe um par já administrado com segurança. Copie somente a **chave pública** exibida.
+3. Cloudflare → Workers & Pages → `quiz-gomes` → **Settings → Builds → Build variables and secrets**: adicione `VITE_FIREBASE_VAPID_PUBLIC_KEY` com a chave **pública**. Por ser configuração do bundle, é necessária uma nova build/deploy após a alteração.
+4. Firebase Console → Project settings → **Service accounts** → **Generate new private key**, ou Google Cloud IAM → Service Accounts → conta autorizada para Firebase Cloud Messaging → Keys. Crie a credencial somente se a política do projeto permitir; ela deve pertencer ao projeto `quizgomes-cbc48` e ter permissão para envio FCM HTTP v1.
+5. Cloudflare → Workers & Pages → `quiz-gomes` → **Settings → Variables & Secrets**: crie uma variável do tipo **Secret** com nome exato `FCM_SERVICE_ACCOUNT_JSON` e cole o JSON completo diretamente no Dashboard seguro. Não envie o JSON/chave privada por chat, GitHub, commit, `VITE_`, variável pública de build ou screenshot. Salve e descarte a cópia local conforme sua política de segurança.
+6. Aguarde a build/publicação e abra o PWA instalado em HTTPS. Em **Perfil → Notificações**, clique explicitamente em **Ativar notificações** e conceda a permissão. Repita nos outros navegadores/dispositivos desejados; cada FID permanece isolado e associado ao usuário autenticado.
+7. Com B no PWA instalado/background, faça A buscar `#QG...` de B e enviar um pedido. O aparelho de B deve mostrar `Novo pedido de amizade`; tocar abre **Social → Pedidos**. Com B na aba aberta, o badge e a lista devem atualizar sem notificação do sistema duplicada.
+
+O SDK instalado utiliza a API Web atual `register()` + `onRegistered()`; o backend envia FCM HTTP v1 com o campo `fid`, não registration token depreciado. `FCM_SERVICE_ACCOUNT_JSON` ausente ou inválido desativa push com segurança. O mesmo service worker Workbox trata shell offline e mensagens background; não registre outro service worker no root scope.
+
+### 3.5. Diagnóstico seguro da autenticação
 
 Rejeições de Firebase ID Token geram um evento estruturado `firebase_id_token_rejected` com apenas:
 
@@ -118,7 +133,7 @@ npm run deploy:cloudflare -w @quiz-gomes/worker
 O primeiro comando aplica somente migrations pendentes:
 
 - `QUESTIONS_DB`: `0001_questions.sql`, `0002_synthetic_smoke_test.sql` e `0003_expand_synthetic_smoke_test.sql`;
-- `CORE_DB`: `0001_core.sql`, `0002_live_matches.sql`, `0003_synthetic_smoke_test.sql`, `0004_theme_artwork.sql`, `0005_user_custom_avatars.sql` e `0006_expand_synthetic_smoke_test.sql`.
+- `CORE_DB`: `0001_core.sql`, `0002_live_matches.sql`, `0003_synthetic_smoke_test.sql`, `0004_theme_artwork.sql`, `0005_user_custom_avatars.sql`, `0006_expand_synthetic_smoke_test.sql` e `0007_social_foundation.sql`.
 
 Questions é aplicado primeiro para que o tema temporário só fique visível depois que seu pool estiver pronto. Wrangler registra o histórico em `d1_migrations`; retries não reaplicam versões concluídas. Se uma migration falhar, o D1 reverte integralmente aquela migration, preserva as anteriores e o deploy não começa. Arquivos já aplicados são imutáveis e qualquer correção posterior é forward-only. Uma migration que falhou e não foi registrada, como a primeira tentativa remota da `0004_theme_artwork.sql`, continua pendente e deve ser corrigida no próprio arquivo antes do retry — não recebe uma compensação vazia ou manual.
 
@@ -126,8 +141,9 @@ Questions é aplicado primeiro para que o tema temporário só fique visível de
 
 - lê e passa todas as migrations pelo splitter SQL exportado pelo Wrangler, incluindo o statement de tracking;
 - exige LF e bloqueia `CREATE TRIGGER`, pois compound statements continuam sujeitos a diferenças entre o splitter local e o parser multi-statement do endpoint D1 `/query` usado por migrations remotas;
-- aplica Core `0001–0006` e Questions `0001–0003` em bancos vazios e isolados;
-- prova os upgrades Core `0003→0004→0005→0006` e Questions `0002→0003`, incluindo a passagem exata do pool sintético de 30 para 250 slots;
+- aplica Core `0001–0007` e Questions `0001–0003` em bancos vazios e isolados;
+- prova os upgrades Core `0003→0004→0005→0006→0007` e Questions `0002→0003`, incluindo a passagem exata do pool sintético de 30 para 250 slots;
+- valida pedidos cruzados, constraints direcionais de recusas/bloqueios e instalações FCM no schema social;
 - inspeciona colunas, índice e FK composta, e tenta estados inválidos de metadata/BLOB;
 - injeta uma migration temporária que falha depois de criar/escrever e comprova rollback de schema e de `d1_migrations`.
 
@@ -207,4 +223,8 @@ Não há binding, bucket, script ou permissão de R2 neste deployment. A camada 
 - <https://developers.cloudflare.com/workers/runtime-apis/web-crypto/>
 - <https://firebase.google.com/docs/auth/admin/verify-id-tokens>
 - <https://firebase.google.com/docs/reference/js/auth.user>
+- <https://firebase.google.com/docs/cloud-messaging/web/get-started>
+- <https://firebase.google.com/docs/cloud-messaging/web/receive-messages>
+- <https://firebase.google.com/docs/reference/fcm/rest/v1/projects.messages>
+- <https://firebase.google.com/docs/reference/fcm/rest/v1/projects.messages/send>
 - <https://github.com/panva/jose/blob/main/docs/key/import/functions/importX509.md>

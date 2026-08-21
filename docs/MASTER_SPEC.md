@@ -23,7 +23,7 @@ Princípios:
 - SPA/PWA em React, TypeScript e Vite.
 - Backend e static assets em Cloudflare Workers (`workers.dev` inicialmente).
 - D1 como banco principal; Durable Objects + WebSockets para presença, filas e salas.
-- Firebase `quizgomes-cbc48` somente para Authentication com Google.
+- Firebase `quizgomes-cbc48` somente para Authentication com Google e Cloud Messaging opcional/gratuito autorizado no Milestone 9A.
 - R2 fica atrás de `ImageStorage` e não será provisionado sem autorização.
 - Todos os textos de interface são em português do Brasil.
 - Logo oficial deve substituir o slot técnico em `apps/web/public/brand/` quando fornecida. Não redesenhar.

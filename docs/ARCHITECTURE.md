@@ -11,6 +11,7 @@ flowchart TD
   Repo --> Q1["Question shard 1 — D1"]
   DO --> D1
   Worker --> Auth["Firebase public keys"]
+  Worker -.->|"Push opcional por FID"| FCM["Firebase Cloud Messaging"]
   Worker -.-> Images["ImageStorage adapter"]
 ```
 
@@ -68,6 +69,16 @@ Não é usada Service Account para verificar assinatura. Revogação global de t
 
 A arte de tema é mutável somente por ADMIN autenticado. A versão esperada integra cada escrita; zero rows alteradas representa edição concorrente e retorna conflito, em vez de sobrescrever silenciosamente outra sessão.
 
+## Social Foundation
+
+O Milestone 9A reutiliza `users`, `user_profiles.public_id`, `friend_requests` e `friendships`. A identidade exposta contém somente nome, ID público, avatar resolvido e moldura; Firebase UID, IDs internos, email e instalações nunca entram nas respostas públicas. A busca nominal usa prefixo case-insensitive indexado/limitado; `#QG...` exige correspondência exata. Um índice único parcial da dupla normalizada impede dois pedidos `PENDING`, inclusive em direções cruzadas.
+
+`friend_request_pair_state` guarda recusas exclusivamente na direção remetente → destinatário. A terceira recusa explícita inicia 30 dias; expiração limpa o ciclo sob demanda e aceite o remove atomicamente. Aceite/recusa usam `resolution_key` e `D1Database.batch()` para impedir efeitos duplicados em retries/corridas. Cancelamento, bloqueio e remoção de amizade não contam como recusa.
+
+`user_blocks` persiste a direção da decisão, mas oculta e torna incompatível a dupla inteira. Bloquear remove a amizade e cancela pedidos no mesmo batch; cooldowns existentes permanecem intactos. O bloqueado recebe apenas indisponibilidade genérica. `MatchmakingQueue` consulta os bloqueios imediatamente antes de formar uma sala e continua buscando outro candidato; salas já criadas, `MatchRoom`, reconexão, score e resultados permanecem inalterados.
+
+Cada `push_installations` associa um Firebase Installation ID (FID) ao usuário autenticado; vários dispositivos são possíveis e FID de outro proprietário não pode ser sobrescrito. Firebase JS SDK 12.17.1 usa `register()`/`onRegistered()` em vez dos registration tokens depreciados. O Worker autentica FCM HTTP v1 com OAuth RS256 via Web Crypto e envia `message.fid` após a persistência usando `waitUntil`. Credencial ausente, FCM indisponível ou instalação inválida nunca revertem o pedido; destinos inválidos são desativados. A chave VAPID pública fica em `VITE_FIREBASE_VAPID_PUBLIC_KEY`; somente o runtime Secret `FCM_SERVICE_ACCOUNT_JSON` contém a Service Account, nunca o repositório/bundle.
+
 ## Consistência e idempotência
 
 - `active_match_players.user_id` exclusivo impede o mesmo usuário em duas partidas.
@@ -102,7 +113,7 @@ O cliente envia somente READY, número da rodada, ID da pergunta e opção escol
 
 ## PWA
 
-O service worker precacheia somente shell/assets versionados. `/api/**`, Firebase auth endpoints e WebSockets usam rede e nunca cache competitivo. O app permanece navegável offline apenas no shell, com estado explícito de indisponibilidade para funções online. A rota Criar e o editor de arte ADMIN são chunks lazy excluídos do precache; contas que não abrem essa área não transferem esse código.
+Um único service worker Workbox `injectManifest` reúne shell offline, precache/atualização e FCM background. O frontend fornece a registration existente para `register({ serviceWorkerRegistration, vapidKey })`; não existe `firebase-messaging-sw.js` concorrente no root scope. `/api/**`, Firebase auth endpoints e WebSockets usam rede e nunca cache competitivo. Mensagens somente-data geram uma notificação controlada no background; foreground invalida badge/lista sem duplicar alerta do sistema. Clique abre `/social?section=pedidos`. Permissão é solicitada apenas por gesto explícito em Perfil. O app permanece navegável offline apenas no shell. A rota Criar e o editor de arte ADMIN são chunks lazy excluídos do precache; Firebase Messaging também permanece em chunk separado para usuários com push autorizado.
 
 ## Armazenamento de imagens
 

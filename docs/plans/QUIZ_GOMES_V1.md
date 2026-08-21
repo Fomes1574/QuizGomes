@@ -48,7 +48,8 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 - [x] 2026-08-18 — sincronização visual pré-9A concluída localmente: perda local sem contador fictício e graça visual derivada somente de `graceRemainingMs` autoritativo com relógio monotônico.
 - [x] 2026-08-21 — smoke físico final de sincronização visual aprovado pelo proprietário nos dois aparelhos; perda local sem contador fictício e graça exclusivamente autoritativa.
 - [x] 2026-08-21 — Milestones 8 e 8.5 oficialmente FROZEN após aprovação física em produção; motor, reconexão e matchmaking permanecem congelados, exceto integração mínima obrigatória de bloqueios na fila ou regressão comprovada.
-- [ ] Milestone 9A — Social Foundation: descoberta pública, amizades, recusas direcionais, bloqueios e notificações opcionais.
+- [x] 2026-08-21 — Milestone 9A Social Foundation implementado e validado localmente: descoberta pública, amizades, recusas direcionais, bloqueios, compatibilidade na fila e FCM opcional por instalação.
+- [ ] Milestone 9A — smoke físico pós-deploy pelo proprietário: descoberta, pedidos, três recusas direcionais, bloqueios/pareamento e push real somente após configuração opcional do Firebase/Cloudflare.
 - [ ] Milestone 9B — presença social real.
 - [ ] Milestone 9C — desafio simultâneo entre amigos.
 - [ ] Milestone 10 — assíncrono selado e revelação progressiva.
@@ -88,6 +89,11 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 29. **Perda local fecha a superfície da pergunta sem inventar graça.** `offline`, close/error do socket ou ausência de `PONG` tiram imediatamente a `MatchScreen` jogável do DOM e mostram uma tela opaca local sem número. O heartbeat de 1.500 ms considera a conexão silenciosa após 3.000 ms, mas nunca decide pausa, deadline, score, `RESUMED` ou `VOID`; toda decisão de gameplay permanece no MatchRoom.
 30. **Matchmaking ocupa o top layer.** A busca usa `dialog.showModal()` em Portal, torna o AppShell explicitamente `inert`, confina Tab, trata Escape como cancelamento seguro durante busca/timeout e restaura o foco ao fechar. Busca, cancelamento, timeout e apresentação do adversário mantêm o fundo indisponível até o estado `idle` ou a navegação para a sala.
 31. **A graça visual possui uma única fonte.** Somente uma projeção `PAUSED` cria contador. O cliente ancora o `graceRemainingMs` calculado pelo MatchRoom em `performance.now()` ao recebê-lo; não usa `Date.now()`, timestamp enviado pelo jogador, deadline local ou chegada visual a zero para decidir `VOID`.
+32. **M8/M8.5 estão congelados após aprovação física.** Reconexão, MatchRoom, timers, locks, score, Knowledge, XP, perguntas, apresentação, avatar, marca e modalidade não recebem alteração sem bug comprovado. O M9A só acrescenta a checagem obrigatória de incompatibilidade por bloqueio na `MatchmakingQueue`, sem tocar a sala.
+33. **Identidade social pública é mínima.** Pesquisa nominal usa prefixo indexado/limitado; `#QG...` exige igualdade exata. A projeção social inclui somente nome, ID público, avatar e frame; UID Firebase, email, IDs internos e FIDs nunca aparecem em superfícies públicas. Bloqueio em qualquer direção equivale a usuário indisponível para ambos.
+34. **Recusas e bloqueios são conceitos independentes.** Três recusas explícitas contam exclusivamente para remetente → destinatário e impõem 30 dias; expiração reseta sob demanda, aceite limpa o ciclo, cancelamento não incrementa. `D1Database.batch()`, nonce de resolução e índice único parcial da dupla impedem pedidos cruzados/efeitos duplicados. Bloquear remove amizade/pedidos, preserva cooldown e não interrompe partida existente.
+35. **Cloud Messaging gratuito é a única exceção Firebase autorizada além do Google Auth.** Firebase JS SDK `12.17.1` usa `register()`/`onRegistered()` e Firebase Installation IDs; FCM HTTP v1 recebe `message.fid`, sem APIs/token legados. A chave VAPID pública pode estar no bundle; `FCM_SERVICE_ACCOUNT_JSON` existe somente como secret de runtime Cloudflare. Push é opt-in, multi-device, pós-persistência, best-effort e inexistente com credencial ausente.
+36. **Workbox e push compartilham um único service worker.** `injectManifest` preserva shell offline, precache, atualização e APIs `NetworkOnly`; a registration existente é entregue explicitamente ao Firebase Messaging. Foreground atualiza badge/lista, background cria uma notificação controlada e o clique abre Social/Pedidos. Não há segundo root scope, polling, billing, Firestore, Storage ou Functions.
 
 ## Descobertas e riscos
 
@@ -577,11 +583,42 @@ Validação local final:
 - comparado ao hardening anterior, o chunk lazy da sala cresceu 0,47 KB bruto/0,15 KB gzip, o CSS caiu 0,29/0,07 KB gzip e não surgiu request, dependência ou chunk novo de startup;
 - `npm audit --audit-level=high`: zero vulnerabilidades; varredura de chaves privadas/tokens sem achados.
 
+### 2026-08-21 — congelamento físico de M8/M8.5 e Milestone 9A Social Foundation
+
+O proprietário confirmou em produção todos os smokes físicos pendentes de M8/M8.5, incluindo cadência `2.900 / 1.900`, apresentação, avatar, modo avião, graça visual monotônica, `VOID`, revanche e modalidade. Ambos foram registrados como **FROZEN antes do início do 9A**. O motor autoritativo, `MatchRoom`, reconnect, locks, scores, Knowledge, XP, perguntas, dataset, arte, avatar e marca ficaram fora do diff funcional.
+
+Auditoria inicial:
+
+- `users`, `user_profiles.public_id`, `friendships`, `friend_requests` e o índice nominal já existiam no Core D1; a aba Social ainda era placeholder com presença e assíncronas fictícias;
+- o índice pendente original impedia duplicação na mesma direção, mas permitia `A→B` e `B→A` simultaneamente; inexistiam recusas direcionais, bloqueios, instalações e filtro competitivo por bloqueio;
+- Firebase JS SDK `12.17.1` já estava instalado. A documentação oficial atual recomenda `register()`/`onRegistered()` com Firebase Installation ID; a referência REST HTTP v1 aceita `message.fid` e identifica registration tokens como depreciados;
+- o PWA existente usava `generateSW`; adicionar um `firebase-messaging-sw.js` separado criaria risco de dois service workers competindo no root scope.
+
+Implementação:
+
+- migration D1-safe `0007_social_foundation.sql`: `resolution_key`, índice parcial normalizado para um único pending por dupla, estados direcionais de recusa/cooldown, bloqueios com índices inversos e múltiplas instalações FID por usuário; nenhum trigger, banco novo, alteração do Questions DB ou produto pago;
+- pesquisa autenticada por prefixo nominal case-insensitive limitado a 20 resultados e lookup exato por `#QG...`, omitindo self, usuários desativados e duplas bloqueadas; respostas incluem somente nome, public ID, avatar custom/Google/iniciais e moldura;
+- pedidos, cancelamento do remetente, aceite idempotente/atômico, recusa explícita direcional e remoção de amizade reutilizam as tabelas existentes. A terceira recusa cria 30 dias; ciclos expiram sob demanda e aceite zera o histórico da direção;
+- bloquear cancela pendings bidirecionais e remove amizade no mesmo batch, preserva cooldown, torna ambos invisíveis socialmente e mantém a lista privada somente em Perfil. Desbloquear não restaura vínculos nem envia notificação;
+- única integração competitiva: a fila consulta bloqueio server-side antes de inicializar a sala, mantém dupla bloqueada procurando e escolhe o próximo candidato compatível. Uma partida já criada continua íntegra;
+- Social funcional com pedidos recebidos/enviados, amigos, avatar/frame, aceite verde, recusa vermelha, badge real, busca debounced, confirmação acessível e ausência deliberada de presença/desafios/assíncronas;
+- push opt-in multi-device usa um único service worker Workbox `injectManifest`, foreground sem alerta duplicado, background com clique em Social/Pedidos, FID moderno, OAuth RS256 via Web Crypto e `waitUntil` pós-persistência. Credenciais ausentes ou FCM indisponível não quebram o produto;
+- Profile carrega bloqueados somente após gesto explícito; Firebase Messaging e Social são lazy quando aplicável. O bundle inicial caiu de `217,60 / 68,34 KB gzip` para `214,16 / 67,51 KB gzip`; Social soma `7,49 / 2,31 KB gzip`, SW único `69,43 / 21,60 KB gzip` e Worker `736,5 KB`.
+
+Cobertura local:
+
+- 36 arquivos / 185 testes unitários, incluindo Social, badge, confirmação, opt-in, foreground, background, notification click e shell Workbox;
+- 7 arquivos / 43 testes Workers/WebSocket, incluindo busca/privacidade, pedidos cruzados, aceite/recusa concorrentes, 3 recusas e 30 dias direcionais, bloqueio/desbloqueio, FIDs/IDOR, falha/instalação inválida FCM, dupla bloqueada com terceiro compatível e bloqueio durante partida ativa;
+- os testes históricos preservam a fronteira `6.999 / 7.000 / 7.001`, corrida `CONNECT`/`ALARM`, recuperação terminal, Presence, cleanup e segunda partida com a mesma dupla;
+- lint, typecheck, builds PWA/Worker, migrations Core vazio e upgrade `0006→0007`, rollback, npm audit e varredura de secrets fazem parte do gate final; FCM real depende apenas da configuração manual opcional documentada em `docs/DEPLOYMENT.md`.
+
+O smoke físico do Milestone 9A **permanece pendente da aprovação explícita do proprietário**. Os Milestones 9B/9C, presença social real, desafio direto, assíncrono, chat, mensagens, grupos e recomendação não foram iniciados.
+
 ## Critério de saída desta execução
 
-- código do Milestone 8 completo e Milestone 9 não iniciado;
-- suíte unitária e runtime Workers/WebSocket simulada verdes;
-- build Worker/PWA e migrations do zero aprovados;
-- documentação separando evidência local, simulada e real;
-- publicação em commits lógicos na `main` pública, seguida por nova auditoria do conteúdo remoto;
-- deploy, health, autenticação, onboarding, ADMIN, fluxo principal WebSocket, fronteira de 7 segundos, cleanup, segunda partida imediata e modalidade real do matchmaking confirmados em produção; o smoke pós-deploy da sincronização visual monotônica permanece o gate final antes de congelar oficialmente 8/8.5. A calibração atual `2.900 / 1.900` e os demais gates ainda marcados permanecem explícitos, sem preview de branch, R2, produto pago ou início do Milestone 9A.
+- Milestones 8 e 8.5 aprovados fisicamente e congelados;
+- Social Foundation 9A implementada, validada localmente e publicada em commits lógicos na `main` por fast-forward;
+- suíte unitária, runtime Workers/WebSocket, PWA, Worker, migrations, rollback, npm audit e secrets verdes;
+- push FCM opcional sem impedir amizades/bloqueios quando não configurado;
+- smoke físico do 9A registrado como pendente até confirmação externa do proprietário;
+- Milestones 9B/9C não iniciados; sem preview de branch, R2, billing ou produto pago.
