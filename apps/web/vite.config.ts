@@ -8,7 +8,20 @@ export default defineConfig({
     react(),
     VitePWA({
       devOptions: { enabled: false },
+      filename: 'sw.ts',
       includeManifestIcons: false,
+      injectManifest: {
+        globIgnores: [
+          '**/avatar-editor-*.js',
+          '**/create-page-*.js',
+          '**/icons/**',
+          '**/social-page-*.js',
+          '**/theme-artwork-editor-*.js',
+          'apple-touch-icon.png',
+          'favicon-*.png',
+          'favicon.ico',
+        ],
+      },
       manifest: {
         background_color: '#FFF9F7',
         description: 'Quiz competitivo rápido, bonito e pessoal.',
@@ -27,26 +40,8 @@ export default defineConfig({
         theme_color: '#D92F36',
       },
       registerType: 'autoUpdate',
-      workbox: {
-        cleanupOutdatedCaches: true,
-        globIgnores: [
-          '**/avatar-editor-*.js',
-          '**/create-page-*.js',
-          '**/icons/**',
-          '**/theme-artwork-editor-*.js',
-          'apple-touch-icon.png',
-          'favicon-*.png',
-          'favicon.ico',
-        ],
-        navigateFallbackDenylist: [/^\/api\//],
-        runtimeCaching: [
-          {
-            handler: 'NetworkOnly',
-            method: 'GET',
-            urlPattern: ({ url }) => url.pathname.startsWith('/api/'),
-          },
-        ],
-      },
+      srcDir: 'src',
+      strategies: 'injectManifest',
     }),
   ],
   server: {

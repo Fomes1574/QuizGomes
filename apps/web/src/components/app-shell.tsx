@@ -1,5 +1,6 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '../features/auth-context.js';
+import { useSocial } from '../features/social-context.js';
 import { Avatar } from './avatar.js';
 import { AvatarFrame } from './avatar-frame.js';
 import { Icon, type IconName } from './icons.js';
@@ -14,6 +15,7 @@ const destinations: Array<{ icon: IconName; label: string; to: string }> = [
 
 export function AppShell() {
   const { firebaseUser, profile } = useAuth();
+  const { pendingCount } = useSocial();
   const location = useLocation();
   return (
     <div className="app-shell">
@@ -46,6 +48,11 @@ export function AppShell() {
             to={destination.to}
           >
             <Icon name={destination.icon} />
+            {destination.to === '/social' && pendingCount > 0 ? (
+              <span aria-label={`${pendingCount} solicitações de amizade recebidas`} className="bottom-nav__badge">
+                {pendingCount > 99 ? '99+' : pendingCount}
+              </span>
+            ) : null}
             <span>{destination.label}</span>
           </NavLink>
         ))}

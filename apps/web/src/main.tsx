@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom';
 import { registerSW } from 'virtual:pwa-register';
 import { App } from './app.js';
 import { AuthProvider } from './features/auth-context.js';
+import { SocialProvider } from './features/social-context.js';
 import { ThemeModeProvider } from './hooks/use-theme-mode.js';
 import './styles/global.css';
 
@@ -16,9 +17,11 @@ createRoot(root).render(
   <StrictMode>
     <ThemeModeProvider>
       <AuthProvider>
-        <BrowserRouter>
-          <App />
-        </BrowserRouter>
+        <SocialProvider>
+          <BrowserRouter>
+            <App />
+          </BrowserRouter>
+        </SocialProvider>
       </AuthProvider>
     </ThemeModeProvider>
   </StrictMode>,
