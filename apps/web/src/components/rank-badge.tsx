@@ -11,6 +11,11 @@ const tierClass: Record<string, string> = {
   Prata: 'silver',
 };
 
+/** Sufixo da liga usado tanto pelo selo quanto pelo acento cromático do duelo. */
+export function rankTierSuffix(knowledge: number): string {
+  return tierClass[rankForKnowledge(knowledge).tier] ?? 'brass';
+}
+
 export function RankBadge({ knowledge, showKnowledge = false }: { knowledge: number; showKnowledge?: boolean }) {
   const rank = rankForKnowledge(knowledge);
   return (

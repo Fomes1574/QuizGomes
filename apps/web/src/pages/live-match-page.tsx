@@ -7,6 +7,7 @@ import {
   MatchConnectionScreen,
   type MatchConnectionScreenKind,
 } from '../components/match-connection-screen.js';
+import { MatchLobbyDuel } from '../components/match-lobby-duel.js';
 import { MatchResultScreen } from '../components/match-result-screen.js';
 import {
   MATCH_QUESTION_ENTRANCE_MS,
@@ -16,6 +17,7 @@ import {
 import { MatchScreen } from '../components/match-screen.js';
 import { useAuth } from '../features/auth-context.js';
 import { apiRequest, websocketUrl } from '../lib/api.js';
+import { clearDuelHandoff } from '../lib/match-handoff.js';
 import { takePreparedMatchRoom } from '../lib/preloaded-match-room.js';
 
 interface TerminalResult {
@@ -453,6 +455,9 @@ export function LiveMatchPage() {
     };
   }, [getToken, roomId]);
 
+  // A continuidade visual pertence a esta sala: sair da partida descarta a geometria guardada.
+  useEffect(() => () => clearDuelHandoff(), []);
+
   const matchOrigin = (location.state as {
     matchOrigin?: { difficulty?: string; mode?: string; returnTo?: string };
   } | null)?.matchOrigin;
@@ -527,6 +532,7 @@ export function LiveMatchPage() {
       <>
         <MatchScreen
           deadlineMs={preparingQuestion ? 0 : deadlineMs ?? 0}
+          duelRoomId={roomId}
           key={`${projection.round.number}:${activeQuestion.id}`}
           onAnswer={(selectedOption) => {
             socketRef.current?.send(JSON.stringify({
@@ -577,9 +583,29 @@ export function LiveMatchPage() {
   }
 
   const canCancel = projection === null || projection.phase === 'LOBBY' || projection.phase === 'PREPARING';
+  const lobbyDuel = error === null && roundIntro === null && projection !== null
+    ? { opponent: projection.opponent, viewer: projection.viewer }
+    : null;
   return (
     <main className="match-lobby-screen">
       <Logo />
+      {lobbyDuel !== null && (
+        <MatchLobbyDuel
+          opponent={{
+            customAvatarUrl: lobbyDuel.opponent.customAvatarUrl,
+            displayName: lobbyDuel.opponent.displayName,
+            frameId: lobbyDuel.opponent.frameId,
+            photoUrl: lobbyDuel.opponent.photoUrl,
+          }}
+          roomId={roomId}
+          viewer={{
+            customAvatarUrl: lobbyDuel.viewer.customAvatarUrl,
+            displayName: lobbyDuel.viewer.displayName,
+            frameId: lobbyDuel.viewer.frameId,
+            photoUrl: lobbyDuel.viewer.photoUrl,
+          }}
+        />
+      )}
       {error !== null
         ? <h1>{error}</h1>
         : roundIntro !== null

@@ -56,6 +56,8 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 - [ ] Milestone 9A — smoke físico pós-deploy pelo proprietário: descoberta, pedidos, três recusas direcionais, bloqueios/pareamento e push real somente após configuração opcional do Firebase/Cloudflare.
 - [x] 2026-08-21 — Milestone 9B implementado e validado localmente: presença privada/autoritativa entre amigos, snapshot versionado, fanout direcionado e Social responsivo refinado.
 - [ ] Milestone 9B — smoke físico pós-deploy pelo proprietário: amigos online/busca/partida/reconexão/offline, múltiplas sessões e transições visuais em aparelhos reais.
+- [x] 2026-09-10 — apresentação do duelo implementada e validada localmente: composição VS na apresentação e no lobby, coreografia em quatro tempos, continuidade FLIP até o placar e cadência ampliada para 1.200/1.200/900 ms sob autorização explícita do proprietário.
+- [ ] Apresentação do duelo — smoke físico pós-deploy pelo proprietário: coreografia, continuidade modal→lobby→placar, retrato/moldura/liga, paisagem, claro/escuro e `prefers-reduced-motion` em aparelhos reais.
 - [ ] Milestone 9C — desafio simultâneo entre amigos.
 - [ ] Milestone 10 — assíncrono selado e revelação progressiva.
 - [ ] Milestone 11 — criação/moderação/import/admin.
@@ -697,6 +699,66 @@ fora do diff funcional.
 O smoke físico do Milestone 9B permanece **pendente da aprovação explícita do
 proprietário**. Desafio direto, convite, assíncrono, chat, last-seen e Milestone
 9C **não foram iniciados**.
+
+### 2026-09-10 — apresentação do duelo: composição, coreografia e continuidade
+
+O proprietário autorizou explicitamente **todas** as melhorias levantadas no estudo
+da tela `JOGADOR ENCONTRADO`, incluindo as duas que dependiam de autorização por
+encostarem no M8.5 congelado. Nada no servidor mudou: nenhum campo novo no
+`MATCH_FOUND`, nenhum endpoint, nenhum WebSocket, nenhuma requisição extra.
+
+Diagnóstico que motivou o trabalho: `.match-found` renderizava quatro elementos
+centralizados dentro de um diálogo de `100dvh`, sem o jogador local, sem o
+contexto da partida escolhida e com uma única animação de fade para todo o bloco.
+
+Entregue:
+
+- **Composição de duelo** (`duel-side.tsx`): os dois jogadores lado a lado com
+  retrato, moldura, liga e Conhecimento do tema. O jogador local vem de `profile`
+  e de `personal.knowledge`, ambos já presentes no cliente; o adversário vem do
+  `MATCH_FOUND` que já trafegava. Sem exposição nova.
+- **Faixa de contexto**: dificuldade, contagem de perguntas via
+  `questionsForDifficulty` e modo Casual/Ranqueada.
+- **Coreografia em quatro tempos** dentro da janela visível: contexto, entrada dos
+  lados por bordas opostas, impacto do `VS` com anel de choque e costura, e por
+  último selos de liga e Conhecimento. Só `transform`/`opacity`, sem biblioteca.
+- **Acento cromático por liga** reutilizando as mesmas oito cores do `RankBadge`,
+  sem tabela paralela; brilho varrendo a moldura; Conhecimento subindo em ~620 ms
+  com o valor autoritativo exposto em `sr-only` para não repetir anúncios no
+  `aria-live` do diálogo.
+- **Barra de preparo** no lugar do texto solto, preservando a semântica de
+  `preparing` exatamente como era.
+- **Line-up no lobby da sala** (`match-lobby-duel.tsx`), renderizado apenas a
+  partir da `projection` autoritativa, resolvendo também o vazio da tela de espera.
+- **Continuidade FLIP** (`lib/match-handoff.ts`): a geometria dos retratos é medida
+  e continuada do modal para o lobby e do lobby para o placar, no instante em que a
+  apresentação da rodada começa a desaparecer. É decoração pura — guarda só
+  retângulos, consome cada origem uma única vez, exige rodada 1, ignora ambientes
+  sem WAAPI ou com `prefers-reduced-motion`, e falha em silêncio deixando as telas
+  corretas e estáticas.
+
+Alterações em território M8.5 congelado, todas autorizadas nominalmente:
+
+1. `MATCH_FOUND_HOLD_MS` de 800 para 1.200 ms, elevando a janela visível para
+   2.400 ms e o total para 3.300 ms. A soma virou invariante estrutural
+   (`PRESENTATION = ENTRY + HOLD + EXIT`) em vez de coincidência, e o teste de
+   cadência foi atualizado. Reverter é trocar uma constante.
+2. `match-screen.tsx` e `live-match-page.tsx` receberam as âncoras de continuidade
+   e o descarte da geometria ao sair da partida. Nenhuma regra de autoridade,
+   timer, score, reconexão ou resultado foi tocada.
+
+Defeito pré-existente corrigido no caminho: em telas com altura ≤ 620 px o cartão
+do matchmaking ultrapassava a viewport por causa do tamanho do globo, cortando
+tanto a busca quanto a apresentação. Globo, arte e espaçamentos foram reduzidos
+nessa faixa e o duelo passa a ser horizontal ali; medido em Chromium, o cartão
+inteiro agora cabe em 740×400 e 844×390.
+
+Verificação: `lint`, `typecheck`, 215 testes unitários, 56 testes de Worker,
+`test:migrations` e `build` verdes. Inspeção visual em Chromium com os componentes
+reais e o `global.css` real em 390×844, 360×640, 1280×800, 740×400 e 844×390, nos
+temas claro e escuro, sem overflow horizontal em nenhum caso.
+
+Smoke físico **não foi executado** e permanece pendente do proprietário.
 
 ## Critério de saída desta execução
 

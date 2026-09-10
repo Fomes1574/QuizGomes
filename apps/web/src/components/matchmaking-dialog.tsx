@@ -1,3 +1,4 @@
+import { questionsForDifficulty, type Difficulty, type MatchMode } from '@quiz-gomes/domain';
 import {
   useEffect,
   useRef,
@@ -11,22 +12,41 @@ import type { MatchmakingStatus } from '../hooks/use-matchmaking.js';
 import { Avatar } from './avatar.js';
 import { AvatarFrame } from './avatar-frame.js';
 import { Button } from './button.js';
+import { DuelSide, type DuelParticipantView } from './duel-side.js';
 import { MatchmakingGlobe } from './matchmaking-globe.js';
 import { RankBadge } from './rank-badge.js';
 import { ThemeArtwork } from './theme-artwork.js';
+
+const DIFFICULTY_LABEL: Record<Difficulty, string> = { EASY: 'Fácil', HARD: 'Difícil', MEDIUM: 'Médio' };
 
 function searchTimer(seconds: number): string {
   return `00:${Math.max(0, Math.min(60, seconds)).toString().padStart(2, '0')} / 01:00`;
 }
 
-export function MatchmakingDialog({ elapsedSeconds, onCancel, onClose, opponent, preparing, status, theme }: {
+export function MatchmakingDialog({
+  difficulty,
+  elapsedSeconds,
+  mode,
+  onCancel,
+  onClose,
+  opponent,
+  preparing,
+  status,
+  theme,
+  viewer,
+}: {
+  /** Dificuldade e modo apenas reexibem a escolha que o jogador acabou de fazer. */
+  difficulty?: Difficulty | undefined;
   elapsedSeconds: number;
+  mode?: MatchMode | undefined;
   onCancel: () => void;
   onClose: () => void;
   opponent: MatchFoundOpponent | null;
   preparing: boolean;
   status: Exclude<MatchmakingStatus, 'idle'>;
   theme: ThemeSummary;
+  /** Ausente enquanto não houver perfil carregado: a tela cai no retrato único do adversário. */
+  viewer?: DuelParticipantView | undefined;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const presenting = status === 'presenting-opponent' || status === 'leaving-opponent';
@@ -149,14 +169,59 @@ export function MatchmakingDialog({ elapsedSeconds, onCancel, onClose, opponent,
         </div>
 
         {presenting && opponent !== null ? (
-          <div className={`match-found${status === 'leaving-opponent' ? ' match-found--leaving' : ''}`}>
-            <span className="eyebrow">JOGADOR ENCONTRADO</span>
-            <AvatarFrame frameId={opponent.frameId} variant="result">
-              <Avatar customUrl={opponent.customAvatarUrl} googleUrl={opponent.photoUrl} name={opponent.displayName} size="large" />
-            </AvatarFrame>
-            <h2 id="matchmaking-found-title">{opponent.displayName}</h2>
-            <RankBadge knowledge={opponent.knowledge} />
-            {preparing ? <small className="match-found__preparing">Preparando partida...</small> : null}
+          <div className={`match-found${viewer === undefined ? '' : ' match-found--duel'}${status === 'leaving-opponent' ? ' match-found--leaving' : ''}`}>
+            {viewer === undefined ? (
+              <>
+                <span className="eyebrow">JOGADOR ENCONTRADO</span>
+                <AvatarFrame frameId={opponent.frameId} variant="result">
+                  <Avatar customUrl={opponent.customAvatarUrl} googleUrl={opponent.photoUrl} name={opponent.displayName} size="large" />
+                </AvatarFrame>
+                <h2 id="matchmaking-found-title">{opponent.displayName}</h2>
+                <RankBadge knowledge={opponent.knowledge} />
+                {preparing ? <small className="match-found__preparing">Preparando partida...</small> : null}
+              </>
+            ) : (
+              <>
+                <div className="duel-context">
+                  <span className="eyebrow">JOGADOR ENCONTRADO</span>
+                  {difficulty !== undefined && (
+                    <span className="duel-context__setup">
+                      {DIFFICULTY_LABEL[difficulty]} · {questionsForDifficulty(difficulty)} perguntas
+                    </span>
+                  )}
+                  {mode !== undefined && (
+                    <span className="duel-context__mode">{mode === 'RANKED' ? 'Ranqueada' : 'Casual'}</span>
+                  )}
+                </div>
+
+                <div className="duel-arena">
+                  <span aria-hidden="true" className="duel-arena__seam" />
+                  <DuelSide animateKnowledge participant={viewer} seat="viewer" tag="Você" />
+                  <span aria-hidden="true" className="duel-lockup">
+                    <span className="duel-lockup__ring" />
+                    <strong>VS</strong>
+                  </span>
+                  <DuelSide
+                    animateKnowledge
+                    headingId="matchmaking-found-title"
+                    participant={{
+                      customAvatarUrl: opponent.customAvatarUrl,
+                      displayName: opponent.displayName,
+                      frameId: opponent.frameId,
+                      knowledge: opponent.knowledge,
+                      photoUrl: opponent.photoUrl,
+                    }}
+                    seat="opponent"
+                    tag="Adversário"
+                  />
+                </div>
+
+                <div className="duel-footer">
+                  <span aria-hidden="true" className={`duel-progress${preparing ? ' duel-progress--waiting' : ''}`}><i /></span>
+                  {preparing ? <small className="match-found__preparing">Preparando partida...</small> : null}
+                </div>
+              </>
+            )}
           </div>
         ) : null}
 

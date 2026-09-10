@@ -470,14 +470,14 @@ h1, h2, h3, .brand-lockup__name, .hero-stat strong, .level-card > strong, .count
 .rank-badge strong, .rank-badge small { display: block; }
 .rank-badge strong { font-size: .74rem; }
 .rank-badge small { margin-top: 2px; color: var(--text-secondary); font-size: .62rem; }
-.rank-badge--brass { --rank: #9d6948; }
-.rank-badge--bronze { --rank: #b87548; }
-.rank-badge--silver { --rank: #8e9ba8; }
-.rank-badge--gold { --rank: #d6a927; }
-.rank-badge--platinum { --rank: #51a99f; }
-.rank-badge--diamond { --rank: #4c9bd7; }
-.rank-badge--master { --rank: #9a5cd0; }
-.rank-badge--challenger { --rank: #d93350; }
+.rank-badge--brass, .duel-side--brass { --rank: #9d6948; }
+.rank-badge--bronze, .duel-side--bronze { --rank: #b87548; }
+.rank-badge--silver, .duel-side--silver { --rank: #8e9ba8; }
+.rank-badge--gold, .duel-side--gold { --rank: #d6a927; }
+.rank-badge--platinum, .duel-side--platinum { --rank: #51a99f; }
+.rank-badge--diamond, .duel-side--diamond { --rank: #4c9bd7; }
+.rank-badge--master, .duel-side--master { --rank: #9a5cd0; }
+.rank-badge--challenger, .duel-side--challenger { --rank: #d93350; }
 
 .profile-welcome { display: grid; justify-items: center; gap: 10px; padding-top: 36px; text-align: center; }
 .profile-welcome h1 { margin-bottom: 0; font-size: 2.1rem; letter-spacing: -.05em; }
@@ -554,6 +554,70 @@ h1, h2, h3, .brand-lockup__name, .hero-stat strong, .level-card > strong, .count
 .match-found .avatar { width: 126px; height: 126px; font-size: 2.4rem; }
 .match-found h2 { max-width: 100%; overflow: hidden; font-size: clamp(1.55rem, 7vw, 2.2rem); text-overflow: ellipsis; white-space: nowrap; }
 .match-found__preparing { min-height: 18px; color: var(--text-secondary); font-size: .72rem; animation: fade-in 260ms ease both; }
+
+/* Duelo: composição de confronto compartilhada pela apresentação e pelo lobby da sala. */
+.match-found--duel { inset: 118px 18px 20px; grid-template-rows: auto minmax(0, 1fr) auto; place-items: stretch; align-content: stretch; gap: 10px; animation: fade-in 260ms ease both; }
+.duel-context { display: grid; justify-items: center; gap: 6px; }
+.duel-context .eyebrow { margin: 0; }
+.duel-context__setup { color: var(--text-secondary); font-size: .74rem; }
+.duel-context__mode { padding: 4px 10px; border-radius: 8px; color: var(--text-on-brand); background: var(--brand); font: 800 .58rem/1 Sora, sans-serif; letter-spacing: .12em; text-transform: uppercase; }
+.duel-arena { position: relative; display: grid; grid-template-rows: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 6px; }
+.duel-arena__seam { position: absolute; top: 50%; right: -4px; left: -4px; height: 1px; background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--brand) 55%, transparent), transparent); transform: translateY(-.5px) rotate(-3deg); }
+.duel-side { --rank: #9d6948; display: flex; min-width: 0; align-items: center; gap: 14px; }
+.duel-side--opponent { flex-direction: row-reverse; }
+.duel-side__portrait { position: relative; z-index: 0; flex: none; border-radius: 50%; }
+.duel-side__portrait::before { content: ''; position: absolute; z-index: -1; inset: -9px; border-radius: 50%; background: radial-gradient(circle, color-mix(in srgb, var(--rank) 44%, transparent), transparent 70%); }
+.duel-side__sheen { position: absolute; inset: 0; overflow: hidden; border-radius: 50%; pointer-events: none; }
+.duel-side__sheen::after { content: ''; position: absolute; inset: -40%; background: linear-gradient(105deg, transparent 41%, color-mix(in srgb, white 58%, transparent) 50%, transparent 59%); transform: translateX(-135%); }
+.duel-side__identity { display: grid; min-width: 0; justify-items: start; gap: 5px; }
+.duel-side--opponent .duel-side__identity { justify-items: end; text-align: right; }
+.duel-side__tag { color: var(--text-secondary); font: 800 .56rem/1 Sora, sans-serif; letter-spacing: .18em; text-transform: uppercase; }
+.duel-side__name { max-width: 100%; margin: 0; overflow: hidden; font: 800 1rem/1.15 Sora, sans-serif; letter-spacing: -.025em; text-overflow: ellipsis; white-space: nowrap; }
+.match-found .duel-side__name { font-size: clamp(1.05rem, 4.6vw, 1.42rem); }
+.duel-side__knowledge { color: var(--text-secondary); font-size: .66rem; font-variant-numeric: tabular-nums; }
+.duel-lockup { position: relative; display: grid; justify-self: center; place-items: center; }
+.duel-lockup strong { color: var(--brand); font: 800 1.55rem/1 Sora, sans-serif; letter-spacing: -.06em; text-shadow: 0 6px 20px color-mix(in srgb, var(--brand) 36%, transparent); }
+.duel-lockup__ring { position: absolute; width: 36px; height: 36px; border: 2px solid color-mix(in srgb, var(--brand) 58%, transparent); border-radius: 50%; opacity: 0; }
+.duel-footer { display: grid; justify-items: center; gap: 7px; }
+.duel-progress { display: block; width: min(100%, 240px); height: 3px; overflow: hidden; border-radius: 2px; background: color-mix(in srgb, var(--border) 82%, transparent); }
+.duel-progress i { display: block; width: 38%; height: 100%; border-radius: 2px; background: var(--brand); animation: duel-progress-slide 1.5s ease-in-out infinite; }
+.duel-progress--waiting i { background: var(--accent); }
+.match-found--duel .match-found__preparing { min-height: 16px; }
+
+/* Coreografia da apresentação: cada tempo entra separado, dentro da janela visível. */
+.match-found--duel .duel-context { animation: duel-context-in 380ms cubic-bezier(.2, .75, .25, 1) both; }
+.match-found--duel .duel-side--viewer { animation: duel-enter-left 520ms cubic-bezier(.16, .8, .24, 1) 160ms both; }
+.match-found--duel .duel-side--opponent { animation: duel-enter-right 520ms cubic-bezier(.16, .8, .24, 1) 220ms both; }
+.match-found--duel .duel-arena__seam { animation: duel-seam-in 520ms ease-out 500ms both; }
+.match-found--duel .duel-lockup strong { animation: duel-vs-impact 340ms cubic-bezier(.2, 1.5, .4, 1) 520ms both; }
+.match-found--duel .duel-lockup__ring { animation: duel-vs-ring 520ms ease-out 560ms both; }
+.match-found--duel .rank-badge { animation: duel-rise 340ms cubic-bezier(.2, .8, .25, 1) 740ms both; }
+.match-found--duel .duel-side__knowledge { animation: duel-rise 340ms cubic-bezier(.2, .8, .25, 1) 820ms both; }
+.match-found--duel .duel-footer { animation: duel-rise 300ms ease-out 950ms both; }
+.match-found--duel .duel-side__sheen::after { animation: duel-sheen 1.1s cubic-bezier(.4, 0, .2, 1) 700ms both; }
+.match-found--duel .duel-side__portrait::before { animation: duel-halo-breathe 2.8s ease-in-out 1.1s infinite; }
+
+/*
+ * Saída: a composição colapsa para o centro enquanto os retratos ficam parados,
+ * porque a posição deles é medida aqui e continuada no lobby.
+ */
+.match-found--duel.match-found--leaving { animation: duel-out 900ms cubic-bezier(.4, 0, .2, 1) both; }
+.match-found--duel.match-found--leaving .duel-context { animation: duel-converge-up 620ms cubic-bezier(.4, 0, .2, 1) both; }
+.match-found--duel.match-found--leaving .duel-footer { animation: duel-converge-down 620ms cubic-bezier(.4, 0, .2, 1) both; }
+.match-found--duel.match-found--leaving .duel-side__identity { animation: duel-identity-out 520ms ease both; }
+.match-found--duel.match-found--leaving .duel-lockup { animation: duel-lockup-out 480ms ease both; }
+.match-found--duel.match-found--leaving .duel-side--viewer,
+.match-found--duel.match-found--leaving .duel-side--opponent,
+.match-found--duel.match-found--leaving .duel-arena__seam { animation: none; }
+
+/* Line-up do lobby: mesma composição, agora em tela cheia enquanto a sala se organiza. */
+.lobby-duel { display: grid; width: min(100%, 620px); gap: 12px; animation: content-in 320ms ease-out both; }
+.duel-side--lobby { gap: 11px; }
+.duel-side--lobby .avatar { width: 64px; height: 64px; font-size: 1.2rem; }
+/* O lobby não conhece a liga de ninguém: o brilho usa a marca, nunca uma cor de elo. */
+.duel-side--lobby .duel-side__portrait::before { background: radial-gradient(circle, color-mix(in srgb, var(--brand) 28%, transparent), transparent 70%); }
+.duel-lockup--lobby { justify-self: center; }
+.duel-lockup--lobby strong { font-size: 1.1rem; }
 .matchmaking-timeout { position: absolute; inset: 126px 26px 26px; display: grid; place-items: center; align-content: center; gap: 14px; animation: matchmaking-timeout-in 420ms ease-out both; }
 
 .match-screen {
@@ -606,7 +670,7 @@ h1, h2, h3, .brand-lockup__name, .hero-stat strong, .level-card > strong, .count
 .match-timer__bar--running { will-change: transform; animation: match-timer-drain var(--timer-duration) linear forwards; }
 .match-timer > strong { position: absolute; z-index: 1; top: 6px; right: max(12px, env(safe-area-inset-right)); color: var(--text-on-brand); font: 700 .72rem/1 Sora, sans-serif; font-variant-numeric: tabular-nums; text-shadow: 0 1px 2px rgb(0 0 0 / .25); }
 .match-timer--preparing { pointer-events: none; }
-.match-lobby-screen { position: fixed; inset: 0; display: grid; place-items: center; align-content: center; gap: 24px; padding: 28px; text-align: center; background: radial-gradient(circle at 50% 45%, color-mix(in srgb, var(--brand) 12%, transparent), transparent 30rem), var(--background); }
+.match-lobby-screen { position: fixed; inset: 0; display: grid; overflow-y: auto; place-items: center; align-content: center; gap: 24px; padding: 28px; text-align: center; background: radial-gradient(circle at 50% 45%, color-mix(in srgb, var(--brand) 12%, transparent), transparent 30rem), var(--background); }
 .match-lobby-screen h1 { max-width: 620px; margin: 0; font-size: clamp(1.5rem, 6vw, 3rem); letter-spacing: -.045em; }
 .countdown { color: var(--brand); font-size: clamp(4rem, 20vw, 9rem); line-height: 1; }
 .round-transition-overlay { position: fixed; z-index: 230; inset: 0; display: grid; place-items: center; padding: 28px; background: radial-gradient(circle at 50% 45%, color-mix(in srgb, var(--brand) 12%, transparent), transparent 30rem), var(--background); animation: round-transition-backdrop var(--match-question-entrance-duration) ease-out calc(var(--round-transition-duration) - var(--match-question-entrance-duration)) both; }
@@ -677,6 +741,21 @@ h1, h2, h3, .brand-lockup__name, .hero-stat strong, .level-card > strong, .count
 @keyframes matchmaking-character-four { 0%, 56%, 80%, 100% { opacity: .82; transform: scale(1); } 64%, 74% { opacity: 1; transform: scale(1.16); } }
 @keyframes match-found-in { from { opacity: 0; transform: translateY(10px) scale(.985); } to { opacity: 1; transform: translateY(0) scale(1); } }
 @keyframes match-found-out { from { opacity: 1; transform: translateY(0) scale(1); } to { opacity: 0; transform: translateY(-6px) scale(.993); } }
+@keyframes duel-context-in { from { opacity: 0; transform: translateY(-8px); } }
+@keyframes duel-enter-left { from { opacity: 0; transform: translateX(-34px); } }
+@keyframes duel-enter-right { from { opacity: 0; transform: translateX(34px); } }
+@keyframes duel-seam-in { from { opacity: 0; transform: translateY(-.5px) rotate(-3deg) scaleX(.2); } to { opacity: 1; transform: translateY(-.5px) rotate(-3deg) scaleX(1); } }
+@keyframes duel-vs-impact { from { opacity: 0; transform: scale(2.1); } to { opacity: 1; transform: scale(1); } }
+@keyframes duel-vs-ring { from { opacity: .8; transform: scale(.4); } to { opacity: 0; transform: scale(3.2); } }
+@keyframes duel-rise { from { opacity: 0; transform: translateY(7px); } }
+@keyframes duel-sheen { from { transform: translateX(-135%); } to { transform: translateX(135%); } }
+@keyframes duel-halo-breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.06); } }
+@keyframes duel-progress-slide { from { transform: translateX(-110%); } to { transform: translateX(300%); } }
+@keyframes duel-out { 0%, 30% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes duel-converge-up { to { opacity: 0; transform: translateY(16px); } }
+@keyframes duel-converge-down { to { opacity: 0; transform: translateY(-16px); } }
+@keyframes duel-identity-out { to { opacity: 0; transform: scale(.96); } }
+@keyframes duel-lockup-out { to { opacity: 0; transform: scale(.72); } }
 @keyframes matchmaking-timeout-in { from { opacity: 0; transform: translateY(7px); } }
 @keyframes match-timer-drain { from { transform: scaleX(var(--timer-from-ratio)); } to { transform: scaleX(0); } }
 @keyframes match-question-in { from { opacity: 0; transform: translateY(7px) scale(.995); } }
@@ -722,6 +801,12 @@ h1, h2, h3, .brand-lockup__name, .hero-stat strong, .level-card > strong, .count
   .social-person { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
   .social-person__message { grid-column: 1; }
   .social-friends__summary { display: flex; gap: 13px; }
+  .lobby-duel { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; width: min(100%, 760px); gap: 20px; }
+  .duel-side--lobby, .duel-side--lobby.duel-side--opponent { flex-direction: column; gap: 10px; }
+  .duel-side--lobby .avatar { width: 88px; height: 88px; font-size: 1.7rem; }
+  .duel-lockup--lobby strong { font-size: 1.5rem; }
+  .duel-side--lobby .duel-side__identity,
+  .duel-side--lobby.duel-side--opponent .duel-side__identity { justify-items: center; text-align: center; }
 }
 
 @media (min-width: 920px) {
@@ -792,6 +877,24 @@ h1, h2, h3, .brand-lockup__name, .hero-stat strong, .level-card > strong, .count
   .social-friends__summary > span { font-size: .65rem; }
 }
 
+@media (max-height: 620px) {
+  /*
+   * Em telas baixas o cartão do matchmaking passava da altura da viewport por causa do globo,
+   * deixando a apresentação cortada. O globo é decorativo: encolhê-lo devolve o cartão inteiro.
+   */
+  .matchmaking-globe-scene { width: min(100%, 176px); }
+  .matchmaking-theme-artwork { width: 58px; border-radius: 17px; }
+  .dialog--matchmaking { gap: 14px; padding: 16px; }
+  .match-found--duel { inset: 88px 14px 14px; gap: 8px; }
+  .match-found--duel .duel-arena { grid-template-rows: none; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); }
+  .match-found--duel .duel-arena__seam { top: -4px; right: auto; bottom: -4px; left: 50%; width: 1px; height: auto; background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--brand) 55%, transparent), transparent); transform: translateX(-.5px) rotate(3deg); animation: none; }
+  .match-found--duel .duel-side, .match-found--duel .duel-side--opponent { flex-direction: column; gap: 8px; }
+  .match-found--duel .duel-side__identity,
+  .match-found--duel .duel-side--opponent .duel-side__identity { justify-items: center; text-align: center; }
+  .match-found--duel .avatar { width: 78px; height: 78px; font-size: 1.5rem; }
+  .match-found--duel .rank-badge__gem { width: 26px; height: 29px; }
+}
+
 @media (max-height: 620px) and (orientation: landscape) {
   .match-scoreboard { padding-block: 8px; }
   .question-stage { grid-template-columns: minmax(180px, .8fr) minmax(420px, 1.3fr); grid-template-rows: auto 1fr; align-items: center; gap: 12px 24px; padding-block: 4px 12px; }
@@ -809,6 +912,10 @@ h1, h2, h3, .brand-lockup__name, .hero-stat strong, .level-card > strong, .count
   .matchmaking-globe__world, .globe-character, .matchmaking-search, .match-found { opacity: 1; transform: none; }
   .matchmaking-magnifier { opacity: 1; transform: translate(197px, 143px) scale(1); }
   .matchmaking-search--leaving, .match-found--leaving { opacity: 0; }
+  .match-found--duel, .match-found--duel *, .match-found--duel *::before, .match-found--duel *::after,
+  .lobby-duel, .lobby-duel * { animation: none !important; }
+  .match-found--duel:not(.match-found--leaving), .lobby-duel { opacity: 1; transform: none; }
+  .duel-progress i { width: 100%; }
   .match-timer__bar--running { animation: none !important; transform: scaleX(var(--timer-reduced-ratio)); will-change: auto; }
   .match-screen--resolved .match-scoreboard, .match-screen--resolved .question-stage, .round-transition, .score-gain { opacity: 1; transform: none; animation: none !important; }
   .round-transition-overlay { opacity: 1; animation: none !important; }
