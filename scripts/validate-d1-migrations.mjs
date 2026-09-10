@@ -158,8 +158,12 @@ function assertFinalSchema(scenario) {
      WHERE name IN (
        'theme_artwork_blobs', 'themes_artwork_parent_key', 'user_custom_avatars',
        'friend_request_pair_state', 'user_blocks', 'push_installations',
+       'friendship_mutes', 'challenges', 'challenge_questions', 'challenge_answers',
        'idx_friend_requests_pending_unordered_pair', 'idx_user_blocks_blocked_blocker',
-       'idx_push_installations_user_enabled'
+       'idx_push_installations_user_enabled', 'idx_friendships_high',
+       'idx_challenges_live_pair', 'idx_challenges_second_player',
+       'idx_challenges_first_player', 'idx_challenges_direct_expiry',
+       'idx_challenge_answers_user'
      )
         OR type = 'trigger'
      ORDER BY type, name
@@ -176,7 +180,10 @@ function assertFinalSchema(scenario) {
     schemaObjects.some(({ name, type }) => name === 'user_custom_avatars' && type === 'table'),
     `${scenario.name}: tabela user_custom_avatars ausente`,
   );
-  for (const tableName of ['friend_request_pair_state', 'user_blocks', 'push_installations']) {
+  for (const tableName of [
+    'friend_request_pair_state', 'user_blocks', 'push_installations',
+    'friendship_mutes', 'challenges', 'challenge_questions', 'challenge_answers',
+  ]) {
     assert(
       schemaObjects.some(({ name, type }) => name === tableName && type === 'table'),
       `${scenario.name}: tabela social ${tableName} ausente`,
@@ -186,6 +193,12 @@ function assertFinalSchema(scenario) {
     'idx_friend_requests_pending_unordered_pair',
     'idx_user_blocks_blocked_blocker',
     'idx_push_installations_user_enabled',
+    'idx_friendships_high',
+    'idx_challenges_live_pair',
+    'idx_challenges_second_player',
+    'idx_challenges_first_player',
+    'idx_challenges_direct_expiry',
+    'idx_challenge_answers_user',
   ]) {
     assert(
       schemaObjects.some(({ name, type }) => name === indexName && type === 'index'),
@@ -226,8 +239,8 @@ function assertFinalSchema(scenario) {
 
   const appliedMigrations = query(scenario, 'SELECT name FROM d1_migrations ORDER BY id');
   assert(
-    appliedMigrations.at(-1)?.name === '0007_social_foundation.sql',
-    `${scenario.name}: 0007 social não foi registrada como última migration`,
+    appliedMigrations.at(-1)?.name === '0008_challenges_and_mutes.sql',
+    `${scenario.name}: 0008 de desafios não foi registrada como última migration`,
   );
   const upgradedTheme = query(scenario, `
     SELECT artwork_kind, artwork_icon_key, artwork_version, active_question_count
@@ -278,6 +291,72 @@ function assertSocialInvariants(scenario) {
          OR (sender_user_id = '${second}' AND recipient_user_id = '${first}'))
   `);
   assert(requests[0]?.total === 1, `${scenario.name}: índice social permitiu pedidos cruzados`);
+}
+
+/** @param {MigrationScenario} scenario */
+function assertChallengeInvariants(scenario) {
+  const first = `challenge-a-${scenario.name}`;
+  const second = `challenge-b-${scenario.name}`;
+  const third = `challenge-c-${scenario.name}`;
+  executeSql(scenario, `
+    INSERT INTO users (id, firebase_uid) VALUES
+      ('${first}', 'firebase-${first}'),
+      ('${second}', 'firebase-${second}'),
+      ('${third}', 'firebase-${third}');
+    INSERT INTO challenges
+      (id, pair_low_id, pair_high_id, first_player_user_id, second_player_user_id,
+       theme_id, difficulty, kind, status)
+    VALUES ('async-${scenario.name}', '${first}', '${second}', '${first}', '${second}',
+            '${syntheticThemeId}', 'MEDIUM', 'ASYNC', 'WAITING_FOR_SECOND');
+  `);
+  // Segunda tentativa da mesma dupla, em qualquer direção, é barrada pelo índice.
+  executeSql(scenario, `
+    INSERT INTO challenges
+      (id, pair_low_id, pair_high_id, first_player_user_id, second_player_user_id,
+       theme_id, difficulty, kind, status)
+    VALUES ('crossed-${scenario.name}', '${first}', '${second}', '${second}', '${first}',
+            '${syntheticThemeId}', 'EASY', 'DIRECT', 'PENDING_DIRECT')
+  `, true);
+  // Duplas diferentes continuam livres.
+  executeSql(scenario, `
+    INSERT INTO challenges
+      (id, pair_low_id, pair_high_id, first_player_user_id, second_player_user_id,
+       theme_id, difficulty, kind, status)
+    VALUES ('other-pair-${scenario.name}', '${first}', '${third}', '${first}', '${third}',
+            '${syntheticThemeId}', 'EASY', 'DIRECT', 'PENDING_DIRECT')
+  `);
+  // Encerrado o desafio, a dupla volta a aceitar um novo.
+  executeSql(scenario, `
+    UPDATE challenges SET status = 'COMPLETED' WHERE id = 'async-${scenario.name}';
+    INSERT INTO challenges
+      (id, pair_low_id, pair_high_id, first_player_user_id, second_player_user_id,
+       theme_id, difficulty, kind, status)
+    VALUES ('reopened-${scenario.name}', '${first}', '${second}', '${second}', '${first}',
+            '${syntheticThemeId}', 'HARD', 'ASYNC', 'FIRST_PLAYER_ACTIVE');
+  `);
+  // Par sempre normalizado e jogadores distintos.
+  executeSql(scenario, `
+    INSERT INTO challenges
+      (id, pair_low_id, pair_high_id, first_player_user_id, second_player_user_id,
+       theme_id, difficulty, kind, status)
+    VALUES ('unsorted-${scenario.name}', '${second}', '${first}', '${first}', '${second}',
+            '${syntheticThemeId}', 'EASY', 'DIRECT', 'PENDING_DIRECT')
+  `, true);
+  executeSql(scenario, `
+    INSERT INTO friendship_mutes (muter_user_id, muted_user_id)
+    VALUES ('${first}', '${first}')
+  `, true);
+  executeSql(scenario, `
+    INSERT INTO friendship_mutes (muter_user_id, muted_user_id)
+    VALUES ('${first}', '${second}')
+  `);
+  const live = query(scenario, `
+    SELECT COUNT(*) AS total FROM challenges
+     WHERE pair_low_id = '${first}' AND pair_high_id = '${second}'
+       AND status IN ('PENDING_DIRECT', 'PREPARING', 'ACTIVE',
+                      'FIRST_PLAYER_ACTIVE', 'WAITING_FOR_SECOND', 'SECOND_PLAYER_ACTIVE')
+  `);
+  assert(live[0]?.total === 1, `${scenario.name}: índice permitiu dois desafios ativos na mesma dupla`);
 }
 
 /** @param {MigrationScenario} scenario */
@@ -505,6 +584,7 @@ try {
   assert(migrationNames.includes('0005_user_custom_avatars.sql'), 'Migration 0005_user_custom_avatars.sql ausente');
   assert(migrationNames.includes('0006_expand_synthetic_smoke_test.sql'), 'Migration Core 0006 ausente');
   assert(migrationNames.includes('0007_social_foundation.sql'), 'Migration Core 0007 social ausente');
+  assert(migrationNames.includes('0008_challenges_and_mutes.sql'), 'Migration Core 0008 de desafios ausente');
   assert(questionMigrationNames.includes('0003_expand_synthetic_smoke_test.sql'), 'Migration Questions 0003 ausente');
 
   await assertRemoteParser(coreSourceMigrationsDirectory, migrationNames);
@@ -517,6 +597,7 @@ try {
   assertArtworkInvariants(emptyDatabase);
   assertAvatarInvariants(emptyDatabase);
   assertSocialInvariants(emptyDatabase);
+  assertChallengeInvariants(emptyDatabase);
 
   const upgradeDatabase = await createScenario(
     'upgrade-0003',
@@ -525,6 +606,7 @@ try {
       '0005_user_custom_avatars.sql',
       '0006_expand_synthetic_smoke_test.sql',
       '0007_social_foundation.sql',
+      '0008_challenges_and_mutes.sql',
     ].includes(name)),
   );
   console.log('Validando upgrade D1 exato de 0003 para 0004...');
@@ -564,8 +646,19 @@ try {
     join(upgradeDatabase.migrationsDirectory, '0007_social_foundation.sql'),
   );
   applyMigrations(upgradeDatabase);
-  assertFinalSchema(upgradeDatabase);
   assertSocialInvariants(upgradeDatabase);
+  console.log('Validando upgrade D1 atual exato de 0007 para 0008 Desafios entre amigos...');
+  assert(
+    !query(upgradeDatabase, "SELECT name FROM sqlite_master WHERE name = 'friendship_mutes'").length,
+    'upgrade-0003: tabela de silenciamento já existia antes da 0008',
+  );
+  await copyFile(
+    join(coreSourceMigrationsDirectory, '0008_challenges_and_mutes.sql'),
+    join(upgradeDatabase.migrationsDirectory, '0008_challenges_and_mutes.sql'),
+  );
+  applyMigrations(upgradeDatabase);
+  assertFinalSchema(upgradeDatabase);
+  assertChallengeInvariants(upgradeDatabase);
   console.log('Validando rollback transacional de migration com erro...');
   await assertRollback(upgradeDatabase);
 
@@ -604,7 +697,7 @@ try {
   applyMigrations(upgradeQuestions);
   assertFinalQuestionDataset(upgradeQuestions);
 
-  console.log('Migrations D1 aprovadas: parser Wrangler, bancos vazios, upgrades Core 0003→0004→0005→0006→0007 e Questions 0002→0003, invariantes sociais, rollback e schemas finais.');
+  console.log('Migrations D1 aprovadas: parser Wrangler, bancos vazios, upgrades Core 0003→0004→0005→0006→0007→0008 e Questions 0002→0003, invariantes sociais e de desafio, rollback e schemas finais.');
 } finally {
   await rm(temporaryRoot, { force: true, recursive: true });
 }

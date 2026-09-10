@@ -92,6 +92,9 @@ export class SocialPushService {
   }): Promise<void> {
     const account = accountFrom(this.env);
     if (account === null || await this.repository.blocked(input.senderUserId, input.targetUserId)) return;
+    // Silenciamento suprime a notificação e nada mais: o pedido continua visível no Social.
+    const allowed = await this.repository.recipientsAllowingNotification(input.senderUserId, [input.targetUserId]);
+    if (allowed.length === 0) return;
     const installations = await this.repository.enabledInstallations(input.targetUserId);
     if (installations.length === 0) return;
     let accessToken: string;

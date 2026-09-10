@@ -8,9 +8,9 @@ import { SocialConfirmDialog } from '../components/social-confirm-dialog.js';
 import { useAuth } from '../features/auth-context.js';
 import { useFriendPresence, useSocial } from '../features/social-context.js';
 import { apiRequest } from '../lib/api.js';
-import type { FriendPresence, SocialCandidate, SocialSnapshot, SocialUser } from '../lib/social.js';
+import type { FriendPresence, SocialCandidate, SocialFriend, SocialSnapshot, SocialUser } from '../lib/social.js';
 
-const EMPTY_SNAPSHOT: SocialSnapshot = { friends: [], incoming: [], outgoing: [] };
+const EMPTY_SNAPSHOT: SocialSnapshot = { friendLimit: 200, friends: [], incoming: [], outgoing: [] };
 const PRESENCE_LABELS: Record<FriendPresence, string> = {
   IN_MATCH: 'Em partida',
   MATCHMAKING: 'Procurando partida',
@@ -57,14 +57,16 @@ const FriendCard = memo(function FriendCard({
   disabled,
   onBlock,
   onRemove,
+  onToggleMute,
   presence,
   user,
 }: {
   disabled: boolean;
   onBlock: (user: SocialUser) => void;
   onRemove: (user: SocialUser) => void;
+  onToggleMute: (user: SocialFriend) => void;
   presence: FriendPresence;
-  user: SocialUser;
+  user: SocialFriend;
 }) {
   return (
     <article
@@ -74,6 +76,13 @@ const FriendCard = memo(function FriendCard({
     >
       <SocialIdentity presence={presence} user={user} />
       <div className="social-person__actions social-friend__actions">
+        <button
+          aria-pressed={user.muted}
+          className="social-person__quiet-action"
+          disabled={disabled}
+          onClick={() => onToggleMute(user)}
+          type="button"
+        >{user.muted ? 'Reativar avisos' : 'Silenciar'}</button>
         <button
           className="social-person__quiet-action"
           disabled={disabled}
@@ -94,7 +103,7 @@ const FriendCard = memo(function FriendCard({
 
 type FriendRow =
   | { key: string; kind: 'heading'; label: string; total: number }
-  | { key: string; kind: 'friend'; presence: FriendPresence; user: SocialUser };
+  | { key: string; kind: 'friend'; presence: FriendPresence; user: SocialFriend };
 
 function useFriendLayoutMotion(key: string) {
   const list = useRef<HTMLDivElement | null>(null);
@@ -130,14 +139,18 @@ function useFriendLayoutMotion(key: string) {
 
 function FriendsSection({
   disabled,
+  friendLimit,
   friends,
   onBlock,
   onRemove,
+  onToggleMute,
 }: {
   disabled: boolean;
-  friends: SocialUser[];
+  friendLimit: number;
+  friends: SocialFriend[];
   onBlock: (user: SocialUser) => void;
   onRemove: (user: SocialUser) => void;
+  onToggleMute: (user: SocialFriend) => void;
 }) {
   const friendPresence = useFriendPresence();
   const organizedFriends = useMemo(() => {
@@ -185,7 +198,7 @@ function FriendsSection({
   return (
     <section aria-label="Amigos" className="social-section social-friends">
       <div className="section-heading social-friends__heading">
-        <div><h2>Amigos</h2><span className="social-friends__total">{friends.length}</span></div>
+        <div><h2>Amigos</h2><span className="social-friends__total">{friends.length} / {friendLimit}</span></div>
         {friends.length > 0 ? (
           <div className="social-friends__summary">
             <span><i aria-hidden="true" data-presence="ONLINE" />{organizedFriends.available} disponíveis</span>
@@ -211,6 +224,7 @@ function FriendsSection({
               key={row.key}
               onBlock={onBlock}
               onRemove={onRemove}
+              onToggleMute={onToggleMute}
               presence={row.presence}
               user={row.user}
             />
@@ -283,6 +297,13 @@ export function SocialPage() {
       setBusy(null);
     }
   }, [getToken, load, refresh]);
+
+  const toggleMute = useCallback((user: SocialFriend) => {
+    void mutate(user.publicId, '/api/social/mutes', {
+      body: { publicId: user.publicId },
+      method: user.muted ? 'DELETE' : 'POST',
+    });
+  }, [mutate]);
 
   const removeFriend = useCallback((user: SocialUser) => {
     void mutate(user.publicId, '/api/social/friends', {
@@ -397,9 +418,11 @@ export function SocialPage() {
 
               <FriendsSection
                 disabled={busy !== null}
+                friendLimit={snapshot.friendLimit}
                 friends={snapshot.friends}
                 onBlock={setBlocking}
                 onRemove={removeFriend}
+                onToggleMute={toggleMute}
               />
             </>
           )}

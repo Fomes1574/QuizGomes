@@ -1,6 +1,6 @@
 import { env, SELF } from 'cloudflare:test';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { FRIEND_REQUEST_COOLDOWN_MS, SocialRepository } from '../repositories/social-repository.js';
+import { FRIEND_LIMIT, FRIEND_REQUEST_COOLDOWN_MS, SocialRepository } from '../repositories/social-repository.js';
 import { resetSocialPushCacheForTests, SocialPushService } from '../services/social-push-service.js';
 
 interface FixtureUser {
@@ -404,6 +404,78 @@ describe('Milestone 9A — Social Foundation no runtime Workers/D1', () => {
       .bind(first.requestId).first()).toEqual({ status: 'PENDING' });
   });
 
+  it('limita amizades ativas em 200 e a 201ª só entra depois de desfazer uma', async () => {
+    const users = await fixture(['Cheia', 'Nova amizade']);
+    const owner = userAt(users, 0);
+    const newcomer = userAt(users, 1);
+    const repository = new SocialRepository(env.CORE_DB);
+
+    // Preenche exatamente o limite direto no schema, dos dois lados da normalização.
+    const filler = Array.from({ length: FRIEND_LIMIT }, (_, index) => `limit-${owner.id}-${index}`);
+    await env.CORE_DB.batch(filler.flatMap((id) => [
+      env.CORE_DB.prepare('INSERT INTO users (id, firebase_uid) VALUES (?1, ?2)').bind(id, `firebase-${id}`),
+      env.CORE_DB.prepare(
+        'INSERT INTO friendships (user_low_id, user_high_id) VALUES (MIN(?1, ?2), MAX(?1, ?2))',
+      ).bind(owner.id, id),
+    ]));
+    expect(await repository.friendCount(owner.id)).toBe(FRIEND_LIMIT);
+
+    await expect(repository.sendRequest(owner.id, newcomer.publicId)).rejects.toMatchObject({
+      code: 'FRIEND_LIMIT_REACHED', status: 409,
+    });
+
+    // O pedido na direção oposta existe, mas o aceite é barrado autoritativamente.
+    const incoming = await repository.sendRequest(newcomer.id, owner.publicId);
+    await expect(repository.acceptRequest(owner.id, incoming.requestId)).rejects.toMatchObject({
+      code: 'FRIEND_LIMIT_REACHED', status: 409,
+    });
+    expect(await env.CORE_DB.prepare('SELECT status FROM friend_requests WHERE id = ?1')
+      .bind(incoming.requestId).first()).toEqual({ status: 'PENDING' });
+    expect(await repository.friendCount(owner.id)).toBe(FRIEND_LIMIT);
+
+    // Desfazer uma amizade libera exatamente uma vaga.
+    await env.CORE_DB.prepare(
+      'DELETE FROM friendships WHERE user_low_id = MIN(?1, ?2) AND user_high_id = MAX(?1, ?2)',
+    ).bind(owner.id, filler[0] ?? '').run();
+    expect(await repository.friendCount(owner.id)).toBe(FRIEND_LIMIT - 1);
+    await repository.acceptRequest(owner.id, incoming.requestId);
+    expect(await repository.friendCount(owner.id)).toBe(FRIEND_LIMIT);
+    // Os preenchedores não têm perfil, então só a amizade real aparece na lista pública.
+    expect((await repository.snapshot(owner.id)).friends.map((entry) => entry.publicId))
+      .toEqual([newcomer.publicId]);
+  });
+
+  it('silenciar suprime somente notificação, sem desfazer amizade, presença ou desafio', async () => {
+    const users = await fixture(['Autora', 'Silenciadora']);
+    const author = userAt(users, 0);
+    const muter = userAt(users, 1);
+    const repository = new SocialRepository(env.CORE_DB);
+    const accepted = await repository.sendRequest(author.id, muter.publicId);
+    await repository.acceptRequest(muter.id, accepted.requestId);
+
+    await repository.muteFriend(muter.id, author.publicId);
+    expect(await repository.recipientsAllowingNotification(author.id, [muter.id])).toEqual([]);
+
+    const snapshot = await repository.snapshot(muter.id);
+    expect(snapshot.friendLimit).toBe(FRIEND_LIMIT);
+    expect(snapshot.friends).toHaveLength(1);
+    expect(snapshot.friends[0]?.muted).toBe(true);
+    expect(snapshot.friends[0]?.publicId).toBe(author.publicId);
+    // A amizade e a presença continuam intactas: silenciar não é bloquear.
+    expect(await env.CORE_DB.prepare(
+      'SELECT COUNT(*) AS total FROM friendships WHERE user_low_id = MIN(?1, ?2) AND user_high_id = MAX(?1, ?2)',
+    ).bind(author.id, muter.id).first()).toEqual({ total: 1 });
+    expect((await repository.friendPresenceTargets(muter.id)).map((entry) => entry.publicId))
+      .toContain(author.publicId);
+    expect(await repository.blocked(author.id, muter.id)).toBe(false);
+
+    // A direção oposta não é afetada e o silenciamento é reversível.
+    expect(await repository.recipientsAllowingNotification(muter.id, [author.id])).toEqual([author.id]);
+    await repository.unmuteFriend(muter.id, author.publicId);
+    expect(await repository.recipientsAllowingNotification(author.id, [muter.id])).toEqual([muter.id]);
+    expect((await repository.snapshot(muter.id)).friends[0]?.muted).toBe(false);
+  });
+
   it('todas as superfícies sociais exigem autenticação e não aceitam identidade arbitrária', async () => {
     const requests: Array<[string, RequestInit]> = [
       ['/api/social', {}],
@@ -417,6 +489,11 @@ describe('Milestone 9A — Social Foundation no runtime Workers/D1', () => {
       }],
       ['/api/social/push/installations', {
         body: JSON.stringify({ installationId: 'syntheticFID_123456' }),
+        headers: { 'Content-Type': 'application/json', 'X-User-Id': 'arbitrary' },
+        method: 'POST',
+      }],
+      ['/api/social/mutes', {
+        body: JSON.stringify({ publicId: '#QGFAKE123' }),
         headers: { 'Content-Type': 'application/json', 'X-User-Id': 'arbitrary' },
         method: 'POST',
       }],

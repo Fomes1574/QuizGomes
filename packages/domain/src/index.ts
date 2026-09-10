@@ -1,3 +1,4 @@
+export * from './challenges/challenge.js';
 export * from './match/rules.js';
 export * from './match/scoring.js';
 export * from './match/projection.js';

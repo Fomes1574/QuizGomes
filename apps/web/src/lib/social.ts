@@ -18,8 +18,14 @@ export interface SocialRequest {
   user: SocialUser;
 }
 
+export interface SocialFriend extends SocialUser {
+  /** Silenciado por você: some das notificações, continua amigo e desafiável. */
+  muted: boolean;
+}
+
 export interface SocialSnapshot {
-  friends: SocialUser[];
+  friendLimit: number;
+  friends: SocialFriend[];
   incoming: SocialRequest[];
   outgoing: SocialRequest[];
 }

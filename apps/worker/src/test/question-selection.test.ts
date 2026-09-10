@@ -1,4 +1,4 @@
-import type { Difficulty } from '@quiz-gomes/domain';
+import type { Difficulty, RandomOrdinal } from '@quiz-gomes/domain';
 import { describe, expect, it } from 'vitest';
 import type { SecretQuestionRecord } from '../repositories/question-repository.js';
 import { QuestionSelectionService } from '../services/question-selection-service.js';
@@ -15,7 +15,11 @@ function question(slot: number): SecretQuestionRecord {
   };
 }
 
-function serviceWith(activeCount: number, ordinal = () => 0, secretBySlot?: () => Promise<null>) {
+function serviceWith(
+  activeCount: number,
+  ordinal: RandomOrdinal = () => 0,
+  secretBySlot?: () => Promise<null>,
+) {
   return new QuestionSelectionService(
     {
       pool: (theme: string, difficulty: Difficulty) => {

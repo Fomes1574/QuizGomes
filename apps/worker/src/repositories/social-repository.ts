@@ -2,6 +2,8 @@ import { ApiError } from '../http/api-error.js';
 import { customAvatarUrl } from '../storage/custom-avatar.js';
 
 export const FRIEND_REQUEST_COOLDOWN_MS = 30 * 24 * 60 * 60 * 1_000;
+/** Amizades ativas por usuário. Validado no envio e, autoritativamente, no aceite. */
+export const FRIEND_LIMIT = 200;
 const SEARCH_LIMIT = 20;
 
 export interface SocialUser {
@@ -10,6 +12,11 @@ export interface SocialUser {
   frameId: string | null;
   photoUrl: string | null;
   publicId: string;
+}
+
+export interface SocialFriend extends SocialUser {
+  /** Silenciado por quem consulta: some das notificações, permanece amigo e desafiável. */
+  muted: boolean;
 }
 
 export interface SocialCandidate extends SocialUser {
@@ -43,6 +50,10 @@ interface CandidateRow extends PersonRow {
   friendship_exists: number;
   request_id: string | null;
   request_sender_user_id: string | null;
+}
+
+interface FriendRow extends PersonRow {
+  muted: number;
 }
 
 interface RequestRow extends PersonRow {
@@ -132,13 +143,18 @@ export class SocialRepository {
   }
 
   async snapshot(actorUserId: string): Promise<{
-    friends: SocialUser[];
+    friendLimit: number;
+    friends: SocialFriend[];
     incoming: SocialRequest[];
     outgoing: SocialRequest[];
   }> {
     const [friends, incoming, outgoing] = await Promise.all([
       this.db.prepare(
-        `SELECT ${PUBLIC_PERSON_COLUMNS}
+        `SELECT ${PUBLIC_PERSON_COLUMNS},
+                EXISTS (
+                  SELECT 1 FROM friendship_mutes m
+                   WHERE m.muter_user_id = ?1 AND m.muted_user_id = p.user_id
+                ) AS muted
            FROM friendships f
            JOIN user_profiles p ON p.user_id =
              CASE WHEN f.user_low_id = ?1 THEN f.user_high_id ELSE f.user_low_id END
@@ -150,12 +166,17 @@ export class SocialRepository {
                WHERE (b.blocker_user_id = ?1 AND b.blocked_user_id = p.user_id)
                   OR (b.blocker_user_id = p.user_id AND b.blocked_user_id = ?1)
             )
-          ORDER BY p.display_name COLLATE NOCASE LIMIT 100`,
-      ).bind(actorUserId).all<PersonRow>(),
+          ORDER BY p.display_name COLLATE NOCASE LIMIT ${FRIEND_LIMIT}`,
+      ).bind(actorUserId).all<FriendRow>(),
       this.requests(actorUserId, 'incoming'),
       this.requests(actorUserId, 'outgoing'),
     ]);
-    return { friends: friends.results.map(person), incoming, outgoing };
+    return {
+      friendLimit: FRIEND_LIMIT,
+      friends: friends.results.map((row) => ({ ...person(row), muted: row.muted === 1 })),
+      incoming,
+      outgoing,
+    };
   }
 
   async pendingCount(actorUserId: string): Promise<number> {
@@ -184,9 +205,24 @@ export class SocialRepository {
              WHERE (b.blocker_user_id = ?1 AND b.blocked_user_id = p.user_id)
                 OR (b.blocker_user_id = p.user_id AND b.blocked_user_id = ?1)
           )
-        ORDER BY p.public_id LIMIT 100`,
+        ORDER BY p.public_id LIMIT ${FRIEND_LIMIT}`,
     ).bind(actorUserId).all<{ public_id: string; user_id: string }>();
     return result.results.map((row) => ({ publicId: row.public_id, userId: row.user_id }));
+  }
+
+  /** Amizades ativas de um usuário; usa o índice por lado, sem full scan. */
+  async friendCount(userId: string): Promise<number> {
+    const row = await this.db.prepare(
+      `SELECT (SELECT COUNT(*) FROM friendships WHERE user_low_id = ?1)
+            + (SELECT COUNT(*) FROM friendships WHERE user_high_id = ?1) AS total`,
+    ).bind(userId).first<{ total: number }>();
+    return row?.total ?? 0;
+  }
+
+  private async assertFriendCapacity(userId: string, message: string): Promise<void> {
+    if (await this.friendCount(userId) >= FRIEND_LIMIT) {
+      throw new ApiError(409, 'FRIEND_LIMIT_REACHED', message, { limit: FRIEND_LIMIT });
+    }
   }
 
   async sendRequest(actorUserId: string, targetPublicId: string): Promise<{
@@ -195,6 +231,10 @@ export class SocialRepository {
     targetUserId: string;
   }> {
     const target = await this.visibleTarget(actorUserId, targetPublicId);
+    await this.assertFriendCapacity(
+      actorUserId,
+      `Você atingiu o limite de ${FRIEND_LIMIT} amizades. Desfaça uma amizade para adicionar outra.`,
+    );
     const now = this.clock().toISOString();
     await this.db.prepare(
       `DELETE FROM friend_request_pair_state
@@ -273,14 +313,20 @@ export class SocialRepository {
     const now = this.clock().toISOString();
     const results = await this.db.batch([
       this.db.prepare(
+        // O limite de amizades é condição da própria transição: se qualquer lado
+        // estiver cheio, o pedido continua PENDING e nenhuma amizade nasce.
         `UPDATE friend_requests SET status = 'ACCEPTED', resolved_at = ?1, resolution_key = ?2
           WHERE id = ?3 AND recipient_user_id = ?4 AND status = 'PENDING'
             AND NOT EXISTS (
               SELECT 1 FROM user_blocks b
                WHERE (b.blocker_user_id = recipient_user_id AND b.blocked_user_id = sender_user_id)
                   OR (b.blocker_user_id = sender_user_id AND b.blocked_user_id = recipient_user_id)
-            )`,
-      ).bind(now, resolutionKey, requestId, actorUserId),
+            )
+            AND (SELECT COUNT(*) FROM friendships WHERE user_low_id = ?4)
+              + (SELECT COUNT(*) FROM friendships WHERE user_high_id = ?4) < ?5
+            AND (SELECT COUNT(*) FROM friendships WHERE user_low_id = ?6)
+              + (SELECT COUNT(*) FROM friendships WHERE user_high_id = ?6) < ?5`,
+      ).bind(now, resolutionKey, requestId, actorUserId, FRIEND_LIMIT, row.sender_user_id),
       this.db.prepare(
         `INSERT OR IGNORE INTO friendships (user_low_id, user_high_id, created_at)
          SELECT ?1, ?2, ?3 FROM friend_requests
@@ -299,9 +345,54 @@ export class SocialRepository {
       const current = await this.ownedIncoming(actorUserId, requestId);
       if (current.status !== 'ACCEPTED') {
         if (await this.blocked(actorUserId, row.sender_user_id)) throw unavailable();
+        await this.assertFriendCapacity(
+          actorUserId,
+          `Você atingiu o limite de ${FRIEND_LIMIT} amizades. Desfaça uma amizade para aceitar esta.`,
+        );
+        await this.assertFriendCapacity(
+          row.sender_user_id,
+          'Quem enviou a solicitação atingiu o limite de amizades.',
+        );
         throw new ApiError(409, 'REQUEST_ALREADY_RESOLVED', 'Esta solicitação já foi resolvida.');
       }
     }
+  }
+
+  async muteFriend(actorUserId: string, targetPublicId: string): Promise<void> {
+    const target = await this.visibleTarget(actorUserId, targetPublicId);
+    await this.db.prepare(
+      `INSERT OR IGNORE INTO friendship_mutes (muter_user_id, muted_user_id, created_at)
+       SELECT ?1, ?2, ?3
+        WHERE EXISTS (
+          SELECT 1 FROM friendships
+           WHERE user_low_id = MIN(?1, ?2) AND user_high_id = MAX(?1, ?2)
+        )`,
+    ).bind(actorUserId, target.user_id, this.clock().toISOString()).run();
+  }
+
+  async unmuteFriend(actorUserId: string, targetPublicId: string): Promise<void> {
+    const target = await this.target(actorUserId, targetPublicId);
+    await this.db.prepare(
+      'DELETE FROM friendship_mutes WHERE muter_user_id = ?1 AND muted_user_id = ?2',
+    ).bind(actorUserId, target.user_id).run();
+  }
+
+  /**
+   * Silenciamento é só de notificação: filtra quem NÃO quer ser avisado por `authorUserId`.
+   * Nunca esconde presença, nunca bloqueia e nunca impede desafio.
+   */
+  async recipientsAllowingNotification(
+    authorUserId: string,
+    recipientUserIds: readonly string[],
+  ): Promise<string[]> {
+    if (recipientUserIds.length === 0) return [];
+    const placeholders = recipientUserIds.map((_, index) => `?${index + 2}`).join(', ');
+    const result = await this.db.prepare(
+      `SELECT muter_user_id FROM friendship_mutes
+        WHERE muted_user_id = ?1 AND muter_user_id IN (${placeholders})`,
+    ).bind(authorUserId, ...recipientUserIds).all<{ muter_user_id: string }>();
+    const muted = new Set(result.results.map((row) => row.muter_user_id));
+    return recipientUserIds.filter((userId) => !muted.has(userId));
   }
 
   async rejectRequest(actorUserId: string, requestId: string): Promise<void> {

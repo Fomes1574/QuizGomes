@@ -503,6 +503,15 @@ async function socialRoute(request: Request, env: Env, url: URL, context: Execut
       return json({ ok: true });
     }
   }
+  if (url.pathname === '/api/social/mutes' && (request.method === 'POST' || request.method === 'DELETE')) {
+    const parsed = socialTargetSchema.safeParse(await readJson(request));
+    if (!parsed.success) throw validationError(parsed.error);
+    if (request.method === 'POST') await social.muteFriend(profile.userId, parsed.data.publicId);
+    else await social.unmuteFriend(profile.userId, parsed.data.publicId);
+    // Silenciar é privado de quem silencia: o outro lado não recebe invalidação.
+    invalidateSocial(env, context, [profile.userId]);
+    return json({ muted: request.method === 'POST' });
+  }
   if (url.pathname === '/api/social/push/installations'
     && (request.method === 'POST' || request.method === 'DELETE')) {
     const parsed = pushInstallationSchema.safeParse(await readJson(request));
