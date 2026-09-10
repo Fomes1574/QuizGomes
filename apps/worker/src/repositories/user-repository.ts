@@ -73,6 +73,16 @@ export class UserRepository {
     return row === null ? null : toProfile(row);
   }
 
+  /** Firebase UID de cada usuário, para reservas de presença e salas. */
+  async firebaseUidsFor(userIds: readonly string[]): Promise<Map<string, string>> {
+    if (userIds.length === 0) return new Map();
+    const placeholders = userIds.map((_, index) => `?${index + 1}`).join(', ');
+    const result = await this.db.prepare(
+      `SELECT id, firebase_uid FROM users WHERE id IN (${placeholders}) AND disabled_at IS NULL`,
+    ).bind(...userIds).all<{ firebase_uid: string; id: string }>();
+    return new Map(result.results.map((row) => [row.id, row.firebase_uid]));
+  }
+
   async ensureProfile(
     identity: AuthenticatedUser,
     displayName: string,

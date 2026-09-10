@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { discoveredCount } from '@quiz-gomes/domain';
+import { discoveredCount, type FriendPresence } from '@quiz-gomes/domain';
 import { bootstrapAdminUids, hasAdminAccess, requireAdmin, requireUser } from './auth/authorize.js';
 import { MatchRoom } from './durable-objects/match-room.js';
 import { MatchmakingQueue } from './durable-objects/matchmaking-queue.js';
@@ -28,8 +28,10 @@ import { PoolStateRepository } from './repositories/pool-state-repository.js';
 import { ThemeRepository } from './repositories/theme-repository.js';
 import { UserRepository } from './repositories/user-repository.js';
 import { LiveMatchRepository, parseMatchResource } from './repositories/live-match-repository.js';
+import { ChallengeRepository } from './repositories/challenge-repository.js';
 import { SocialRepository } from './repositories/social-repository.js';
 import { QuestionImportService } from './services/question-import-service.js';
+import { DirectChallengeService } from './services/direct-challenge-service.js';
 import { SocialPushService } from './services/social-push-service.js';
 import { inspectWebp, THEME_ARTWORK_MAX_BYTES } from './storage/webp.js';
 import { CUSTOM_AVATAR_BYTES, CUSTOM_AVATAR_DIMENSION } from './storage/custom-avatar.js';
@@ -47,6 +49,13 @@ const socialTargetSchema = z.object({
 
 const pushInstallationSchema = z.object({
   installationId: z.string().regex(/^[A-Za-z0-9_-]{10,200}$/),
+}).strict();
+
+const challengeCreateSchema = z.object({
+  difficulty: z.enum(['EASY', 'MEDIUM', 'HARD']),
+  kind: z.enum(['DIRECT', 'ASYNC']),
+  publicId: z.string().regex(/^#QG[A-Z0-9]{4,32}$/i),
+  themeSlug: z.string().min(1).max(160),
 }).strict();
 
 function validationError(error: z.ZodError): ApiError {
@@ -415,11 +424,192 @@ async function themeArtworkRoute(
   return new Response(request.method === 'HEAD' ? null : artwork.data, { headers });
 }
 
+function notifySocial(
+  env: Env,
+  context: ExecutionContext,
+  userIds: string[],
+  event: Record<string, unknown>,
+): void {
+  context.waitUntil(socialRealtimeHub(env).fetch('https://social.internal/notify', {
+    body: JSON.stringify({ event, userIds }),
+    method: 'POST',
+  }).then(() => undefined).catch(() => {
+    console.error(JSON.stringify({ code: 'SOCIAL_REALTIME_UNAVAILABLE', event: 'challenge_notification_failed' }));
+  }));
+}
+
+async function friendPresenceOf(env: Env, userId: string): Promise<FriendPresence> {
+  const response = await socialRealtimeHub(env).fetch('https://social.internal/snapshot', {
+    body: JSON.stringify({ userIds: [userId] }),
+    method: 'POST',
+  });
+  if (!response.ok) {
+    throw new ApiError(503, 'SOCIAL_PRESENCE_UNAVAILABLE', 'A presença deste amigo está indisponível.');
+  }
+  const snapshot = await response.json<{ friends: Array<{ presence: FriendPresence; userId: string }> }>();
+  return snapshot.friends.find((friend) => friend.userId === userId)?.presence ?? 'OFFLINE';
+}
+
+async function challengeRoute(request: Request, env: Env, url: URL, context: ExecutionContext): Promise<Response> {
+  const identity = await requireUser(request, env);
+  const users = new UserRepository(env.CORE_DB);
+  const profile = await users.findByFirebaseUid(identity.uid);
+  if (profile === null) throw new ApiError(409, 'PROFILE_REQUIRED', 'Conclua seu perfil antes de desafiar.');
+  const challenges = new ChallengeRepository(env.CORE_DB);
+
+  if (url.pathname === '/api/challenges' && request.method === 'GET') {
+    return json({ challenges: await challenges.forUser(profile.userId) });
+  }
+
+  if (url.pathname === '/api/challenges' && request.method === 'POST') {
+    const parsed = challengeCreateSchema.safeParse(await readJson(request));
+    if (!parsed.success) throw validationError(parsed.error);
+    const targetUserId = await challenges.friendTarget(profile.userId, parsed.data.publicId);
+    const theme = await env.CORE_DB.prepare(
+      "SELECT id FROM themes WHERE slug = ?1 COLLATE NOCASE AND status = 'ACTIVE'",
+    ).bind(parsed.data.themeSlug).first<{ id: string }>();
+    if (theme === null) throw new ApiError(404, 'THEME_UNAVAILABLE', 'Este tema não está disponível.');
+    const created = await challenges.create({
+      actorUserId: profile.userId,
+      difficulty: parsed.data.difficulty,
+      kind: parsed.data.kind,
+      targetPresence: parsed.data.kind === 'DIRECT'
+        ? await friendPresenceOf(env, targetUserId)
+        : 'OFFLINE',
+      targetUserId,
+      themeId: theme.id,
+    });
+    // O convite cruzado vira aceite do convite existente, nunca um segundo registro.
+    if (created.crossAccepted) {
+      return await acceptChallenge(env, context, challenges, users, profile.userId, created.challengeId);
+    }
+    notifySocial(env, context, [targetUserId, profile.userId], {
+      challengeId: created.challengeId,
+      type: 'CHALLENGE_UPDATED',
+    });
+    return json({ challengeId: created.challengeId, created: created.created });
+  }
+
+  const action = /^\/api\/challenges\/([a-f0-9-]{36})\/(accept|decline|cancel)$/i.exec(url.pathname);
+  if (action?.[1] !== undefined && action[2] !== undefined && request.method === 'POST') {
+    const challenge = await challenges.byId(action[1]);
+    if (challenge === null) throw new ApiError(404, 'CHALLENGE_NOT_FOUND', 'Este desafio não existe mais.');
+    if (action[2] === 'accept') {
+      return await acceptChallenge(env, context, challenges, users, profile.userId, challenge.id);
+    }
+    const applied = await challenges.applyAction(challenge, {
+      actorUserId: profile.userId,
+      type: action[2] === 'cancel' ? 'CANCEL' : 'DECLINE',
+    });
+    if (!applied) throw new ApiError(409, 'CHALLENGE_CONFLICT', 'Este desafio mudou de estado. Atualize a tela.');
+    notifySocial(env, context, [challenge.firstPlayerUserId, challenge.secondPlayerUserId], {
+      challengeId: challenge.id,
+      type: 'CHALLENGE_UPDATED',
+    });
+    return json({ ok: true });
+  }
+
+  throw new ApiError(404, 'NOT_FOUND', 'Rota de desafio não encontrada.');
+}
+
+/**
+ * Aceite do desafio simultâneo: revalida tudo server-side no instante do aceite e
+ * entrega a sala do MatchRoom existente. O cliente nunca decide elegibilidade.
+ */
+async function acceptChallenge(
+  env: Env,
+  context: ExecutionContext,
+  challenges: ChallengeRepository,
+  users: UserRepository,
+  actorUserId: string,
+  challengeId: string,
+): Promise<Response> {
+  const challenge = await challenges.byId(challengeId);
+  if (challenge === null) throw new ApiError(404, 'CHALLENGE_NOT_FOUND', 'Este desafio não existe mais.');
+  if (challenge.secondPlayerUserId !== actorUserId) {
+    throw new ApiError(403, 'NOT_CHALLENGED', 'Só quem foi desafiado pode aceitar.');
+  }
+  if (challenge.kind !== 'DIRECT' || challenge.status !== 'PENDING_DIRECT') {
+    throw new ApiError(409, 'CHALLENGE_NOT_PENDING', 'Este desafio não aguarda aceite.');
+  }
+  if (challenge.expiresAtMs !== null && Date.now() >= challenge.expiresAtMs) {
+    await challenges.applyAction(challenge, { type: 'EXPIRE' });
+    notifySocial(env, context, [challenge.firstPlayerUserId, challenge.secondPlayerUserId], {
+      challengeId: challenge.id,
+      type: 'CHALLENGE_UPDATED',
+    });
+    throw new ApiError(409, 'CHALLENGE_EXPIRED', 'Este convite expirou.');
+  }
+  // A amizade e a ausência de bloqueio são revalidadas no instante do aceite.
+  const stillFriends = await env.CORE_DB.prepare(
+    `SELECT 1 AS ok FROM friendships
+      WHERE user_low_id = MIN(?1, ?2) AND user_high_id = MAX(?1, ?2)
+        AND NOT EXISTS (
+          SELECT 1 FROM user_blocks b
+           WHERE (b.blocker_user_id = ?1 AND b.blocked_user_id = ?2)
+              OR (b.blocker_user_id = ?2 AND b.blocked_user_id = ?1)
+        )`,
+  ).bind(challenge.firstPlayerUserId, challenge.secondPlayerUserId).first();
+  if (stillFriends === null) throw new ApiError(404, 'USER_UNAVAILABLE', 'Este usuário não está disponível.');
+
+  const uids = await users.firebaseUidsFor([challenge.firstPlayerUserId, challenge.secondPlayerUserId]);
+  const challengerUid = uids.get(challenge.firstPlayerUserId);
+  const challengedUid = uids.get(challenge.secondPlayerUserId);
+  if (challengerUid === undefined || challengedUid === undefined) {
+    throw new ApiError(409, 'PROFILE_REQUIRED', 'Um dos jogadores precisa concluir o perfil.');
+  }
+
+  // CAS: só um aceite atravessa, mesmo com múltiplas abas ou retries.
+  const claimed = await env.CORE_DB.prepare(
+    `UPDATE challenges SET status = 'PREPARING', updated_at = ?1, revision = revision + 1
+      WHERE id = ?2 AND revision = ?3 AND status = 'PENDING_DIRECT'`,
+  ).bind(new Date().toISOString(), challenge.id, challenge.revision).run();
+  if ((claimed.meta.changes ?? 0) !== 1) {
+    throw new ApiError(409, 'CHALLENGE_CONFLICT', 'Este desafio mudou de estado. Atualize a tela.');
+  }
+
+  let started;
+  try {
+    started = await new DirectChallengeService(env).start(challenge, [challengerUid, challengedUid]);
+  } catch (error) {
+    await env.CORE_DB.prepare(
+      `UPDATE challenges SET status = 'VOID', updated_at = ?1, revision = revision + 1
+        WHERE id = ?2 AND status = 'PREPARING'`,
+    ).bind(new Date().toISOString(), challenge.id).run();
+    await challenges.cleanupPayload(challenge.id);
+    notifySocial(env, context, [challenge.firstPlayerUserId, challenge.secondPlayerUserId], {
+      challengeId: challenge.id,
+      type: 'CHALLENGE_UPDATED',
+    });
+    throw error;
+  }
+
+  await env.CORE_DB.prepare(
+    `UPDATE challenges SET status = 'ACTIVE', match_id = ?1, updated_at = ?2, revision = revision + 1
+      WHERE id = ?3 AND status = 'PREPARING'`,
+  ).bind(started.roomId, new Date().toISOString(), challenge.id).run();
+
+  notifySocial(env, context, [challenge.firstPlayerUserId], {
+    challengeId: challenge.id,
+    opponent: started.presentations.get(challengerUid)?.opponent,
+    preload: started.presentations.get(challengerUid)?.preload,
+    roomId: started.roomId,
+    type: 'CHALLENGE_STARTED',
+  });
+  return json({
+    challengeId: challenge.id,
+    opponent: started.presentations.get(challengedUid)?.opponent,
+    preload: started.presentations.get(challengedUid)?.preload,
+    roomId: started.roomId,
+  });
+}
+
 async function socialRoute(request: Request, env: Env, url: URL, context: ExecutionContext): Promise<Response> {
   const identity = await requireUser(request, env);
   const profile = await new UserRepository(env.CORE_DB).findByFirebaseUid(identity.uid);
   if (profile === null) throw new ApiError(409, 'PROFILE_REQUIRED', 'Conclua seu perfil antes de acessar o Social.');
   const social = new SocialRepository(env.CORE_DB);
+  const challenges = new ChallengeRepository(env.CORE_DB);
   const push = new SocialPushService(env, social);
 
   if (url.pathname === '/api/social' && request.method === 'GET') {
@@ -487,7 +677,11 @@ async function socialRoute(request: Request, env: Env, url: URL, context: Execut
     await social.removeFriend(profile.userId, parsed.data.publicId);
     const target = await env.CORE_DB.prepare('SELECT user_id FROM user_profiles WHERE public_id = ?1 COLLATE NOCASE')
       .bind(parsed.data.publicId).first<{ user_id: string }>();
-    if (target !== null) invalidateSocial(env, context, [profile.userId, target.user_id]);
+    if (target !== null) {
+      // Desafio pendente da dupla morre junto; partida já iniciada é preservada.
+      await challenges.endForRelationship(profile.userId, target.user_id);
+      invalidateSocial(env, context, [profile.userId, target.user_id]);
+    }
     return json({ ok: true });
   }
   if (url.pathname === '/api/social/blocks') {
@@ -499,7 +693,10 @@ async function socialRoute(request: Request, env: Env, url: URL, context: Execut
       else await social.unblock(profile.userId, parsed.data.publicId);
       const target = await env.CORE_DB.prepare('SELECT user_id FROM user_profiles WHERE public_id = ?1 COLLATE NOCASE')
         .bind(parsed.data.publicId).first<{ user_id: string }>();
-      if (target !== null) invalidateSocial(env, context, [profile.userId, target.user_id]);
+      if (target !== null) {
+        if (request.method === 'POST') await challenges.endForRelationship(profile.userId, target.user_id);
+        invalidateSocial(env, context, [profile.userId, target.user_id]);
+      }
       return json({ ok: true });
     }
   }
@@ -535,6 +732,9 @@ async function apiRoute(request: Request, env: Env, url: URL, context: Execution
   if (url.pathname === '/api/profile/avatar') return profileAvatarRoute(request, env);
   if (url.pathname === '/api/social' || url.pathname.startsWith('/api/social/')) {
     return socialRoute(request, env, url, context);
+  }
+  if (url.pathname === '/api/challenges' || url.pathname.startsWith('/api/challenges/')) {
+    return challengeRoute(request, env, url, context);
   }
   if (url.pathname === '/api/realtime/tickets' && request.method === 'POST') return createRealtimeTicket(request, env);
   if (url.pathname.startsWith('/api/realtime/') && request.headers.get('Upgrade') !== null) return realtimeRoute(request, env, url);

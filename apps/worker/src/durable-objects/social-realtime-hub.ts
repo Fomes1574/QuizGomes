@@ -84,6 +84,21 @@ export class SocialRealtimeHub {
       }
       return Response.json({ ok: true });
     }
+    if (url.pathname === '/notify' && request.method === 'POST') {
+      // Evento social tipado no canal que já existe: sem segundo WebSocket e sem polling.
+      const input = await request.json<{ event: Record<string, unknown>; userIds: string[] }>();
+      if (!Array.isArray(input.userIds) || input.userIds.length > 100 ||
+        input.userIds.some((userId) => typeof userId !== 'string') ||
+        typeof input.event !== 'object' || input.event === null) {
+        return Response.json({ error: 'INVALID_NOTIFICATION' }, { status: 400 });
+      }
+      const payload = JSON.stringify(input.event);
+      if (payload.length > 4_096) return Response.json({ error: 'INVALID_NOTIFICATION' }, { status: 400 });
+      for (const userId of [...new Set(input.userIds.filter((value) => value.length > 0))]) {
+        for (const socket of this.ctx.getWebSockets(`user:${userId}`)) this.send(socket, payload);
+      }
+      return Response.json({ ok: true });
+    }
     if (url.pathname === '/count' && request.method === 'GET') {
       return Response.json({ onlineCount: this.users().size });
     }
