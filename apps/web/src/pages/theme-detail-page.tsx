@@ -6,13 +6,16 @@ import { AvatarFrame } from '../components/avatar-frame.js';
 import { Button } from '../components/button.js';
 import { ErrorState, LoadingState } from '../components/async-state.js';
 import { Icon } from '../components/icons.js';
+import { FriendChallengeDialog } from '../components/friend-challenge-dialog.js';
 import { MatchmakingDialog } from '../components/matchmaking-dialog.js';
 import { RankBadge } from '../components/rank-badge.js';
 import { ThemeArtwork } from '../components/theme-artwork.js';
 import { useAuth } from '../features/auth-context.js';
+import { useFriendChallenge } from '../hooks/use-friend-challenge.js';
 import { useMatchmaking } from '../hooks/use-matchmaking.js';
 import { apiRequest } from '../lib/api.js';
 import type { ThemeDetailResponse } from '../lib/models.js';
+import type { SocialFriend, SocialSnapshot } from '../lib/social.js';
 
 const difficultyLabel: Record<Difficulty, string> = { EASY: 'Fácil', MEDIUM: 'Médio', HARD: 'Difícil' };
 
@@ -28,7 +31,10 @@ export function ThemeDetailPage() {
   );
   const [mode, setMode] = useState<MatchMode>(restored?.mode === 'RANKED' ? 'RANKED' : 'CASUAL');
   const [reload, setReload] = useState(0);
+  const [friends, setFriends] = useState<SocialFriend[]>([]);
+  const [challengePickerOpen, setChallengePickerOpen] = useState(false);
   const matchmaking = useMatchmaking();
+  const friendChallenge = useFriendChallenge(slug);
 
   useEffect(() => {
     void getToken().then((token) => apiRequest<ThemeDetailResponse>(`/api/themes/${encodeURIComponent(slug)}`, {
@@ -38,6 +44,14 @@ export function ThemeDetailPage() {
       .then((result) => { setData(result); setError(null); })
       .catch((requestError: unknown) => setError(requestError instanceof Error ? requestError.message : 'Não foi possível carregar o tema.'));
   }, [getToken, reload, slug]);
+
+  useEffect(() => {
+    if (profile === null) return;
+    void getToken()
+      .then((token) => apiRequest<SocialSnapshot>('/api/social', { getToken, token }))
+      .then((snapshot) => setFriends(snapshot.friends))
+      .catch(() => setFriends([]));
+  }, [getToken, profile]);
 
   if (data === null && error === null) return <LoadingState label="Abrindo o tema" />;
   if (error !== null || data === null) return <ErrorState message={error ?? 'Tema indisponível.'} onRetry={() => setReload((value) => value + 1)} />;
@@ -69,9 +83,22 @@ export function ThemeDetailPage() {
           {!canPlay && <p className="inline-notice">Este pool ainda precisa de {required} perguntas ativas para uma partida {difficultyLabel[difficulty]}.</p>}
           {!realtimeEnabled && canPlay && <p className="inline-notice">O catálogo está pronto; partidas online serão liberadas após a validação do servidor de rodadas.</p>}
           {matchmaking.error && <p className="form-error">{matchmaking.error}</p>}
+          {friendChallenge.error && <p className="form-error">{friendChallenge.error}</p>}
           {profile === null
             ? <Button onClick={() => void signIn()}>Entrar para jogar</Button>
-            : <Button disabled={!canPlay || !realtimeEnabled} onClick={() => void matchmaking.start(data.theme.id, difficulty, mode, slug)}>Buscar partida</Button>}
+            : (
+              <div className="play-card__actions">
+                <Button
+                  disabled={!canPlay || !realtimeEnabled}
+                  onClick={() => void matchmaking.start(data.theme.id, difficulty, mode, slug)}
+                >Puxar partida</Button>
+                <Button
+                  disabled={!canPlay || !realtimeEnabled || friendChallenge.status !== 'idle'}
+                  onClick={() => setChallengePickerOpen(true)}
+                  variant="secondary"
+                >Desafiar amigo</Button>
+              </div>
+            )}
         </div>
 
         <aside className="leaderboard-card">
@@ -84,6 +111,33 @@ export function ThemeDetailPage() {
 
       <article className="personal-theme-card"><div><span className="eyebrow">Seu cartão</span><h2>{profile?.displayName ?? 'Entre para acompanhar'}</h2><p>{profile ? (data.personal?.rankedMatches ? 'Seu histórico neste tema é calculado apenas pelas partidas Ranqueadas.' : 'Sua história competitiva neste tema começa na primeira Ranqueada.') : 'Ranking, descoberta histórica e Conhecimento ficam reunidos aqui.'}</p></div><div className="personal-theme-card__stats"><RankBadge knowledge={data.personal?.knowledge ?? 0} showKnowledge /><span><strong>{(data.personal?.discoveredPercentage ?? 0).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%</strong><small>descoberto</small></span><span><strong>{data.personal?.position ? `#${data.personal.position}` : '—'}</strong><small>posição</small></span></div></article>
 
+      {challengePickerOpen && (
+        <FriendChallengeDialog
+          busy={friendChallenge.status !== 'idle'}
+          friends={friends}
+          onClose={() => setChallengePickerOpen(false)}
+          onDirect={(friend, chosenDifficulty) => {
+            setChallengePickerOpen(false);
+            void friendChallenge.challenge({
+              difficulty: chosenDifficulty,
+              displayName: friend.displayName,
+              kind: 'DIRECT',
+              publicId: friend.publicId,
+            });
+          }}
+          themeName={data.theme.name}
+        />
+      )}
+      {friendChallenge.status === 'waiting' && (
+        <div className="challenge-waiting" role="status">
+          <span className="spinner" aria-hidden="true" />
+          <div>
+            <strong>Aguardando {friendChallenge.waitingFor}</strong>
+            <small>{friendChallenge.secondsLeft}s para responder</small>
+          </div>
+          <button onClick={() => void friendChallenge.cancel()} type="button">Cancelar</button>
+        </div>
+      )}
       {matchmaking.status !== 'idle' && <MatchmakingDialog
         difficulty={difficulty}
         elapsedSeconds={matchmaking.elapsedSeconds}

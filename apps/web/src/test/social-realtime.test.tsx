@@ -37,6 +37,7 @@ import {
   useFriendPresence,
   useSocial,
 } from '../features/social-context.js';
+import { MemoryRouter } from 'react-router-dom';
 import { SocialPage } from '../pages/social-page.js';
 
 type Listener = (event: { data?: string }) => void;
@@ -144,7 +145,7 @@ describe('fundação Social realtime sem polling nem FCM obrigatório', () => {
   });
 
   it('atualiza pedido e badge com Social já aberta, sem foco, navegação, reload ou FCM', async () => {
-    render(<SocialProvider><Indicator /><SocialPage /></SocialProvider>);
+    render(<MemoryRouter><SocialProvider><Indicator /><SocialPage /></SocialProvider></MemoryRouter>);
     const socket = await currentSocket();
     act(() => socket.emit('open'));
     await waitFor(() => expect(screen.getByRole('region', { name: 'Pedidos recebidos' }))
@@ -175,7 +176,7 @@ describe('fundação Social realtime sem polling nem FCM obrigatório', () => {
 
   it('aceite, recusa, cancelamento ou bloqueio convergem via invalidação neutra sem revelar o motivo', async () => {
     mocks.pending = 1;
-    render(<SocialProvider><Indicator /><SocialPage /></SocialProvider>);
+    render(<MemoryRouter><SocialProvider><Indicator /><SocialPage /></SocialProvider></MemoryRouter>);
     const socket = await currentSocket();
     act(() => socket.emit('open'));
     expect(await screen.findByText('Ana chegou em tempo real')).toBeInTheDocument();
@@ -314,7 +315,7 @@ describe('fundação Social realtime sem polling nem FCM obrigatório', () => {
       publicId: '#QGANA222',
     }];
     mocks.presences = [{ presence: 'ONLINE', publicId: '#QGANA222', revision: 10 }];
-    render(<SocialProvider><SocialPage /></SocialProvider>);
+    render(<MemoryRouter><SocialProvider><SocialPage /></SocialProvider></MemoryRouter>);
     const socket = await currentSocket();
     act(() => socket.emit('open'));
     expect(await screen.findByLabelText('Amiga Real está online')).toBeInTheDocument();
@@ -335,7 +336,7 @@ describe('fundação Social realtime sem polling nem FCM obrigatório', () => {
   });
 
   it('aceite de amizade online converge imediatamente e invalidação de remoção limpa o cache', async () => {
-    render(<SocialProvider><FriendIndicator /><SocialPage /></SocialProvider>);
+    render(<MemoryRouter><SocialProvider><FriendIndicator /><SocialPage /></SocialProvider></MemoryRouter>);
     const socket = await currentSocket();
     act(() => socket.emit('open'));
     await waitFor(() => expect(screen.getByTestId('friend-presences')).toBeEmptyDOMElement());

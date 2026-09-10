@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Avatar } from '../components/avatar.js';
 import { AvatarFrame } from '../components/avatar-frame.js';
 import { EmptyState, LoadingState } from '../components/async-state.js';
@@ -8,6 +9,7 @@ import { SocialConfirmDialog } from '../components/social-confirm-dialog.js';
 import { useAuth } from '../features/auth-context.js';
 import { useFriendPresence, useSocial } from '../features/social-context.js';
 import { apiRequest } from '../lib/api.js';
+import { DIFFICULTY_LABEL, type ChallengeView } from '../lib/challenges.js';
 import type { FriendPresence, SocialCandidate, SocialFriend, SocialSnapshot, SocialUser } from '../lib/social.js';
 
 const EMPTY_SNAPSHOT: SocialSnapshot = { friendLimit: 200, friends: [], incoming: [], outgoing: [] };
@@ -235,9 +237,75 @@ function FriendsSection({
   );
 }
 
+function ChallengesSection({
+  busy,
+  challenges,
+  onAccept,
+  onCancel,
+  onDecline,
+}: {
+  busy: boolean;
+  challenges: ChallengeView[];
+  onAccept: (challenge: ChallengeView) => void;
+  onCancel: (challenge: ChallengeView) => void;
+  onDecline: (challenge: ChallengeView) => void;
+}) {
+  if (challenges.length === 0) return null;
+  return (
+    <section aria-label="Desafios" className="social-section">
+      <div className="section-heading"><div><h2>Desafios</h2></div></div>
+      <div className="social-list">
+        {challenges.map((challenge) => (
+          <article className="social-person" key={challenge.id}>
+            <div className="social-person__identity">
+              <AvatarFrame frameId={challenge.challenger.frameId}>
+                <Avatar
+                  customUrl={challenge.challenger.customAvatarUrl}
+                  googleUrl={challenge.challenger.photoUrl}
+                  name={challenge.challenger.displayName}
+                  size="small"
+                />
+              </AvatarFrame>
+              <span>
+                <strong>{challenge.role === 'CHALLENGED' ? challenge.challenger.displayName : 'Você desafiou'}</strong>
+                <small>
+                  {challenge.theme.name} · {DIFFICULTY_LABEL[challenge.difficulty]} ·
+                  {challenge.kind === 'DIRECT' ? ' agora' : ' quando puder'}
+                </small>
+              </span>
+            </div>
+            <div className="social-person__actions">
+              {challenge.role === 'CHALLENGED' ? (
+                <>
+                  <Button disabled={busy} onClick={() => onAccept(challenge)}>Jogar</Button>
+                  <button
+                    className="social-person__quiet-action"
+                    disabled={busy}
+                    onClick={() => onDecline(challenge)}
+                    type="button"
+                  >Recusar</button>
+                </>
+              ) : (
+                <button
+                  className="social-person__quiet-action"
+                  disabled={busy}
+                  onClick={() => onCancel(challenge)}
+                  type="button"
+                >Cancelar desafio</button>
+              )}
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 export function SocialPage() {
   const { getToken, profile, signIn } = useAuth();
-  const { refresh, revision } = useSocial();
+  const { challengeRevision, consumeStartedChallenge, refresh, revision, startedChallenge } = useSocial();
+  const navigate = useNavigate();
+  const [challenges, setChallenges] = useState<ChallengeView[]>([]);
   const [snapshot, setSnapshot] = useState<SocialSnapshot>(EMPTY_SNAPSHOT);
   const [search, setSearch] = useState('');
   const [results, setResults] = useState<SocialCandidate[]>([]);
@@ -261,6 +329,49 @@ export function SocialPage() {
   }, [getToken, profile]);
 
   useEffect(() => { queueMicrotask(() => { void load(); }); }, [load, revision]);
+
+  const loadChallenges = useCallback(async () => {
+    if (profile === null) return;
+    try {
+      const response = await apiRequest<{ challenges?: ChallengeView[] }>('/api/challenges', { getToken });
+      setChallenges(Array.isArray(response.challenges) ? response.challenges : []);
+    } catch {
+      setChallenges([]);
+    }
+  }, [getToken, profile]);
+
+  useEffect(() => { queueMicrotask(() => { void loadChallenges(); }); }, [challengeRevision, loadChallenges]);
+
+  // O aceite do outro lado chega pelo canal social e leva direto para a sala.
+  useEffect(() => {
+    if (startedChallenge === null) return;
+    const started = consumeStartedChallenge();
+    if (started === null) return;
+    void navigate(`/partida/${started.roomId}`);
+  }, [consumeStartedChallenge, navigate, startedChallenge]);
+
+  const challengeAction = useCallback((challenge: ChallengeView, action: 'accept' | 'cancel' | 'decline') => {
+    void (async () => {
+      setBusy(challenge.id);
+      setError(null);
+      try {
+        const response = await apiRequest<{ roomId?: string }>(`/api/challenges/${challenge.id}/${action}`, {
+          getToken,
+          method: 'POST',
+        });
+        if (action === 'accept' && typeof response.roomId === 'string') {
+          void navigate(`/partida/${response.roomId}`);
+          return;
+        }
+        await loadChallenges();
+      } catch (reason) {
+        setError(reason instanceof Error ? reason.message : 'Não foi possível concluir esta ação.');
+        await loadChallenges();
+      } finally {
+        setBusy(null);
+      }
+    })();
+  }, [getToken, loadChallenges, navigate]);
 
   useEffect(() => {
     const value = search.trim();
@@ -415,6 +526,14 @@ export function SocialPage() {
                   ))}
                 </section>
               ) : null}
+
+              <ChallengesSection
+                busy={busy !== null}
+                challenges={challenges}
+                onAccept={(challenge) => challengeAction(challenge, 'accept')}
+                onCancel={(challenge) => challengeAction(challenge, 'cancel')}
+                onDecline={(challenge) => challengeAction(challenge, 'decline')}
+              />
 
               <FriendsSection
                 disabled={busy !== null}

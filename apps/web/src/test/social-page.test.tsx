@@ -2,7 +2,11 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { MemoryRouter } from 'react-router-dom';
 import { SocialPage } from '../pages/social-page.js';
+
+// A página navega para a sala ao aceitar um desafio, então precisa de um Router.
+const socialPage = () => <MemoryRouter><SocialPage /></MemoryRouter>;
 
 const mocks = vi.hoisted(() => ({
   apiRequest: vi.fn(),
@@ -22,7 +26,15 @@ vi.mock('../features/auth-context.js', () => ({
 }));
 vi.mock('../features/social-context.js', () => ({
   useFriendPresence: () => mocks.presence,
-  useSocial: () => ({ pendingCount: 1, pushConfigured: false, refresh: mocks.refresh, revision: 0 }),
+  useSocial: () => ({
+    challengeRevision: 0,
+    consumeStartedChallenge: () => null,
+    pendingCount: 1,
+    pushConfigured: false,
+    refresh: mocks.refresh,
+    revision: 0,
+    startedChallenge: null,
+  }),
 }));
 vi.mock('../lib/api.js', () => ({ apiRequest: mocks.apiRequest }));
 
@@ -70,7 +82,7 @@ describe('Social Foundation — interface web', () => {
   });
 
   it('mostra pedidos antes de amigos, avatar/frame reais e estado privado somente no card de amizade', async () => {
-    render(<SocialPage />);
+    render(socialPage());
     await screen.findByText('Ana Real');
     const incoming = screen.getByRole('region', { name: 'Pedidos recebidos' });
     expect(within(incoming).getByText('#QGANA222')).toBeInTheDocument();
@@ -84,7 +96,7 @@ describe('Social Foundation — interface web', () => {
   });
 
   it('busca no backend com nome/ID público sem baixar toda a lista de usuários', async () => {
-    render(<SocialPage />);
+    render(socialPage());
     await screen.findByText('Ana Real');
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'bia' } });
     await waitFor(() => {
@@ -95,7 +107,7 @@ describe('Social Foundation — interface web', () => {
   });
 
   it('aceita e recusa com ação imediata dirigida somente ao pedido existente', async () => {
-    const view = render(<SocialPage />);
+    const view = render(socialPage());
     await screen.findByText('Ana Real');
     fireEvent.click(screen.getByRole('button', { name: 'Aceitar' }));
     await waitFor(() => expect(mocks.apiRequest).toHaveBeenCalledWith(
@@ -104,7 +116,7 @@ describe('Social Foundation — interface web', () => {
     ));
     view.unmount();
 
-    render(<SocialPage />);
+    render(socialPage());
     await screen.findByText('Ana Real');
     fireEvent.click(screen.getByRole('button', { name: 'Recusar' }));
     await waitFor(() => expect(mocks.apiRequest).toHaveBeenCalledWith(
@@ -114,7 +126,7 @@ describe('Social Foundation — interface web', () => {
   });
 
   it('confirma bloqueio com dialog acessível e envia apenas o ID público do alvo', async () => {
-    render(<SocialPage />);
+    render(socialPage());
     await screen.findByText('Bia Amiga');
     fireEvent.click(screen.getByRole('button', { name: 'Bloquear Bia Amiga' }));
     const dialog = screen.getByRole('dialog', { name: 'Bloquear Bia Amiga?' });
@@ -133,7 +145,7 @@ describe('Social Foundation — interface web', () => {
       publicId: friendUser.publicId,
       revision: 1,
     }]]);
-    const view = render(<SocialPage />);
+    const view = render(socialPage());
     expect(await screen.findByLabelText('Bia Amiga está procurando partida')).toBeInTheDocument();
     const friend = screen.getByRole('region', { name: 'Amigos' });
     expect(friend.querySelector('.friend-presence-dot')).toHaveAttribute('data-presence', 'MATCHMAKING');
@@ -145,7 +157,7 @@ describe('Social Foundation — interface web', () => {
       publicId: friendUser.publicId,
       revision: 2,
     }]]);
-    view.rerender(<SocialPage />);
+    view.rerender(socialPage());
     expect(screen.getByLabelText('Bia Amiga está em partida')).toBeInTheDocument();
     expect(friend.querySelector('.friend-presence-dot')).toHaveAttribute('data-presence', 'IN_MATCH');
 
@@ -154,7 +166,7 @@ describe('Social Foundation — interface web', () => {
       publicId: friendUser.publicId,
       revision: 3,
     }]]);
-    view.rerender(<SocialPage />);
+    view.rerender(socialPage());
     expect(screen.getByLabelText('Bia Amiga está reconectando')).toBeInTheDocument();
     expect(friend.querySelector('.friend-presence-dot')).toHaveAttribute('data-presence', 'RECONNECTING');
 
@@ -163,7 +175,7 @@ describe('Social Foundation — interface web', () => {
       publicId: friendUser.publicId,
       revision: 4,
     }]]);
-    view.rerender(<SocialPage />);
+    view.rerender(socialPage());
     expect(screen.getByLabelText('Bia Amiga está offline')).toBeInTheDocument();
     expect(friend.querySelector('.friend-presence-dot')).toHaveAttribute('data-presence', 'OFFLINE');
   });
@@ -191,7 +203,7 @@ describe('Social Foundation — interface web', () => {
       }] });
       return Promise.resolve({ ok: true });
     });
-    render(<SocialPage />);
+    render(socialPage());
     await screen.findByText('Ana Livre');
     const cards = [...screen.getByRole('region', { name: 'Amigos' })
       .querySelectorAll('[data-friend-id]')].map((card) => card.getAttribute('data-friend-id'));
@@ -240,13 +252,13 @@ describe('Social Foundation — interface web', () => {
     ]);
 
     try {
-      const view = render(<SocialPage />);
+      const view = render(socialPage());
       await screen.findByText('Ana movimento');
       mocks.presence = new Map([
         [first.publicId, { presence: 'OFFLINE', publicId: first.publicId, revision: 2 }],
         [second.publicId, { presence: 'ONLINE', publicId: second.publicId, revision: 2 }],
       ]);
-      view.rerender(<SocialPage />);
+      view.rerender(socialPage());
       expect(animate).toHaveBeenCalledWith(expect.any(Array), expect.objectContaining({ duration: 390 }));
 
       animate.mockClear();
@@ -255,7 +267,7 @@ describe('Social Foundation — interface web', () => {
         [first.publicId, { presence: 'ONLINE', publicId: first.publicId, revision: 3 }],
         [second.publicId, { presence: 'OFFLINE', publicId: second.publicId, revision: 3 }],
       ]);
-      view.rerender(<SocialPage />);
+      view.rerender(socialPage());
       expect(animate).not.toHaveBeenCalled();
       expect(screen.getByLabelText('Ana movimento está online')).toBeInTheDocument();
     } finally {
@@ -284,7 +296,7 @@ describe('Social Foundation — interface web', () => {
       for (const [width, theme] of [[390, 'dark'], [1440, 'light']] as const) {
         vi.stubGlobal('innerWidth', width);
         document.documentElement.dataset.theme = theme;
-        const view = render(<SocialPage />);
+        const view = render(socialPage());
         const status = await screen.findByLabelText('Bia Amiga está em partida');
         const friends = screen.getByRole('region', { name: 'Amigos' });
         expect(status).toBeInTheDocument();

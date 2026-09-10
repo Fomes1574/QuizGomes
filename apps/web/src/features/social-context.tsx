@@ -8,17 +8,31 @@ import {
   useState,
   type ReactNode,
 } from 'react';
+import type { PublicQuestion } from '@quiz-gomes/domain';
 import { apiRequest, websocketUrl } from '../lib/api.js';
+import type { MatchFoundOpponent } from '../lib/preloaded-match-room.js';
 import type { FriendPresence, FriendPresenceEntry, FriendPresenceSnapshot } from '../lib/social.js';
 import { listenForForegroundFriendRequests } from '../lib/social-notifications.js';
 import { useAuth } from './auth-context.js';
 
+export interface StartedChallenge {
+  challengeId: string;
+  opponent: MatchFoundOpponent;
+  preload: { firstQuestion: PublicQuestion };
+  roomId: string;
+}
+
 interface SocialContextValue {
+  /** Cresce a cada evento de desafio, sem polling: as telas refazem a leitura. */
+  challengeRevision: number;
+  /** Lê e descarta o desafio que acabou de virar partida, para navegar uma única vez. */
+  consumeStartedChallenge: () => StartedChallenge | null;
   onlineCount: number | null;
   pendingCount: number;
   pushConfigured: boolean;
   refresh: () => Promise<void>;
   revision: number;
+  startedChallenge: StartedChallenge | null;
 }
 
 export const SOCIAL_HEARTBEAT_INTERVAL_MS = 45_000;
@@ -39,6 +53,8 @@ export function SocialProvider({ children }: { children: ReactNode }) {
   const [pushConfigured, setPushConfigured] = useState(false);
   const [revision, setRevision] = useState(0);
   const [friendPresence, setFriendPresence] = useState<ReadonlyMap<string, FriendPresenceEntry>>(new Map());
+  const [challengeRevision, setChallengeRevision] = useState(0);
+  const [startedChallenge, setStartedChallenge] = useState<StartedChallenge | null>(null);
   const snapshotRequest = useRef(0);
 
   const refreshPresence = useCallback(async () => {
@@ -143,16 +159,32 @@ export function SocialProvider({ children }: { children: ReactNode }) {
           }
           try {
             const message = JSON.parse(String(event.data)) as {
+              challengeId?: string;
               count?: number;
+              opponent?: MatchFoundOpponent;
+              preload?: { firstQuestion?: PublicQuestion };
               presence?: FriendPresence;
               publicId?: string;
               revision?: number;
+              roomId?: string;
               type?: string;
             };
             if (message.type === 'ONLINE_COUNT' && typeof message.count === 'number') {
               setOnlineCount(message.count);
             } else if (message.type === 'SOCIAL_INVALIDATED') {
               void refresh();
+            } else if (message.type === 'CHALLENGE_UPDATED') {
+              setChallengeRevision((current) => current + 1);
+            } else if (message.type === 'CHALLENGE_STARTED' &&
+              typeof message.challengeId === 'string' && typeof message.roomId === 'string' &&
+              message.opponent !== undefined && message.preload?.firstQuestion !== undefined) {
+              setStartedChallenge({
+                challengeId: message.challengeId,
+                opponent: message.opponent,
+                preload: { firstQuestion: message.preload.firstQuestion },
+                roomId: message.roomId,
+              });
+              setChallengeRevision((current) => current + 1);
             } else if (message.type === 'FRIEND_PRESENCE_CHANGED' &&
               typeof message.publicId === 'string' && message.presence !== undefined &&
               FRIEND_PRESENCES.has(message.presence) && Number.isSafeInteger(message.revision)) {
@@ -220,13 +252,26 @@ export function SocialProvider({ children }: { children: ReactNode }) {
     };
   }, [getToken, profile, refresh]);
 
+  const consumeStartedChallenge = useCallback(() => {
+    let taken: StartedChallenge | null = null;
+    setStartedChallenge((current) => {
+      taken = current;
+      return null;
+    });
+    return taken;
+  }, []);
+
   const value = useMemo<SocialContextValue>(() => ({
+    challengeRevision,
+    consumeStartedChallenge,
     onlineCount: profile === null ? null : onlineCount,
     pendingCount: profile === null ? 0 : pendingCount,
     pushConfigured,
     refresh,
     revision,
-  }), [onlineCount, pendingCount, profile, pushConfigured, refresh, revision]);
+    startedChallenge,
+  }), [challengeRevision, consumeStartedChallenge, onlineCount, pendingCount, profile,
+    pushConfigured, refresh, revision, startedChallenge]);
 
   return (
     <SocialContext value={value}>
