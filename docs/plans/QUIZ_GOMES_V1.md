@@ -58,7 +58,10 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 - [ ] Milestone 9B — smoke físico pós-deploy pelo proprietário: amigos online/busca/partida/reconexão/offline, múltiplas sessões e transições visuais em aparelhos reais.
 - [x] 2026-09-10 — apresentação do duelo implementada e validada localmente: composição VS na apresentação e no lobby, coreografia em quatro tempos, continuidade FLIP até o placar e cadência ampliada para 1.200/1.200/900 ms sob autorização explícita do proprietário.
 - [ ] Apresentação do duelo — smoke físico pós-deploy pelo proprietário: coreografia, continuidade modal→lobby→placar, retrato/moldura/liga, paisagem, claro/escuro e `prefers-reduced-motion` em aparelhos reais.
-- [ ] Milestone 9C — desafio simultâneo entre amigos.
+- [x] 2026-09-10 — regras globais M9C+M10 aplicadas: 5/8/12 perguntas, sorteio sem histórico de exibição, limite de 200 amizades e silenciamento por amizade.
+- [x] 2026-09-10 — desafio simultâneo entre amigos implementado e validado localmente: núcleo de domínio, migration 0008, repositório com CAS, aceite no MatchRoom existente, realtime no canal social e interface no tema e no Social.
+- [ ] Desafio assíncrono (M10) — motor da metade selada, revelação progressiva e interface ainda não implementados.
+- [ ] Desafios entre amigos — smoke físico pós-deploy pelo proprietário.
 - [ ] Milestone 10 — assíncrono selado e revelação progressiva.
 - [ ] Milestone 11 — criação/moderação/import/admin.
 - [ ] Milestone 12 — e2e, performance, acessibilidade, segurança e deploy.
@@ -759,6 +762,65 @@ reais e o `global.css` real em 390×844, 360×640, 1280×800, 740×400 e 844×39
 temas claro e escuro, sem overflow horizontal em nenhum caso.
 
 Smoke físico **não foi executado** e permanece pendente do proprietário.
+
+### 2026-09-10 — M9C+M10: regras globais e desafio simultâneo entre amigos
+
+Regras globais aplicadas em todas as modalidades:
+
+- **5/8/12 perguntas** por dificuldade, 10 s por pergunta preservados, com o pool
+  mínimo passando a ser exatamente a contagem da dificuldade.
+- **Sorteio sem histórico**: a união das últimas 200 exibições saiu da seleção.
+  Agora é amostra uniforme sem reposição sobre os slots densos `1..N` do pool
+  tema+dificuldade. Repetição entre partidas diferentes é permitida; dentro da
+  mesma partida é impossível por construção da amostragem. O conjunto é sorteado
+  uma única vez e serve os dois jogadores.
+- **Estado usuário+pool no formato 2**, guardando só o bitmap de descoberta que
+  alimenta a porcentagem do tema. A leitura aceita o formato 1 e descarta a fila,
+  sem migration de dados e com menos bytes por linha no D1.
+- **200 amizades ativas** por usuário, validado no envio e, autoritativamente, no
+  aceite: o limite é condição da própria transição SQL.
+- **Silenciar por amizade** suprime apenas notificação; não desfaz amizade, não
+  bloqueia, não esconde presença e não impede desafio.
+
+Desafio simultâneo entre amigos (M9C) entregue de ponta a ponta:
+
+- núcleo de domínio puro com bloqueio por dupla, desafio cruzado resolvido como
+  aceite ou concordância sem criar segundo registro, precedência do cancelamento
+  até o segundo jogador começar, expiração de 30 s que não é recusa e as regras de
+  sigilo do assíncrono;
+- migration `0008` com `friendship_mutes`, o schema unificado de `challenges`,
+  `challenge_questions`, `challenge_answers` e o índice único por dupla não
+  ordenada como barreira final. A tabela `challenges` do M3, que nunca recebeu
+  escrita de nenhuma rota ou DO, foi substituída forward-only;
+- repositório aplicando cada transição com CAS na revisão lida; encerrar um
+  desafio apaga conjunto e respostas sem gerar resultado, XP ou Conhecimento;
+- desfazer amizade e bloquear encerram o pendente e nunca derrubam partida
+  iniciada;
+- aceite revalidando amizade, bloqueio, presença e expiração no servidor e
+  entregando o **MatchRoom existente**: nenhum motor, scoring, timer, reconexão ou
+  resultado foi duplicado, e o lock `active_match_players` segue como barreira
+  final contra duas partidas;
+- realtime pelo `SocialRealtimeHub` que já existe, com um endpoint de notificação
+  tipada no mesmo canal — sem polling, sem segundo WebSocket, sem novo Durable
+  Object, sem nova presença e sem escrita periódica no D1. Um convite pendente não
+  cria estado público novo: `invite` continua aparecendo como `Online`;
+- interface com "Puxar partida" e "Desafiar amigo" no tema, seletor ordenado por
+  presença, espera com contagem derivada do prazo autoritativo, e a lista de
+  desafios no Social com Jogar, Recusar e Cancelar.
+
+Todo desafio entre amigos é Casual por construção: não há seletor de modalidade e
+o Conhecimento nunca muda.
+
+**Não implementado nesta execução:** o desafio assíncrono (M10) tem domínio,
+schema e repositório prontos, mas o motor da metade selada, a revelação
+progressiva por rodada e a interface correspondente ainda não existem. Por isso a
+opção "Desafiar depois" **não foi exposta na interface** — o backend aceita
+`kind: 'ASYNC'`, mas nenhuma tela cria ou joga esse desafio. A fronteira está
+registrada aqui para a próxima execução.
+
+Verificação: `lint`, `typecheck`, 241 testes unitários e de domínio, 66 testes de
+Worker/WebSocket, `test:migrations` (banco vazio, upgrade 0007→0008, invariantes
+de dupla e rollback) e `build` verdes. Nenhum smoke físico foi executado.
 
 ## Critério de saída desta execução
 

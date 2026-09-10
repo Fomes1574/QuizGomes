@@ -99,7 +99,9 @@ dificuldade e modalidade; desconexão, abandono iniciado e demais voids não mud
 
 ## Consistência e idempotência
 
-- `active_match_players.user_id` exclusivo impede o mesmo usuário em duas partidas.
+- `active_match_players.user_id` exclusivo impede o mesmo usuário em duas partidas, inclusive as vindas de desafio entre amigos.
+- Índice único parcial em `challenges(pair_low_id, pair_high_id)` sobre os estados vivos impede dois desafios ativos na mesma dupla; a primeira reserva persistida vence a corrida e define o primeiro jogador.
+- Toda transição de desafio usa CAS na revisão lida, então retry, double tap e multi-aba não reaplicam nada.
 - `matches.result_version` e chave única no ledger impedem resultado duplicado.
 - Finalização usa um batch transacional: trava estado final e grava ledger, ranking, XP, respostas, histórico do pool e liberação dos locks; retries observam o resultado já aplicado.
 - Requests mutáveis aceitam `Idempotency-Key` quando repetição de rede é provável.
