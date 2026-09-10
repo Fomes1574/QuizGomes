@@ -1,9 +1,11 @@
 import { LIVE_ROUND_RESULT_MS, QUESTION_DURATION_MS, displayedSeconds, remainingAt } from '@quiz-gomes/domain';
-import { useCallback, useEffect, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
+import { playDuelFlip, takeDuelOrigin, type DuelSeat } from '../lib/match-handoff.js';
 import { Avatar } from './avatar.js';
 import { AvatarFrame } from './avatar-frame.js';
 
 const OPTION_LABELS = ['A', 'B', 'C', 'D'] as const;
+const DUEL_SEATS: readonly DuelSeat[] = ['viewer', 'opponent'];
 const ROUND_OPPONENT_REVEAL_MS = 250;
 const ROUND_SCORE_REVEAL_MS = 550;
 
@@ -118,6 +120,7 @@ function MatchTimer({
 
 export function MatchScreen({
   deadlineMs,
+  duelRoomId,
   onAnswer,
   opponent,
   opponentAnswered = false,
@@ -133,6 +136,8 @@ export function MatchScreen({
   selectedOption,
 }: {
   deadlineMs: number;
+  /** Sala desta partida; habilita a continuidade dos retratos vindos do lobby na primeira rodada. */
+  duelRoomId?: string | undefined;
   onAnswer: (option: number) => void;
   opponent: MatchParticipantView;
   opponentAnswered?: boolean;
@@ -154,7 +159,9 @@ export function MatchScreen({
     player: playerScore,
   }));
   const [questionEntranceDelayMs] = useState(questionPresentationDelayMs);
+  const scoreboardRef = useRef<HTMLElement>(null);
   const resolved = resolution !== undefined;
+  const roundNumber = round?.number;
   const selected = resolved ? resolution.viewer.selectedOption : selectedOption ?? localSelected;
   const visuallyExpired = expiredDeadline === deadlineMs || remainingMs <= 0;
   const opponentSelected = resolution?.opponent.selectedOption ?? null;
@@ -165,6 +172,23 @@ export function MatchScreen({
     '--round-opponent-reveal-delay': `${ROUND_OPPONENT_REVEAL_MS}ms`,
     '--round-score-reveal-delay': `${ROUND_SCORE_REVEAL_MS}ms`,
   };
+
+  useEffect(() => {
+    // Só a primeira rodada continua o movimento do lobby, e a origem é consumida uma única vez.
+    if (duelRoomId === undefined || roundNumber !== 1) return undefined;
+    const timer = window.setTimeout(() => {
+      const scoreboard = scoreboardRef.current;
+      if (scoreboard === null) return;
+      for (const seat of DUEL_SEATS) {
+        playDuelFlip(
+          scoreboard.querySelector<HTMLElement>(`[data-duel-flip="${seat}"]`),
+          takeDuelOrigin(duelRoomId, 'lobby', seat),
+        );
+      }
+      // A apresentação da rodada cobre a tela até aqui; antes disso o movimento seria invisível.
+    }, Math.max(0, questionEntranceDelayMs));
+    return () => window.clearTimeout(timer);
+  }, [duelRoomId, questionEntranceDelayMs, roundNumber]);
 
   useEffect(() => {
     if (!resolved) return undefined;
@@ -184,14 +208,14 @@ export function MatchScreen({
       className={`match-screen${resolved ? ' match-screen--resolved' : ''}${preparing ? ' match-screen--preparing' : ''}`}
       style={screenStyle}
     >
-      <header className="match-scoreboard">
+      <header className="match-scoreboard" ref={scoreboardRef}>
         <div className="opponent-chip">
           <span
             aria-label={opponentAnswered ? 'Adversário respondeu' : 'Adversário pensando'}
             className={`status-dot ${opponentAnswered ? 'status-dot--answered' : ''}`}
             role="status"
           />
-          <AvatarFrame frameId={opponent.frameId}>
+          <AvatarFrame flipId="opponent" frameId={opponent.frameId}>
             <Avatar customUrl={opponent.customAvatarUrl} googleUrl={opponent.photoUrl} name={opponent.name} size="small" />
           </AvatarFrame>
           <span className="match-scoreboard__copy">
@@ -210,7 +234,7 @@ export function MatchScreen({
               </span>
             )}
           </span>
-          <AvatarFrame frameId={player.frameId}>
+          <AvatarFrame flipId="viewer" frameId={player.frameId}>
             <Avatar customUrl={player.customAvatarUrl} googleUrl={player.photoUrl} name={player.name} size="small" />
           </AvatarFrame>
         </div>
