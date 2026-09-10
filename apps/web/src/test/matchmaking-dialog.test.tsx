@@ -75,12 +75,58 @@ describe('fechamento visual do matchmaking', () => {
     expect(screen.queryByText(/XP|win rate|nível/i)).not.toBeInTheDocument();
   });
 
-  it('mantém os 2,9 s divididos em entrada suave, permanência e saída perceptível', () => {
+  it('divide os 3,3 s em entrada coreografada, permanência e saída perceptível', () => {
     expect(MATCH_FOUND_ENTRY_MS).toBe(1_200);
-    expect(MATCH_FOUND_HOLD_MS).toBe(800);
+    expect(MATCH_FOUND_HOLD_MS).toBe(1_200);
     expect(MATCH_FOUND_EXIT_MS).toBe(900);
+    // A coreografia do duelo assenta em ~1,3 s e a permanência cobre o resto da janela visível.
+    expect(MATCH_FOUND_ENTRY_MS + MATCH_FOUND_HOLD_MS).toBe(2_400);
     expect(MATCH_FOUND_ENTRY_MS + MATCH_FOUND_HOLD_MS + MATCH_FOUND_EXIT_MS)
       .toBe(MATCH_FOUND_PRESENTATION_MS);
+  });
+
+  it('compõe o duelo com os dois jogadores, o contexto da partida e as âncoras de continuidade', () => {
+    render(<MatchmakingDialog
+      difficulty="HARD"
+      elapsedSeconds={22}
+      mode="RANKED"
+      onCancel={() => undefined}
+      onClose={() => undefined}
+      opponent={{
+        customAvatarUrl: null,
+        displayName: 'Ana Real',
+        frameId: 'frame-real',
+        knowledge: 1_980,
+        photoUrl: null,
+      }}
+      preparing={false}
+      status="presenting-opponent"
+      theme={theme}
+      viewer={{
+        customAvatarUrl: null,
+        displayName: 'Matheus',
+        frameId: null,
+        knowledge: 1_240,
+        photoUrl: null,
+      }}
+    />);
+
+    expect(screen.getByText('JOGADOR ENCONTRADO')).toBeInTheDocument();
+    expect(screen.getByText('Você')).toBeInTheDocument();
+    expect(screen.getByText('Adversário')).toBeInTheDocument();
+    expect(screen.getByText('Matheus')).toBeInTheDocument();
+    // O adversário continua sendo o título acessível do diálogo.
+    expect(screen.getByRole('heading', { name: 'Ana Real' })).toHaveAttribute('id', 'matchmaking-found-title');
+    expect(screen.getByText('Difícil · 15 perguntas')).toBeInTheDocument();
+    expect(screen.getByText('Ranqueada')).toBeInTheDocument();
+    expect(document.querySelector('.duel-side--viewer .sr-only')).toHaveTextContent('1.240 Conhecimento');
+    expect(document.querySelector('.duel-side--opponent .sr-only')).toHaveTextContent('1.980 Conhecimento');
+    // O acento cromático segue exatamente a liga do selo, sem tabela paralela.
+    expect(document.querySelector('.duel-side--opponent')).toHaveClass('duel-side--brass');
+    expect(document.querySelector('.duel-side--opponent .rank-badge')).toHaveClass('rank-badge--brass');
+    expect(document.querySelector('[data-duel-flip="viewer"]')).toBeInTheDocument();
+    expect(document.querySelector('[data-duel-flip="opponent"]')).toBeInTheDocument();
+    expect(screen.queryByText(/XP|win rate|nível/i)).not.toBeInTheDocument();
   });
 
   it('abre no top layer, torna o AppShell inerte e confina Tab no Cancelar', () => {

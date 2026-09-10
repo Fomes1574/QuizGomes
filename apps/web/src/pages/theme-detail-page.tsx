@@ -84,7 +84,24 @@ export function ThemeDetailPage() {
 
       <article className="personal-theme-card"><div><span className="eyebrow">Seu cartão</span><h2>{profile?.displayName ?? 'Entre para acompanhar'}</h2><p>{profile ? (data.personal?.rankedMatches ? 'Seu histórico neste tema é calculado apenas pelas partidas Ranqueadas.' : 'Sua história competitiva neste tema começa na primeira Ranqueada.') : 'Ranking, descoberta histórica e Conhecimento ficam reunidos aqui.'}</p></div><div className="personal-theme-card__stats"><RankBadge knowledge={data.personal?.knowledge ?? 0} showKnowledge /><span><strong>{(data.personal?.discoveredPercentage ?? 0).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%</strong><small>descoberto</small></span><span><strong>{data.personal?.position ? `#${data.personal.position}` : '—'}</strong><small>posição</small></span></div></article>
 
-      {matchmaking.status !== 'idle' && <MatchmakingDialog elapsedSeconds={matchmaking.elapsedSeconds} onCancel={matchmaking.cancel} onClose={matchmaking.cancel} opponent={matchmaking.opponent} preparing={matchmaking.preparing} status={matchmaking.status} theme={data.theme} />}
+      {matchmaking.status !== 'idle' && <MatchmakingDialog
+        difficulty={difficulty}
+        elapsedSeconds={matchmaking.elapsedSeconds}
+        mode={mode}
+        onCancel={matchmaking.cancel}
+        onClose={matchmaking.cancel}
+        opponent={matchmaking.opponent}
+        preparing={matchmaking.preparing}
+        status={matchmaking.status}
+        theme={data.theme}
+        viewer={profile === null ? undefined : {
+          customAvatarUrl: profile.customAvatarUrl,
+          displayName: profile.displayName,
+          frameId: profile.equippedFrameId,
+          knowledge: data.personal?.knowledge ?? 0,
+          photoUrl: profile.photoUrl,
+        }}
+      />}
     </section>
   );
 }

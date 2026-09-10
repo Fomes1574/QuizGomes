@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../features/auth-context.js';
 import { apiRequest, websocketUrl } from '../lib/api.js';
+import { captureDuelOrigins } from '../lib/match-handoff.js';
 import {
   discardPreparedMatchRoom,
   prepareMatchRoom,
@@ -11,10 +12,11 @@ import {
   type MatchFoundPreload,
 } from '../lib/preloaded-match-room.js';
 
-export const MATCH_FOUND_PRESENTATION_MS = 2_900;
 export const MATCH_FOUND_ENTRY_MS = 1_200;
-export const MATCH_FOUND_HOLD_MS = 800;
+/** Permanência do duelo depois que a coreografia assenta, antes da saída começar. */
+export const MATCH_FOUND_HOLD_MS = 1_200;
 export const MATCH_FOUND_EXIT_MS = 900;
+export const MATCH_FOUND_PRESENTATION_MS = MATCH_FOUND_ENTRY_MS + MATCH_FOUND_HOLD_MS + MATCH_FOUND_EXIT_MS;
 const SEARCH_DURATION_MS = 60_000;
 const SEARCH_EXIT_MS = 260;
 
@@ -187,6 +189,8 @@ export function useMatchmaking() {
       await delay(MATCH_FOUND_EXIT_MS);
       if (generation !== presentationGenerationRef.current) return;
       navigatingRef.current = true;
+      // Guarda a posição atual dos retratos para o lobby continuar o movimento de onde ele parou.
+      captureDuelOrigins(typeof document === 'undefined' ? null : document, message.roomId, 'presentation');
       const origin = originRef.current;
       if (origin === null) void navigate(`/partida/${message.roomId}`);
       else void navigate(`/partida/${message.roomId}`, { state: { matchOrigin: origin } });
