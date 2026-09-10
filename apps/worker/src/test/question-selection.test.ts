@@ -1,4 +1,4 @@
-import { createPoolState, markAnswered, type Difficulty } from '@quiz-gomes/domain';
+import type { Difficulty } from '@quiz-gomes/domain';
 import { describe, expect, it } from 'vitest';
 import type { SecretQuestionRecord } from '../repositories/question-repository.js';
 import { QuestionSelectionService } from '../services/question-selection-service.js';
@@ -15,77 +15,65 @@ function question(slot: number): SecretQuestionRecord {
   };
 }
 
+function serviceWith(activeCount: number, ordinal = () => 0, secretBySlot?: () => Promise<null>) {
+  return new QuestionSelectionService(
+    {
+      pool: (theme: string, difficulty: Difficulty) => {
+        void theme;
+        void difficulty;
+        return Promise.resolve({ activeCount, id: 'pool-1', version: 1 });
+      },
+      secretBySlot: secretBySlot ?? ((pool: string, slot: number) => {
+        expect(pool).toBe('pool-1');
+        return Promise.resolve(question(slot));
+      }),
+    },
+    ordinal,
+  );
+}
+
 describe('seleção server-side de perguntas', () => {
-  it('exclui a união recente e não duplica na partida', async () => {
-    const first = markAnswered(createPoolState(), 1);
-    const second = markAnswered(createPoolState(), 2);
-    const service = new QuestionSelectionService(
-      {
-        pool: (theme: string, difficulty: Difficulty) => {
-          expect(theme).toBe('theme');
-          expect(difficulty).toBe('EASY');
-          return Promise.resolve({ activeCount: 8, id: 'pool-1', version: 1 });
-        },
-        secretBySlot: (pool: string, slot: number) => {
-          expect(pool).toBe('pool-1');
-          return Promise.resolve(question(slot));
-        },
-      },
-      {
-        read: (userId: string) => Promise.resolve({ poolVersion: 1, revision: 1, state: userId === 'u1' ? first : second }),
-      },
-      () => 0,
-    );
-    const selected = await service.select('theme', 'EASY', ['u1', 'u2'], 5);
-    expect(selected.questions.map((item) => item.slot)).toEqual([3, 4, 5, 6, 7]);
-    expect(new Set(selected.questions.map((item) => item.id)).size).toBe(5);
+  it('sorteia sobre o pool inteiro, sem consultar histórico de ninguém', async () => {
+    const selected = await serviceWith(8).select('theme', 'EASY', 5);
+    // Ordinal 0 sempre pega o menor slot elegível restante: nada foi bloqueado por histórico.
+    expect(selected.questions.map((item) => item.slot)).toEqual([1, 2, 3, 4, 5]);
   });
 
-  it('reproduz o esgotamento do antigo dataset sintético de 30 perguntas', async () => {
-    let state = createPoolState();
-    for (let slot = 1; slot <= 30; slot += 1) state = markAnswered(state, slot);
-    const service = new QuestionSelectionService(
-      {
-        pool: () => Promise.resolve({ activeCount: 30, id: 'pool-1', version: 1 }),
-        secretBySlot: (pool: string, slot: number) => {
-          void pool;
-          return Promise.resolve(question(slot));
-        },
-      },
-      { read: () => Promise.resolve({ poolVersion: 1, revision: 1, state }) },
-      () => 0,
-    );
-    await expect(service.select('theme', 'EASY', ['u1', 'u2'], 5)).rejects.toMatchObject({
+  it('nunca repete pergunta dentro da mesma partida', async () => {
+    let call = 0;
+    const selected = await serviceWith(12, (upperExclusive) => {
+      call += 1;
+      return (call * 7) % upperExclusive;
+    }).select('theme', 'HARD', 12);
+
+    expect(selected.questions).toHaveLength(12);
+    expect(new Set(selected.questions.map((item) => item.slot)).size).toBe(12);
+    expect(new Set(selected.questions.map((item) => item.id)).size).toBe(12);
+  });
+
+  it('respeita o pool mínimo de cada dificuldade', async () => {
+    await expect(serviceWith(4).select('theme', 'EASY', 5)).rejects.toMatchObject({
       code: 'QUESTION_POOL_INSUFFICIENT', status: 409,
     });
+    await expect(serviceWith(7).select('theme', 'MEDIUM', 8)).rejects.toMatchObject({
+      code: 'QUESTION_POOL_INSUFFICIENT', status: 409,
+    });
+    await expect(serviceWith(11).select('theme', 'HARD', 12)).rejects.toMatchObject({
+      code: 'QUESTION_POOL_INSUFFICIENT', status: 409,
+    });
+    await expect(serviceWith(5).select('theme', 'EASY', 5)).resolves.toMatchObject({ poolId: 'pool-1' });
+    await expect(serviceWith(8).select('theme', 'MEDIUM', 8)).resolves.toMatchObject({ poolId: 'pool-1' });
+    await expect(serviceWith(12).select('theme', 'HARD', 12)).resolves.toMatchObject({ poolId: 'pool-1' });
   });
 
-  it('mantém 50 slots elegíveis no dataset sintético ampliado após 200 recentes', async () => {
-    let state = createPoolState();
-    for (let slot = 1; slot <= 200; slot += 1) state = markAnswered(state, slot);
-    const service = new QuestionSelectionService(
-      {
-        pool: () => Promise.resolve({ activeCount: 250, id: 'pool-1', version: 1 }),
-        secretBySlot: (_pool: string, slot: number) => Promise.resolve(question(slot)),
-      },
-      { read: () => Promise.resolve({ poolVersion: 1, revision: 40, state }) },
-      () => 0,
-    );
-    const selected = await service.select('theme', 'EASY', ['u1', 'u2'], 5);
-    expect(selected.questions.map((item) => item.slot)).toEqual([201, 202, 203, 204, 205]);
+  it('rejeita pool vazio', async () => {
+    await expect(serviceWith(0).select('theme', 'EASY', 5)).rejects.toMatchObject({
+      code: 'QUESTION_POOL_EMPTY', status: 409,
+    });
   });
 
   it('detecta slot denso inconsistente', async () => {
-    const service = new QuestionSelectionService(
-      {
-        pool: () => Promise.resolve({ activeCount: 5, id: 'pool-1', version: 1 }),
-        secretBySlot: () => Promise.resolve(null),
-      },
-      { read: () => Promise.resolve({ poolVersion: 1, revision: 0, state: createPoolState() }) },
-      () => 0,
-    );
-    await expect(service.select('theme', 'EASY', ['u1', 'u2'], 1)).rejects.toMatchObject({
-      code: 'QUESTION_POOL_INCONSISTENT', status: 503,
-    });
+    await expect(serviceWith(5, () => 0, () => Promise.resolve(null)).select('theme', 'EASY', 1))
+      .rejects.toMatchObject({ code: 'QUESTION_POOL_INCONSISTENT', status: 503 });
   });
 });

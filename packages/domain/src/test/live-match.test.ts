@@ -5,6 +5,7 @@ import {
   projectLiveMatchForSeat,
   projectLiveMatchPresentationForSeat,
   QUESTION_DURATION_MS,
+  questionsForDifficulty,
   RECONNECT_GRACE_MS,
   transitionLiveMatch,
   type Difficulty,
@@ -14,7 +15,7 @@ import {
 import { describe, expect, it } from 'vitest';
 
 function questions(difficulty: Difficulty): LiveQuestion[] {
-  const count = difficulty === 'EASY' ? 5 : difficulty === 'MEDIUM' ? 10 : 15;
+  const count = questionsForDifficulty(difficulty);
   return Array.from({ length: count }, (_, index) => ({
     correctOption: index % 4,
     id: `q-${index + 1}`,
@@ -195,7 +196,7 @@ describe('partida simultânea autoritativa', () => {
     });
   });
 
-  it.each([['EASY', 5], ['MEDIUM', 10], ['HARD', 15]] as const)(
+  it.each([['EASY', 5], ['MEDIUM', 8], ['HARD', 12]] as const)(
     'finaliza %s após exatamente %i perguntas e aceita empate real',
     (difficulty, total) => {
       let { now, state } = startFirstRound(difficulty);

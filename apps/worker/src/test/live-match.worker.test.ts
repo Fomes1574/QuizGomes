@@ -1,9 +1,8 @@
 import {
-  createPoolState,
   decodePoolState,
-  encodePoolState,
+  discoveredCount,
+  hasSeen,
   transitionLiveMatch,
-  markAnswered,
   type LiveMatchCommand,
   type LiveMatchProjection,
   type LiveMatchState,
@@ -690,7 +689,8 @@ describe('Milestone 8 no runtime Workers simulado', () => {
         'SELECT state_blob FROM user_pool_states WHERE user_id = ?1 AND pool_id = ?2',
       ).bind(userId, fixture.poolId).first<{ state_blob: ArrayBuffer }>();
       expect(row).not.toBeNull();
-      expect(decodePoolState(new Uint8Array(row?.state_blob ?? new ArrayBuffer(0))).recentSlots).toHaveLength(5);
+      const poolState = decodePoolState(new Uint8Array(row?.state_blob ?? new ArrayBuffer(0)));
+      expect(discoveredCount(poolState, 5)).toBe(5);
     }
 
     const finishedState = await runInDurableObject(stub, async (_instance, state) => {
@@ -783,9 +783,12 @@ describe('Milestone 8 no runtime Workers simulado', () => {
       const row = await env.CORE_DB.prepare(
         'SELECT state_blob FROM user_pool_states WHERE user_id = ?1 AND pool_id = ?2',
       ).bind(userId, fixture.poolId).first<{ state_blob: ArrayBuffer }>();
-      const recent = decodePoolState(new Uint8Array(row?.state_blob ?? new ArrayBuffer(0))).recentSlots;
-      expect(recent).toEqual([selectedSlots.results[0]?.pool_slot]);
-      expect(selectedSlots.results.slice(1).every(({ pool_slot: slot }) => !recent.includes(slot))).toBe(true);
+      // Só a rodada efetivamente servida entra na descoberta histórica; o resto do
+      // conjunto sorteado continua não descoberto porque a partida foi anulada antes.
+      const poolState = decodePoolState(new Uint8Array(row?.state_blob ?? new ArrayBuffer(0)));
+      const servedSlot = selectedSlots.results[0]?.pool_slot ?? 0;
+      expect(hasSeen(poolState, servedSlot)).toBe(true);
+      expect(selectedSlots.results.slice(1).every(({ pool_slot: slot }) => !hasSeen(poolState, slot))).toBe(true);
     }
 
     const secondMatch = await pairThroughMatchmaking(fixture);
@@ -899,14 +902,9 @@ describe('Milestone 8 no runtime Workers simulado', () => {
   });
 
   it('propaga QUESTION_POOL_INSUFFICIENT com código seguro pela fila', async () => {
-    const fixture = await seedMatchFixture('exhausted');
-    let exhausted = createPoolState();
-    for (let slot = 1; slot <= 5; slot += 1) exhausted = markAnswered(exhausted, slot);
-    const blob = encodePoolState(exhausted);
-    await env.CORE_DB.batch(fixture.userIds.map((userId) => env.CORE_DB.prepare(
-      `INSERT INTO user_pool_states (user_id, pool_id, pool_version, state_blob, revision)
-       VALUES (?1, ?2, 1, ?3, 1)`,
-    ).bind(userId, fixture.poolId, blob.buffer)));
+    // O pool abaixo do mínimo da dificuldade é a única origem de insuficiência agora
+    // que o sorteio não consulta histórico de exibição.
+    const fixture = await seedMatchFixture('exhausted', 500, 'RANKED', 3);
     await reserveForMatchmaking(fixture);
     const queue = env.MATCHMAKING_QUEUE.get(env.MATCHMAKING_QUEUE.idFromName(fixture.resource));
     const openQueue = async (uid: string) => {

@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  RECENT_QUESTION_LIMIT,
   createPoolState,
   decodePoolState,
   discoveredCount,
@@ -8,43 +7,25 @@ import {
   encodePoolState,
   hasSeen,
   markAnswered,
-  unionRecent,
 } from '../index.js';
 
 describe('estado compacto usuário + pool', () => {
-  it('bloqueia exatamente 200 e a 201ª libera a mais antiga', () => {
-    let state = createPoolState();
-    for (let slot = 1; slot <= 200; slot += 1) state = markAnswered(state, slot);
-    expect(state.recentSlots).toHaveLength(RECENT_QUESTION_LIMIT);
-    expect(state.recentSlots[0]).toBe(1);
-
-    state = markAnswered(state, 201);
-    expect(state.recentSlots).toHaveLength(RECENT_QUESTION_LIMIT);
-    expect(state.recentSlots[0]).toBe(2);
-    expect(state.recentSlots.at(-1)).toBe(201);
-  });
-
-  it('não duplica slot recente e preserva ordem mais nova', () => {
-    let state = createPoolState();
-    state = markAnswered(state, 1);
-    state = markAnswered(state, 2);
-    state = markAnswered(state, 1);
-    expect(state.recentSlots).toEqual([2, 1]);
-  });
-
-  it('faz união entre jogadores sem duplicata', () => {
-    const first = markAnswered(markAnswered(createPoolState(), 1), 2);
-    const second = markAnswered(markAnswered(createPoolState(), 2), 3);
-    expect([...unionRecent(first, second)].sort((a, b) => a - b)).toEqual([1, 2, 3]);
-  });
-
-  it('mantém descoberta histórica após sair das últimas 200', () => {
+  it('guarda somente descoberta histórica, sem fila de exibições recentes', () => {
     let state = createPoolState();
     for (let slot = 1; slot <= 201; slot += 1) state = markAnswered(state, slot);
-    expect(state.recentSlots).not.toContain(1);
+
+    expect(Object.keys(state)).toEqual(['seenBitmap']);
     expect(hasSeen(state, 1)).toBe(true);
+    expect(hasSeen(state, 201)).toBe(true);
     expect(discoveredCount(state, 201)).toBe(201);
     expect(discoveredPercentage(state, 402)).toBe(50);
+  });
+
+  it('marcar o mesmo slot duas vezes é idempotente', () => {
+    const once = markAnswered(createPoolState(), 7);
+    const twice = markAnswered(once, 7);
+    expect([...twice.seenBitmap]).toEqual([...once.seenBitmap]);
+    expect(discoveredCount(twice, 8)).toBe(1);
   });
 
   it('serializa e desserializa sem perdas', () => {
@@ -52,9 +33,31 @@ describe('estado compacto usuário + pool', () => {
     state = markAnswered(state, 1);
     state = markAnswered(state, 70_000);
     const decoded = decodePoolState(encodePoolState(state));
-    expect(decoded.recentSlots).toEqual([1, 70_000]);
     expect(hasSeen(decoded, 1)).toBe(true);
     expect(hasSeen(decoded, 70_000)).toBe(true);
+    expect(hasSeen(decoded, 2)).toBe(false);
+  });
+
+  it('lê o formato antigo descartando a fila das últimas 200 sem migration de dados', () => {
+    // Formato 1: [versão=1][contagem:uint16][slots:uint32...][bitmap...]
+    const recent = [3, 9];
+    const bitmap = markAnswered(markAnswered(createPoolState(), 3), 9).seenBitmap;
+    const legacy = new Uint8Array(3 + (recent.length * 4) + bitmap.length);
+    const view = new DataView(legacy.buffer);
+    view.setUint8(0, 1);
+    view.setUint16(1, recent.length, false);
+    recent.forEach((slot, index) => view.setUint32(3 + (index * 4), slot, false));
+    legacy.set(bitmap, 3 + (recent.length * 4));
+
+    const decoded = decodePoolState(legacy);
+    expect(hasSeen(decoded, 3)).toBe(true);
+    expect(hasSeen(decoded, 9)).toBe(true);
+    expect(discoveredCount(decoded, 16)).toBe(2);
+  });
+
+  it('rejeita versão desconhecida e conteúdo truncado', () => {
+    expect(() => decodePoolState(new Uint8Array([9]))).toThrow(/desconhecida/);
+    expect(() => decodePoolState(new Uint8Array())).toThrow(/truncado/);
   });
 
   it('ignora bits acima do total ativo na porcentagem', () => {

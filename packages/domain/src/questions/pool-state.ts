@@ -1,13 +1,19 @@
-const FORMAT_VERSION = 1;
-export const RECENT_QUESTION_LIMIT = 200;
+/**
+ * Estado do jogador por pool de perguntas.
+ *
+ * Guarda apenas a descoberta histórica (bitmap de slots já respondidos), usada pela
+ * porcentagem de descoberta do tema. O sorteio NÃO consulta este estado: perguntas
+ * podem repetir entre partidas diferentes e nunca repetem dentro da mesma partida.
+ */
+const FORMAT_VERSION = 2;
+const LEGACY_FORMAT_VERSION = 1;
 
 export interface PoolState {
-  recentSlots: number[];
   seenBitmap: Uint8Array;
 }
 
 export function createPoolState(): PoolState {
-  return { recentSlots: [], seenBitmap: new Uint8Array() };
+  return { seenBitmap: new Uint8Array() };
 }
 
 function assertSlot(slot: number): void {
@@ -35,15 +41,7 @@ export function markAnswered(state: PoolState, slot: number): PoolState {
   const seenBitmap = expandedBitmap(state.seenBitmap, slot);
   const byteIndex = Math.floor((slot - 1) / 8);
   seenBitmap[byteIndex] = (seenBitmap[byteIndex] ?? 0) | (1 << ((slot - 1) % 8));
-
-  const recentSlots = state.recentSlots.filter((recentSlot) => recentSlot !== slot);
-  recentSlots.push(slot);
-  if (recentSlots.length > RECENT_QUESTION_LIMIT) recentSlots.shift();
-  return { recentSlots, seenBitmap };
-}
-
-export function unionRecent(...states: readonly PoolState[]): Set<number> {
-  return new Set(states.flatMap((state) => state.recentSlots));
+  return { seenBitmap };
 }
 
 function popcountByte(value: number): number {
@@ -75,26 +73,23 @@ export function discoveredPercentage(state: PoolState, activeCount: number): num
 }
 
 export function encodePoolState(state: PoolState): Uint8Array {
-  if (state.recentSlots.length > RECENT_QUESTION_LIMIT) throw new RangeError('Fila recente excede 200.');
-  state.recentSlots.forEach(assertSlot);
-  const headerBytes = 3 + (state.recentSlots.length * 4);
-  const encoded = new Uint8Array(headerBytes + state.seenBitmap.length);
-  const view = new DataView(encoded.buffer);
-  view.setUint8(0, FORMAT_VERSION);
-  view.setUint16(1, state.recentSlots.length, false);
-  state.recentSlots.forEach((slot, index) => view.setUint32(3 + (index * 4), slot, false));
-  encoded.set(state.seenBitmap, headerBytes);
+  const encoded = new Uint8Array(1 + state.seenBitmap.length);
+  encoded[0] = FORMAT_VERSION;
+  encoded.set(state.seenBitmap, 1);
   return encoded;
 }
 
 export function decodePoolState(encoded: Uint8Array): PoolState {
+  if (encoded.length < 1) throw new Error('Estado de pool truncado.');
+  const version = encoded[0];
+  if (version === FORMAT_VERSION) return { seenBitmap: encoded.slice(1) };
+  if (version !== LEGACY_FORMAT_VERSION) throw new Error('Versão de estado de pool desconhecida.');
+  // Formato 1 carregava a fila das últimas 200 exibidas antes do bitmap; a fila foi
+  // descontinuada e é descartada na leitura, sem migration de dados.
   if (encoded.length < 3) throw new Error('Estado de pool truncado.');
   const view = new DataView(encoded.buffer, encoded.byteOffset, encoded.byteLength);
-  if (view.getUint8(0) !== FORMAT_VERSION) throw new Error('Versão de estado de pool desconhecida.');
   const recentCount = view.getUint16(1, false);
-  if (recentCount > RECENT_QUESTION_LIMIT) throw new Error('Fila recente inválida.');
   const bitmapOffset = 3 + (recentCount * 4);
   if (bitmapOffset > encoded.length) throw new Error('Estado de pool truncado.');
-  const recentSlots = Array.from({ length: recentCount }, (_, index) => view.getUint32(3 + (index * 4), false));
-  return { recentSlots, seenBitmap: encoded.slice(bitmapOffset) };
+  return { seenBitmap: encoded.slice(bitmapOffset) };
 }

@@ -194,11 +194,9 @@ export class LiveMatchRepository {
 
     const selected = await new QuestionSelectionService(
       new QuestionRepository(this.questionsDb),
-      new PoolStateRepository(this.coreDb),
     ).select(
       parsed.themeId,
       parsed.difficulty,
-      [firstRow.user_id, secondRow.user_id],
       questionsForDifficulty(parsed.difficulty),
     );
     const liveQuestions: LiveQuestion[] = selected.questions.map((question) => ({

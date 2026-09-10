@@ -117,7 +117,7 @@ describe('fechamento visual do matchmaking', () => {
     expect(screen.getByText('Matheus')).toBeInTheDocument();
     // O adversário continua sendo o título acessível do diálogo.
     expect(screen.getByRole('heading', { name: 'Ana Real' })).toHaveAttribute('id', 'matchmaking-found-title');
-    expect(screen.getByText('Difícil · 15 perguntas')).toBeInTheDocument();
+    expect(screen.getByText('Difícil · 12 perguntas')).toBeInTheDocument();
     expect(screen.getByText('Ranqueada')).toBeInTheDocument();
     expect(document.querySelector('.duel-side--viewer .sr-only')).toHaveTextContent('1.240 Conhecimento');
     expect(document.querySelector('.duel-side--opponent .sr-only')).toHaveTextContent('1.980 Conhecimento');

@@ -35,9 +35,9 @@ describe('pontuação da rodada', () => {
     expect(resultFromScores(246, 247)).toBe('LOSS');
   });
 
-  it('define 5/10/15 perguntas', () => {
+  it('define 5/8/12 perguntas para toda modalidade', () => {
     expect(questionsForDifficulty('EASY')).toBe(5);
-    expect(questionsForDifficulty('MEDIUM')).toBe(10);
-    expect(questionsForDifficulty('HARD')).toBe(15);
+    expect(questionsForDifficulty('MEDIUM')).toBe(8);
+    expect(questionsForDifficulty('HARD')).toBe(12);
   });
 });
