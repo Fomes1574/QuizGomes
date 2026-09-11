@@ -2,8 +2,13 @@ import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
+const buildFingerprint = (
+  process.env.CF_PAGES_COMMIT_SHA ?? process.env.GITHUB_SHA ?? process.env.VITE_GIT_SHA ?? 'local'
+).slice(0, 12);
+
 export default defineConfig({
   build: { emptyOutDir: true },
+  define: { __QG_BUILD_FINGERPRINT__: JSON.stringify(buildFingerprint) },
   plugins: [
     react(),
     VitePWA({

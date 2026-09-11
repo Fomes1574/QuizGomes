@@ -65,6 +65,7 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 - [x] 2026-09-11 — Milestone 9C+M10 — smoke físico REPROVADO pelo proprietário em produção. Oito defeitos reportados: lista do Social só mudava com recarregar; cards com texto genérico e botão "Jogar" fora de hora; "Desafiar amigo" aparecia em Ranqueada; DIRECT bloqueado por um ASYNC vivo da mesma dupla; espera do convite direto presa à tela do tema e perdida no reload; metade assíncrona sem saída; seletor de amigo sobreposto no celular; sessão do Firebase caindo a cada recarga no celular.
 - [x] 2026-09-11 — Milestone 9C+M10 — passe corretivo do smoke aplicado e validado localmente: `CHALLENGE_UPDATED` em toda transição autoritativa, textos e ações dos cards por papel/estado, desafio entre amigos restrito ao Casual, migration forward-only `0009` separando o limite por tipo, espera global do convite direto recuperável do servidor, "Cancelar e voltar" na metade assíncrona, seletor de amigo empilhado no celular e persistência declarada do Firebase Auth.
 - [x] 2026-09-11 — Milestone 9C+M10 — passe corretivo #2 aplicado após a reprovação física: reconciliação bounded de ciclos DIRECT/ASYNC, terminal do `MatchRoom`/`ChallengeRoom` convergindo D1, recuperação da graça de 7 s sem socket, card Social compacto com presença privada real e regressões de lifecycle/mobile. Nenhum novo smoke físico foi declarado.
+- [x] 2026-09-11 — Milestone 9C+M10 — corrective #3 aplicado após persistir ghost DIRECT em produção: liveness agora vem do `MatchRoom` autoritativo (`/reconcile`), reserva `PREPARING` sem state após 7 s vira `VOID` e libera locks; o PWA ativa/recarrega bundles novos apenas fora de `/partida/*` e `/desafio/*`. Smoke físico continua reprovado/pendente.
 - [ ] Milestone 9C+M10 — NOVO smoke físico pós-deploy pelo proprietário (o milestone permanece ABERTO, não congelado): convite, expiração de 30 s, aceite/recusa/cancelamento, metades assíncronas, sigilo, reconexão, além dos oito pontos reprovados acima.
 - [ ] Milestone 11 — criação/moderação/import/admin (não iniciar sem autorização).
 - [ ] Milestone 12 — e2e, performance, acessibilidade, segurança e deploy.
@@ -955,6 +956,37 @@ Verificação local deste passe: lint, typecheck, regressões web (card, presen�
 360/390/412/desktop) e Worker/DO (DIRECT `FINISHED`/`VOID`, limpeza/liberação,
 reserva sem sala e primeira metade async sem socket) verdes. O gate completo,
 migrations, build, audit e diff review permanecem obrigatórios antes do push.
+
+### 2026-09-11 — M9C+M10: corrective #3 para ghost DIRECT e bundle obsoleto
+
+O smoke físico permanece **REPROVADO** e o milestone continua **ABERTO**. A causa
+confirmada do ghost DIRECT era tratar uma linha D1 `matches = PREPARING` como se
+ela comprovasse uma sala viva. Uma falha entre a reserva e a persistência do
+`MatchRoom` mantinha `hasNoRoom = false` indefinidamente.
+
+- `MatchRoom` expõe somente ao Worker a rota interna `POST /reconcile`. Ela lê a
+  fase persistida do DO, executa `alarm()` antes de responder para deadline
+  vencido, `FINALIZING` e terminais, e reaplica a convergência DIRECT. Logo, uma
+  linha D1 deixa de ser prova de liveness.
+- A reconciliação bounded de `GET /api/challenges`, criação e ações agora só
+  anula quando o DO responde `MISSING` **e** a reserva `PREPARING`, sem início,
+  já ultrapassou 7 s. O CAS faz `matches → VOID`, remove
+  `active_match_players`, devolve presença ao idle, limpa o desafio/payload e
+  emite `CHALLENGE_UPDATED` aos dois lados. Falha transitória do DO não apaga
+  nada; sala ativa continua intacta. Não há polling nem migration `0010`.
+- O build passa a carregar um fingerprint curto (`data-qg-build`) e o PWA
+  ativa worker novo de modo seguro. `controllerchange` recarrega imediatamente
+  em telas comuns, mas guarda a atualização e só recarrega depois de sair de
+  `/partida/*` ou `/desafio/*`; `index.html` também não fica cacheável entre
+  deploys. Isso evita aba/PWA presa indefinidamente no JS antigo sem interromper
+  uma sala competitiva.
+- O card Social permanece separado em autoria, `Tema · Dificuldade` e badge de
+  presença real do amigo. `challenge.status` não é apresentado como presença.
+
+Regressões adicionadas: MatchRoom ausente versus ativo, reserva DIRECT órfã
+`PREPARING`, locks liberados, novo DIRECT permitido, terminal real do MatchRoom
+convergindo o desafio e atualização PWA adiada durante gameplay. O gate completo,
+migrations, build, audit e diff review seguem obrigatórios antes do push.
 
 ## Critério de saída desta execução
 
