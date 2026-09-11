@@ -170,6 +170,46 @@ describe('página da partida em tempo real', () => {
     expect(screen.queryByText('Partida anulada')).not.toBeInTheDocument();
   });
 
+  it('no desafio, "Cancelar e voltar" só sai depois da confirmação autoritativa', async () => {
+    render(
+      <MemoryRouter initialEntries={[{
+        pathname: '/desafio/challenge-1',
+        state: { matchOrigin: { difficulty: 'EASY', mode: 'CASUAL', returnTo: '/temas/elden-ring' } },
+      }]}>
+        <Routes>
+          <Route element={<LiveMatchPage variant="challenge" />} path="/desafio/:challengeId" />
+          <Route element={<RestoredTheme />} path="/temas/:slug" />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const socket = FakeWebSocket.instances[0];
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancelar e voltar' }));
+    expect(socket?.send).toHaveBeenCalledWith(JSON.stringify({ type: 'CANCEL' }));
+    // Enquanto o servidor não confirma, a tela continua aqui e o botão não repete a ação.
+    expect(screen.getByRole('button', { name: 'Cancelando...' })).toBeDisabled();
+    expect(screen.queryByText('Tema restaurado: EASY / CASUAL')).not.toBeInTheDocument();
+
+    act(() => socket?.emitMessage({
+      challengeId: 'challenge-1',
+      match: { ...activeMatch, phase: 'VOID', question: undefined },
+      result: voidResult,
+      type: 'MATCH_VOID',
+      voidReason: 'CANCELLED',
+    }));
+
+    // Cancelar o próprio desafio não é resultado anulado: nada de placar final.
+    expect(screen.queryByLabelText('Placar final')).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Partida anulada' })).not.toBeInTheDocument();
+    await act(async () => { await Promise.resolve(); });
+    expect(screen.getByText('Tema restaurado: EASY / CASUAL')).toBeInTheDocument();
+  });
+
   it('envia ROUND_READY uma única vez somente ao fim da apresentação de 1.900 ms', async () => {
     render(
       <MemoryRouter initialEntries={['/partida/room-1']}>

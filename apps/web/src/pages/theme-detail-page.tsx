@@ -78,7 +78,11 @@ export function ThemeDetailPage() {
             ))}
           </div>
           <div className="segmented segmented--wide" role="radiogroup" aria-label="Modo de partida">
-            {(['CASUAL', 'RANKED'] as MatchMode[]).map((value) => <button aria-checked={mode === value} className={mode === value ? 'segmented__active' : ''} key={value} onClick={() => setMode(value)} role="radio" type="button">{value === 'CASUAL' ? 'Casual' : 'Ranqueada'}</button>)}
+            {(['CASUAL', 'RANKED'] as MatchMode[]).map((value) => <button aria-checked={mode === value} className={mode === value ? 'segmented__active' : ''} key={value} onClick={() => {
+              setMode(value);
+              // Desafio entre amigos é sempre Casual: sair do Casual fecha o seletor aberto.
+              if (value !== 'CASUAL') setChallengePickerOpen(false);
+            }} role="radio" type="button">{value === 'CASUAL' ? 'Casual' : 'Ranqueada'}</button>)}
           </div>
           {!canPlay && <p className="inline-notice">Este pool ainda precisa de {required} perguntas ativas para uma partida {difficultyLabel[difficulty]}.</p>}
           {!realtimeEnabled && canPlay && <p className="inline-notice">O catálogo está pronto; partidas online serão liberadas após a validação do servidor de rodadas.</p>}
@@ -92,11 +96,13 @@ export function ThemeDetailPage() {
                   disabled={!canPlay || !realtimeEnabled}
                   onClick={() => void matchmaking.start(data.theme.id, difficulty, mode, slug)}
                 >Puxar partida</Button>
-                <Button
-                  disabled={!canPlay || !realtimeEnabled || friendChallenge.status !== 'idle'}
-                  onClick={() => setChallengePickerOpen(true)}
-                  variant="secondary"
-                >Desafiar amigo</Button>
+                {mode === 'CASUAL' && (
+                  <Button
+                    disabled={!canPlay || !realtimeEnabled || friendChallenge.status !== 'idle'}
+                    onClick={() => setChallengePickerOpen(true)}
+                    variant="secondary"
+                  >Desafiar amigo</Button>
+                )}
               </div>
             )}
         </div>
@@ -111,7 +117,7 @@ export function ThemeDetailPage() {
 
       <article className="personal-theme-card"><div><span className="eyebrow">Seu cartão</span><h2>{profile?.displayName ?? 'Entre para acompanhar'}</h2><p>{profile ? (data.personal?.rankedMatches ? 'Seu histórico neste tema é calculado apenas pelas partidas Ranqueadas.' : 'Sua história competitiva neste tema começa na primeira Ranqueada.') : 'Ranking, descoberta histórica e Conhecimento ficam reunidos aqui.'}</p></div><div className="personal-theme-card__stats"><RankBadge knowledge={data.personal?.knowledge ?? 0} showKnowledge /><span><strong>{(data.personal?.discoveredPercentage ?? 0).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%</strong><small>descoberto</small></span><span><strong>{data.personal?.position ? `#${data.personal.position}` : '—'}</strong><small>posição</small></span></div></article>
 
-      {challengePickerOpen && (
+      {challengePickerOpen && mode === 'CASUAL' && (
         <FriendChallengeDialog
           busy={friendChallenge.status !== 'idle'}
           friends={friends}
@@ -136,16 +142,6 @@ export function ThemeDetailPage() {
           }}
           themeName={data.theme.name}
         />
-      )}
-      {friendChallenge.status === 'waiting' && (
-        <div className="challenge-waiting" role="status">
-          <span className="spinner" aria-hidden="true" />
-          <div>
-            <strong>Aguardando {friendChallenge.waitingFor}</strong>
-            <small>{friendChallenge.secondsLeft}s para responder</small>
-          </div>
-          <button onClick={() => void friendChallenge.cancel()} type="button">Cancelar</button>
-        </div>
       )}
       {matchmaking.status !== 'idle' && <MatchmakingDialog
         difficulty={difficulty}

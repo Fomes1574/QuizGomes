@@ -1,85 +1,33 @@
-import { DIRECT_CHALLENGE_TIMEOUT_MS, type Difficulty } from '@quiz-gomes/domain';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import type { Difficulty } from '@quiz-gomes/domain';
+import { useCallback, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../features/auth-context.js';
-import { useSocial } from '../features/social-context.js';
+import { useChallenges } from '../features/challenge-context.js';
 import { apiRequest } from '../lib/api.js';
-import { prepareMatchRoom, preloadMatchPresentationAssets } from '../lib/preloaded-match-room.js';
 import type { ChallengeKind } from '../lib/challenges.js';
 
-export type FriendChallengeStatus = 'idle' | 'sending' | 'waiting';
+export type FriendChallengeStatus = 'idle' | 'sending';
 
-interface WaitingChallenge {
+interface CreateChallengeResponse {
   challengeId: string;
-  displayName: string;
-  expiresAtMs: number;
-}
-
-function remainingSeconds(expiresAtMs: number, now = Date.now()): number {
-  return Math.max(0, Math.ceil((expiresAtMs - now) / 1_000));
+  expiresAt: string | null;
+  halfReady?: boolean;
+  roomId?: string;
 }
 
 /**
- * Envio de desafio a um amigo a partir da tela do tema.
+ * Envio de desafio a partir da tela do tema.
  *
- * O cliente nunca decide elegibilidade nem expiração: apenas apresenta a contagem
- * derivada do prazo autoritativo e reage ao evento `CHALLENGE_STARTED` que chega
- * pelo canal social existente.
+ * O hook só cria o desafio. A espera do convite direto e o aceite remoto pertencem
+ * ao `ChallengeProvider` global: manter isso aqui deixava a espera morrer junto com
+ * a página e o aceite chegava sem ninguém para entrar na sala.
  */
 export function useFriendChallenge(themeSlug: string) {
   const { getToken } = useAuth();
-  const { consumeStartedChallenge, startedChallenge } = useSocial();
+  const { refreshChallenges, trackPendingDirect } = useChallenges();
   const navigate = useNavigate();
   const [status, setStatus] = useState<FriendChallengeStatus>('idle');
-  const [waiting, setWaiting] = useState<WaitingChallenge | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [secondsLeft, setSecondsLeft] = useState(0);
-  const navigatingRef = useRef(false);
-
-  useEffect(() => {
-    if (waiting === null) return undefined;
-    let timer: number | null = null;
-    const tick = () => {
-      const left = remainingSeconds(waiting.expiresAtMs);
-      setSecondsLeft(left);
-      if (left <= 0) {
-        // O servidor é quem expira; a tela apenas para de esperar.
-        setWaiting(null);
-        setStatus('idle');
-        setError('O convite expirou.');
-        return;
-      }
-      timer = window.setTimeout(tick, 250);
-    };
-    tick();
-    return () => {
-      if (timer !== null) window.clearTimeout(timer);
-    };
-  }, [waiting]);
-
-  useEffect(() => {
-    if (startedChallenge === null || navigatingRef.current) return;
-    const started = consumeStartedChallenge();
-    if (started === null) return;
-    navigatingRef.current = true;
-    preloadMatchPresentationAssets(started.opponent, started.preload);
-    // A limpeza de estado acontece na continuação assíncrona, junto da navegação.
-    void prepareMatchRoom(started.roomId, getToken)
-      .catch(() => undefined)
-      .finally(() => {
-        setWaiting(null);
-        setStatus('idle');
-        void navigate(`/partida/${started.roomId}`, {
-          state: {
-            matchOrigin: {
-              difficulty: 'EASY',
-              mode: 'CASUAL',
-              returnTo: `/temas/${encodeURIComponent(themeSlug)}`,
-            },
-          },
-        });
-      });
-  }, [consumeStartedChallenge, getToken, navigate, startedChallenge, themeSlug]);
 
   const challenge = useCallback(async (input: {
     difficulty: Difficulty;
@@ -90,7 +38,7 @@ export function useFriendChallenge(themeSlug: string) {
     setError(null);
     setStatus('sending');
     try {
-      const response = await apiRequest<{ challengeId: string; halfReady?: boolean; roomId?: string }>('/api/challenges', {
+      const response = await apiRequest<CreateChallengeResponse>('/api/challenges', {
         body: {
           difficulty: input.difficulty,
           kind: input.kind,
@@ -100,44 +48,34 @@ export function useFriendChallenge(themeSlug: string) {
         getToken,
         method: 'POST',
       });
-      if (input.kind === 'DIRECT' && response.roomId === undefined) {
-        setWaiting({
-          challengeId: response.challengeId,
-          displayName: input.displayName,
-          expiresAtMs: Date.now() + DIRECT_CHALLENGE_TIMEOUT_MS,
-        });
-        setStatus('waiting');
-        return;
-      }
       setStatus('idle');
+
       if (input.kind === 'ASYNC' && response.halfReady === true) {
         // Quem desafia depois joga a própria metade imediatamente.
         void navigate(`/desafio/${response.challengeId}`);
+        return;
       }
+      if (input.kind === 'DIRECT' && typeof response.roomId === 'string') {
+        // Convite cruzado já virou partida.
+        void navigate(`/partida/${response.roomId}`);
+        return;
+      }
+      if (input.kind === 'DIRECT' && response.expiresAt !== null) {
+        const expiresAtMs = Date.parse(response.expiresAt);
+        if (Number.isFinite(expiresAtMs)) {
+          trackPendingDirect({
+            challengeId: response.challengeId,
+            displayName: input.displayName,
+            expiresAtMs,
+          });
+        }
+      }
+      await refreshChallenges();
     } catch (reason) {
       setStatus('idle');
       setError(reason instanceof Error ? reason.message : 'Não foi possível enviar o desafio.');
     }
-  }, [getToken, navigate, themeSlug]);
+  }, [getToken, navigate, refreshChallenges, themeSlug, trackPendingDirect]);
 
-  const cancel = useCallback(async () => {
-    const current = waiting;
-    if (current === null) return;
-    setWaiting(null);
-    setStatus('idle');
-    try {
-      await apiRequest(`/api/challenges/${current.challengeId}/cancel`, { getToken, method: 'POST' });
-    } catch {
-      // O servidor já pode ter encerrado o convite; a tela volta ao estado livre de qualquer forma.
-    }
-  }, [getToken, waiting]);
-
-  return {
-    cancel,
-    challenge,
-    error,
-    secondsLeft,
-    status,
-    waitingFor: waiting?.displayName ?? null,
-  };
+  return { challenge, error, status };
 }

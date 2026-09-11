@@ -7,9 +7,10 @@ import { Button } from '../components/button.js';
 import { Icon } from '../components/icons.js';
 import { SocialConfirmDialog } from '../components/social-confirm-dialog.js';
 import { useAuth } from '../features/auth-context.js';
+import { useChallenges } from '../features/challenge-context.js';
 import { useFriendPresence, useSocial } from '../features/social-context.js';
 import { apiRequest } from '../lib/api.js';
-import { DIFFICULTY_LABEL, type ChallengeView } from '../lib/challenges.js';
+import { challengeCardCopy, type ChallengeView } from '../lib/challenges.js';
 import type { FriendPresence, SocialCandidate, SocialFriend, SocialSnapshot, SocialUser } from '../lib/social.js';
 
 const EMPTY_SNAPSHOT: SocialSnapshot = { friendLimit: 200, friends: [], incoming: [], outgoing: [] };
@@ -258,14 +259,10 @@ function ChallengesSection({
       <div className="section-heading"><div><h2>Desafios</h2></div></div>
       <div className="social-list">
         {challenges.map((challenge) => {
-          const other = challenge.role === 'CHALLENGED' ? challenge.challenger : challenge.challenged;
-          // A própria metade do desafiante ainda aberta: ele volta e termina.
-          const resumable = challenge.role === 'CHALLENGER' && challenge.status === 'FIRST_PLAYER_ACTIVE';
-          const playable = challenge.role === 'CHALLENGED' &&
-            (challenge.status === 'PENDING_DIRECT' || challenge.status === 'WAITING_FOR_SECOND');
-          const cancellable = challenge.role === 'CHALLENGER' && challenge.status !== 'SECOND_PLAYER_ACTIVE';
+          const other = challenge.role === 'CHALLENGER' ? challenge.challenged : challenge.challenger;
+          const copy = challengeCardCopy(challenge);
           return (
-            <article className="social-person" key={challenge.id}>
+            <article className="social-person social-challenge" key={challenge.id}>
               <div className="social-person__identity">
                 <AvatarFrame frameId={other.frameId}>
                   <Avatar
@@ -276,21 +273,14 @@ function ChallengesSection({
                   />
                 </AvatarFrame>
                 <span>
-                  <strong>{other.displayName}</strong>
-                  <small>
-                    {challenge.theme.name} · {DIFFICULTY_LABEL[challenge.difficulty]} ·{' '}
-                    {challenge.kind === 'DIRECT'
-                      ? 'desafio agora'
-                      : resumable
-                        ? 'sua vez'
-                        : challenge.role === 'CHALLENGER' ? 'aguardando resposta' : 'sua vez'}
-                  </small>
+                  <strong>{copy.headline}</strong>
+                  <small>{copy.status}</small>
                 </span>
               </div>
               <div className="social-person__actions">
-                {resumable && <Button disabled={busy} onClick={() => onResume(challenge)}>Continuar</Button>}
-                {playable && <Button disabled={busy} onClick={() => onAccept(challenge)}>Jogar</Button>}
-                {playable && (
+                {copy.canResume && <Button disabled={busy} onClick={() => onResume(challenge)}>Continuar</Button>}
+                {copy.canPlay && <Button disabled={busy} onClick={() => onAccept(challenge)}>Jogar</Button>}
+                {copy.canDecline && (
                   <button
                     className="social-person__quiet-action"
                     disabled={busy}
@@ -298,7 +288,7 @@ function ChallengesSection({
                     type="button"
                   >Recusar</button>
                 )}
-                {cancellable && (
+                {copy.canCancel && (
                   <button
                     className="social-person__quiet-action"
                     disabled={busy}
@@ -317,9 +307,9 @@ function ChallengesSection({
 
 export function SocialPage() {
   const { getToken, profile, signIn } = useAuth();
-  const { challengeRevision, consumeStartedChallenge, refresh, revision, startedChallenge } = useSocial();
+  const { refresh, revision } = useSocial();
+  const { challenges, refreshChallenges } = useChallenges();
   const navigate = useNavigate();
-  const [challenges, setChallenges] = useState<ChallengeView[]>([]);
   const [snapshot, setSnapshot] = useState<SocialSnapshot>(EMPTY_SNAPSHOT);
   const [search, setSearch] = useState('');
   const [results, setResults] = useState<SocialCandidate[]>([]);
@@ -344,26 +334,6 @@ export function SocialPage() {
 
   useEffect(() => { queueMicrotask(() => { void load(); }); }, [load, revision]);
 
-  const loadChallenges = useCallback(async () => {
-    if (profile === null) return;
-    try {
-      const response = await apiRequest<{ challenges?: ChallengeView[] }>('/api/challenges', { getToken });
-      setChallenges(Array.isArray(response.challenges) ? response.challenges : []);
-    } catch {
-      setChallenges([]);
-    }
-  }, [getToken, profile]);
-
-  useEffect(() => { queueMicrotask(() => { void loadChallenges(); }); }, [challengeRevision, loadChallenges]);
-
-  // O aceite do outro lado chega pelo canal social e leva direto para a sala.
-  useEffect(() => {
-    if (startedChallenge === null) return;
-    const started = consumeStartedChallenge();
-    if (started === null) return;
-    void navigate(`/partida/${started.roomId}`);
-  }, [consumeStartedChallenge, navigate, startedChallenge]);
-
   const challengeAction = useCallback((challenge: ChallengeView, action: 'accept' | 'cancel' | 'decline') => {
     void (async () => {
       setBusy(challenge.id);
@@ -381,15 +351,15 @@ export function SocialPage() {
           void navigate(`/desafio/${challenge.id}`);
           return;
         }
-        await loadChallenges();
+        await refreshChallenges();
       } catch (reason) {
         setError(reason instanceof Error ? reason.message : 'Não foi possível concluir esta ação.');
-        await loadChallenges();
+        await refreshChallenges();
       } finally {
         setBusy(null);
       }
     })();
-  }, [getToken, loadChallenges, navigate]);
+  }, [getToken, navigate, refreshChallenges]);
 
   useEffect(() => {
     const value = search.trim();

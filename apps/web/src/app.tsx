@@ -2,7 +2,9 @@ import { lazy, Suspense } from 'react';
 import { Route, Routes } from 'react-router-dom';
 import { AppShell } from './components/app-shell.js';
 import { LoadingState } from './components/async-state.js';
+import { DirectChallengeWaiting } from './components/direct-challenge-waiting.js';
 import { OnboardingDialog } from './components/onboarding-dialog.js';
+import { ChallengeProvider } from './features/challenge-context.js';
 import { NotFoundPage } from './pages/not-found-page.js';
 import { ProfilePage } from './pages/profile-page.js';
 import { ThemeDetailPage } from './pages/theme-detail-page.js';
@@ -14,7 +16,7 @@ const SocialPage = lazy(() => import('./pages/social-page.js').then((module) => 
 
 export function App() {
   return (
-    <>
+    <ChallengeProvider>
       <a className="skip-link" href="#conteudo-principal">Pular para o conteúdo</a>
       <Routes>
         <Route element={<AppShell />}>
@@ -29,6 +31,8 @@ export function App() {
         <Route path="desafio/:challengeId" element={<Suspense fallback={<main className="match-lobby-screen"><LoadingState label="Preparando desafio" /></main>}><LiveMatchPage variant="challenge" /></Suspense>} />
       </Routes>
       <OnboardingDialog />
-    </>
+      {/* A espera do convite direto vive acima das rotas: nenhuma página precisa estar montada. */}
+      <DirectChallengeWaiting />
+    </ChallengeProvider>
   );
 }

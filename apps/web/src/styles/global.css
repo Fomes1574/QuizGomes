@@ -442,21 +442,31 @@ h1, h2, h3, .brand-lockup__name, .hero-stat strong, .level-card > strong, .count
 /* Desafio entre amigos: seleção, espera autoritativa e convites recebidos. */
 .play-card__actions { display: grid; gap: 9px; }
 .dialog--challenge { max-height: min(720px, calc(100dvh - 40px)); overflow-y: auto; }
+.dialog--waiting { justify-items: center; gap: 16px; text-align: center; }
+.dialog--waiting h1 { margin-bottom: 6px; font-size: 1.35rem; letter-spacing: -.03em; }
+.dialog--waiting p { margin: 0; color: var(--text-secondary); font-size: .84rem; line-height: 1.5; }
+.dialog--waiting .spinner { width: 44px; height: 44px; border-width: 4px; }
+.dialog--waiting__clock { color: var(--brand); font: 800 2rem/1 Sora, sans-serif; font-variant-numeric: tabular-nums; }
+.social-challenge .social-person__identity strong { overflow-wrap: anywhere; white-space: normal; }
 .difficulty-grid--compact { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .difficulty-grid--compact .difficulty { padding: 10px 11px; }
 .challenge-empty { color: var(--text-secondary); font-size: .82rem; line-height: 1.5; }
 .challenge-friends { display: grid; max-height: 320px; overflow-y: auto; gap: 8px; margin: 0; padding: 0; list-style: none; }
-.challenge-friend { display: flex; min-width: 0; align-items: center; gap: 11px; padding: 9px 11px; border: 1px solid var(--border); border-radius: 15px; background: var(--surface); }
+/*
+ * Em telas estreitas o card empilha: identidade na primeira linha, ações na
+ * segunda. As ações nunca se sobrepõem ao nome nem ao status.
+ */
+.challenge-friend { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 8px 11px; padding: 10px 11px; border: 1px solid var(--border); border-radius: 15px; background: var(--surface); }
 .challenge-friend__identity { display: grid; min-width: 0; gap: 2px; }
-.challenge-friend__identity strong { overflow: hidden; font-size: .86rem; text-overflow: ellipsis; white-space: nowrap; }
+.challenge-friend__identity strong { min-width: 0; overflow-wrap: anywhere; font-size: .86rem; }
 .challenge-friend__identity small { display: flex; align-items: center; gap: 6px; color: var(--text-secondary); font-size: .68rem; }
 .challenge-friend__identity small i { width: 7px; height: 7px; flex: none; border-radius: 50%; background: var(--presence-online); }
 .challenge-friend__identity small i[data-presence='IN_MATCH'],
 .challenge-friend__identity small i[data-presence='RECONNECTING'] { background: var(--presence-busy); }
 .challenge-friend__identity small i[data-presence='OFFLINE'] { background: var(--presence-offline); }
-.challenge-friend__action { flex: none; margin-left: auto; padding: 8px 13px; border: 1px solid var(--brand); border-radius: 11px; color: var(--text-on-brand); background: var(--brand); cursor: pointer; font: 700 .74rem/1 Inter, sans-serif; }
+.challenge-friend__action { min-height: 40px; flex: 1 1 0; padding: 9px 13px; border: 1px solid var(--brand); border-radius: 11px; color: var(--text-on-brand); background: var(--brand); cursor: pointer; font: 700 .76rem/1 Inter, sans-serif; }
 .challenge-friend__action:disabled { border-color: var(--border); color: var(--text-secondary); background: var(--background-subtle); cursor: not-allowed; }
-.challenge-friend__actions { display: flex; flex: none; margin-left: auto; gap: 6px; }
+.challenge-friend__actions { display: flex; grid-column: 1 / -1; gap: 8px; }
 .challenge-friend__action--quiet { border-color: var(--border-strong); color: var(--text-primary); background: transparent; }
 .challenge-friend__action--quiet:disabled { border-color: var(--border); color: var(--text-secondary); background: var(--background-subtle); }
 .challenge-waiting { position: fixed; z-index: 90; right: max(16px, env(safe-area-inset-right)); bottom: calc(var(--nav-height) + 16px); left: max(16px, env(safe-area-inset-left)); display: flex; align-items: center; gap: 13px; margin-inline: auto; width: min(100%, 420px); padding: 13px 15px; border: 1px solid var(--border); border-radius: 17px; background: var(--surface-raised); box-shadow: var(--shadow-md); animation: content-in 220ms ease-out both; }
@@ -828,6 +838,10 @@ h1, h2, h3, .brand-lockup__name, .hero-stat strong, .level-card > strong, .count
   .social-person { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
   .social-person__message { grid-column: 1; }
   .social-friends__summary { display: flex; gap: 13px; }
+  .challenge-friend { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .challenge-friend__identity strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .challenge-friend__actions { grid-column: auto; }
+  .challenge-friend__action { flex: none; }
   .lobby-duel { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; width: min(100%, 760px); gap: 20px; }
   .duel-side--lobby, .duel-side--lobby.duel-side--opponent { flex-direction: column; gap: 10px; }
   .duel-side--lobby .avatar { width: 88px; height: 88px; font-size: 1.7rem; }

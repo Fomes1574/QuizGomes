@@ -3,10 +3,13 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
+import { ChallengeProvider } from '../features/challenge-context.js';
 import { SocialPage } from '../pages/social-page.js';
 
 // A página navega para a sala ao aceitar um desafio, então precisa de um Router.
-const socialPage = () => <MemoryRouter><SocialPage /></MemoryRouter>;
+const socialPage = () => (
+  <MemoryRouter><ChallengeProvider><SocialPage /></ChallengeProvider></MemoryRouter>
+);
 
 const mocks = vi.hoisted(() => ({
   apiRequest: vi.fn(),

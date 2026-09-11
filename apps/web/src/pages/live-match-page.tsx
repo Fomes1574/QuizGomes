@@ -83,6 +83,7 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
   const [countdown, setCountdown] = useState<number | null>(null);
   const [localConnectionState, setLocalConnectionState] = useState<LocalConnectionState>('CONNECTED');
   const [pauseVisual, setPauseVisual] = useState<PauseVisualState | null>(null);
+  const [cancelling, setCancelling] = useState(false);
 
   useEffect(() => {
     let disposed = false;
@@ -470,6 +471,23 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
   const matchOrigin = (location.state as {
     matchOrigin?: { difficulty?: string; mode?: string; returnTo?: string };
   } | null)?.matchOrigin;
+
+  const cancelledChallenge = isChallenge && terminal?.voidReason === 'CANCELLED';
+  const returnTo = matchOrigin?.returnTo;
+  const returnDifficulty = matchOrigin?.difficulty;
+  const returnMode = matchOrigin?.mode;
+  useEffect(() => {
+    // Cancelamento explícito do próprio desafio não vira tela de resultado anulado:
+    // a saída acontece só depois da confirmação autoritativa do servidor.
+    if (!cancelledChallenge) return;
+    if (typeof returnTo === 'string' && returnTo.startsWith('/temas/')) {
+      // Volta exatamente ao contexto de origem, como no cancelamento da partida.
+      void navigate(returnTo, { state: { difficulty: returnDifficulty, mode: returnMode } });
+      return;
+    }
+    void navigate('/social');
+  }, [cancelledChallenge, navigate, returnDifficulty, returnMode, returnTo]);
+
   const backToTheme = () => {
     if (typeof matchOrigin?.returnTo === 'string' && matchOrigin.returnTo.startsWith('/temas/')) {
       void navigate(matchOrigin.returnTo, {
@@ -479,6 +497,16 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
     }
     void navigate('/');
   };
+
+  if (cancelledChallenge) {
+    return (
+      <main className="match-lobby-screen">
+        <Logo />
+        <span aria-hidden="true" className="spinner match-lobby-spinner" />
+        <h1>Desafio cancelado</h1>
+      </main>
+    );
+  }
 
   if (terminal !== null) {
     const { viewer, opponent } = terminal.result;
@@ -627,10 +655,12 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
             </>
           )}
       {countdown !== null && <strong className="countdown">{countdown}</strong>}
-      {canCancel && <Button onClick={() => {
+      {canCancel && <Button disabled={cancelling} onClick={() => {
         socketRef.current?.send(JSON.stringify({ type: 'CANCEL' }));
-        backToTheme();
-      }} variant="ghost">Cancelar e voltar</Button>}
+        // No desafio a saída espera a confirmação autoritativa; na partida o M8 segue igual.
+        if (isChallenge) setCancelling(true);
+        else backToTheme();
+      }} variant="ghost">{cancelling ? 'Cancelando...' : 'Cancelar e voltar'}</Button>}
     </main>
   );
 }
