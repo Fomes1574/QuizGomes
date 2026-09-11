@@ -57,11 +57,13 @@ interface ChallengeRow {
   first_player_user_id: string;
   id: string;
   kind: ChallengeKind;
+  match_id: string | null;
   revision: number;
   second_player_agreed: number;
   second_player_user_id: string;
   status: ChallengeStatus;
   theme_id: string;
+  updated_at: string;
 }
 
 interface ChallengeViewRow extends ChallengeRow {
@@ -178,6 +180,84 @@ export class ChallengeRepository {
          FROM challenges WHERE id = ?1`,
     ).bind(challengeId).first<ChallengeRow>();
     return row === null ? null : record(row);
+  }
+
+  /**
+   * Pequeno recorte autoritativo usado na reconciliação oportunística. Não é
+   * polling: cada chamada vem de abrir/listar/criar desafio e retorna no máximo
+   * os desafios vivos do próprio participante.
+   */
+  async liveLifecycleForUser(userId: string): Promise<Array<ChallengeRecord & {
+    matchId: string | null;
+    updatedAtMs: number;
+  }>> {
+    const result = await this.db.prepare(
+      `SELECT id, difficulty, expires_at, first_player_user_id, kind, match_id, revision,
+              second_player_agreed, second_player_user_id, status, theme_id, updated_at
+         FROM challenges
+        WHERE (first_player_user_id = ?1 OR second_player_user_id = ?1)
+          AND status IN (${LIVE_STATUS_LIST})
+        ORDER BY updated_at DESC LIMIT 50`,
+    ).bind(userId).all<ChallengeRow>();
+    return result.results.map((row) => ({
+      ...record(row),
+      matchId: row.match_id,
+      updatedAtMs: Number.isFinite(Date.parse(row.updated_at)) ? Date.parse(row.updated_at) : 0,
+    }));
+  }
+
+  /** Converge a linha DIRECT com o terminal já persistido pelo MatchRoom. */
+  async reconcileDirectMatch(challenge: ChallengeRecord & { matchId: string | null }): Promise<boolean> {
+    if (challenge.kind !== 'DIRECT' || challenge.matchId === null || !['PREPARING', 'ACTIVE'].includes(challenge.status)) {
+      return false;
+    }
+    const match = await this.directMatchStatus(challenge.matchId);
+    if (match !== 'FINISHED' && match !== 'VOID') return false;
+    const terminal = match === 'FINISHED' ? 'COMPLETED' : 'VOID';
+    const applied = await this.db.prepare(
+      `UPDATE challenges SET status = ?1, updated_at = ?2, revision = revision + 1
+        WHERE id = ?3 AND revision = ?4 AND kind = 'DIRECT' AND status IN ('PREPARING', 'ACTIVE')`,
+    ).bind(terminal, this.clock().toISOString(), challenge.id, challenge.revision).run();
+    if ((applied.meta.changes ?? 0) === 1 && terminal === 'VOID') await this.cleanupPayload(challenge.id);
+    return (applied.meta.changes ?? 0) === 1;
+  }
+
+  /** Estado mínimo usado exclusivamente pela reconciliação de reservas DIRECT. */
+  async directMatchStatus(matchId: string): Promise<string | null> {
+    return (await this.db.prepare('SELECT status FROM matches WHERE id = ?1')
+      .bind(matchId).first<{ status: string }>())?.status ?? null;
+  }
+
+  async reconcileDirectMatchId(matchId: string): Promise<{
+    challengeId: string | null; changed: boolean; participants: [string, string] | null;
+  }> {
+    const row = await this.db.prepare(
+      `SELECT id, difficulty, expires_at, first_player_user_id, kind, match_id, revision,
+              second_player_agreed, second_player_user_id, status, theme_id, updated_at
+         FROM challenges WHERE kind = 'DIRECT' AND match_id = ?1`,
+    ).bind(matchId).first<ChallengeRow>();
+    if (row === null) return { challengeId: null, changed: false, participants: null };
+    const challenge = { ...record(row), matchId: row.match_id };
+    const changed = await this.reconcileDirectMatch(challenge);
+    return {
+      challengeId: changed ? challenge.id : null,
+      changed,
+      participants: changed ? [challenge.firstPlayerUserId, challenge.secondPlayerUserId] : null,
+    };
+  }
+
+  /** Finaliza uma reserva sem sala após a graça autoritativa, usando CAS. */
+  async voidOrphanedLive(challenge: ChallengeRecord, beforeMs: number): Promise<boolean> {
+    const updated = await this.db.prepare(
+      `UPDATE challenges SET status = 'VOID', updated_at = ?1, revision = revision + 1
+        WHERE id = ?2 AND revision = ?3 AND status = ?4 AND updated_at <= ?5`,
+    ).bind(
+      this.clock().toISOString(), challenge.id, challenge.revision, challenge.status,
+      new Date(beforeMs).toISOString(),
+    ).run();
+    const applied = (updated.meta.changes ?? 0) === 1;
+    if (applied) await this.cleanupPayload(challenge.id);
+    return applied;
   }
 
   /**

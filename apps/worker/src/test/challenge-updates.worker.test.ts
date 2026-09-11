@@ -200,12 +200,8 @@ describe('M9C+M10 — Social converge por evento, sem polling', () => {
     const response = await stub.fetch('https://challenge.internal/abort', { method: 'POST' });
     expect(await response.json()).toEqual({ status: 'cancelled' });
 
-    // O `/abort` cancela a sala; quem encerra o desafio no D1 é o cancelamento do Social.
-    const record = await repository.byId(challengeId);
-    if (record === null) throw new Error('Desafio ausente.');
-    expect(await repository.applyAction(record, { actorUserId: first.id, type: 'CANCEL' })).toBe(true);
-    await notifyChallengeUpdated(env, challengeId, [first.id, second.id]);
-
+    // A sala terminal também converge o D1: não sobra FIRST_PLAYER_ACTIVE caso
+    // a operação Social tenha sido interrompida depois de abortar a metade.
     expect(await firstSide.waitFor('CHALLENGE_UPDATED')).toMatchObject({ challengeId });
     expect(await secondSide.waitFor('CHALLENGE_UPDATED')).toMatchObject({ challengeId });
     expect(await repository.byId(challengeId)).toMatchObject({ status: 'CANCELLED' });
@@ -247,6 +243,33 @@ describe('M9C+M10 — Social converge por evento, sem polling', () => {
     expect(await env.CORE_DB.prepare(
       'SELECT SUM(total_xp) AS total FROM user_profiles WHERE user_id IN (?1, ?2)',
     ).bind(first.id, second.id).first<{ total: number }>()).toEqual({ total: 0 });
+  });
+
+  it('metade inicializada sem socket expira pela graça e não deixa FIRST_PLAYER_ACTIVE órfão', async () => {
+    const { themeSlug, users } = await fixture(2);
+    const first = userAt(users, 0);
+    const second = userAt(users, 1);
+    await befriend(first, second);
+    const { challengeId, repository } = await asyncChallenge(first, second, themeSlug);
+    const stub = await openRoom(challengeId, 'FIRST');
+    const firstSide = await listenSocial(first.id);
+    const secondSide = await listenSocial(second.id);
+
+    await runInDurableObject(stub, async (_instance, state) => {
+      const stored = await state.storage.get<AsyncHalfState>('half');
+      if (stored === undefined) throw new Error('Metade não inicializada.');
+      stored.connected = false;
+      stored.phaseDeadlineMs = Date.now() - 1;
+      await state.storage.put('half', stored);
+    });
+    const response = await stub.fetch('https://challenge.internal/reconcile', { method: 'POST' });
+    expect(await response.json()).toEqual({ phase: 'VOID' });
+    expect(await firstSide.waitFor('CHALLENGE_UPDATED')).toMatchObject({ challengeId });
+    expect(await secondSide.waitFor('CHALLENGE_UPDATED')).toMatchObject({ challengeId });
+    expect(await repository.byId(challengeId)).toMatchObject({ status: 'VOID' });
+    expect(await env.CORE_DB.prepare(
+      'SELECT COUNT(*) AS total FROM challenge_questions WHERE challenge_id = ?1',
+    ).bind(challengeId).first()).toEqual({ total: 0 });
   });
 });
 

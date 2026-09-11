@@ -75,6 +75,10 @@ export class ChallengeRoom {
     const url = new URL(request.url);
     if (request.method === 'POST' && url.pathname === '/initialize') return this.initialize(request);
     if (request.method === 'POST' && url.pathname === '/abort') return this.abort();
+    // Reconciliação oportunística disparada por leitura/criação de desafio. Ela
+    // também recupera um alarme que possa ter sido atrasado durante hibernação;
+    // não agenda polling nem expõe estado competitivo ao cliente.
+    if (request.method === 'POST' && url.pathname === '/reconcile') return this.reconcile();
     if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
       return new Response('Upgrade necessário', { status: 426 });
     }
@@ -173,6 +177,9 @@ export class ChallengeRoom {
     const cancelled = transitionAsyncHalf(state, { type: 'CANCEL' }, Date.now()).state;
     await this.ctx.storage.put(STATE_KEY, cancelled);
     await this.ctx.storage.delete(SEALED_KEY);
+    // Mesmo quando a interrupção parte do servidor (relação encerrada ou um
+    // retry após falha), a sala terminal converge a reserva do D1 sozinha.
+    await this.applyCancellation(cancelled);
     const payload = JSON.stringify({
       challengeId: cancelled.challengeId,
       match: projectAsyncHalf(cancelled, Date.now()),
@@ -305,7 +312,48 @@ export class ChallengeRoom {
     if (transition.state.phase === 'FINALIZING') {
       await this.ctx.storage.put(SEALED_KEY, true);
       await this.trySeal(transition.state);
+      return;
     }
+    // A transição de timeout/desconexão chega diretamente em VOID. Sem este
+    // selo, a linha FIRST/SECOND_PLAYER_ACTIVE ficava viva no D1 até outro
+    // evento — exatamente o ghost challenge observado no smoke físico.
+    if (transition.state.phase === 'VOID') {
+      await this.ctx.storage.put(SEALED_KEY, true);
+      await this.trySeal(transition.state);
+    }
+  }
+
+  /**
+   * Fecha terminal pendente e força a avaliação do deadline já vencido. A rota é
+   * interna e bounded: uma chamada por desafio vivo durante uma operação real.
+   */
+  private async reconcile(): Promise<Response> {
+    let state = await this.state();
+    if (state === null) return Response.json({ phase: 'MISSING' });
+    if (state.phase === 'CANCELLED') {
+      // Recupera também salas canceladas por uma versão anterior que tenha
+      // caído entre o storage do DO e a escrita D1.
+      const challenge = await this.repository().byId(state.challengeId);
+      if (challenge !== null && !['CANCELLED', 'COMPLETED', 'DECLINED', 'EXPIRED', 'VOID'].includes(challenge.status)) {
+        await this.repository().cancelChallenge(state.challengeId);
+        await notifyChallengeUpdated(this.env, state.challengeId, [
+          challenge.firstPlayerUserId,
+          challenge.secondPlayerUserId,
+        ]);
+      }
+      return Response.json({ phase: state.phase });
+    }
+    if (!isTerminalHalf(state.phase) && state.phase !== 'FINALIZING' &&
+      state.phaseDeadlineMs !== null && state.phaseDeadlineMs <= Date.now()) {
+      await this.applyCommand({ type: 'ALARM' }, Date.now());
+      state = await this.state();
+    }
+    if (state !== null && (state.phase === 'FINALIZING' || state.phase === 'VOID')) {
+      await this.ctx.storage.put(SEALED_KEY, true);
+      await this.trySeal(state);
+      state = await this.state();
+    }
+    return Response.json({ phase: state?.phase ?? 'MISSING' });
   }
 
   /**

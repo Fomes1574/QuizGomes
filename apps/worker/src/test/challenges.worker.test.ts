@@ -196,6 +196,70 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
     expect(again.created).toBe(true);
   });
 
+  it('converge DIRECT terminal do MatchRoom para COMPLETED/VOID e libera outro DIRECT', async () => {
+    for (const matchStatus of ['FINISHED', 'VOID'] as const) {
+      const { themeSlug, users } = await fixture(2);
+      const first = userAt(users, 0);
+      const second = userAt(users, 1);
+      await befriend(first, second);
+      const repository = new ChallengeRepository(env.CORE_DB);
+      const themeId = await themeIdOf(themeSlug);
+      const created = await repository.create({
+        actorUserId: first.id, difficulty: 'EASY', kind: 'DIRECT',
+        targetPresence: 'ONLINE', targetUserId: second.id, themeId,
+      });
+      const matchId = crypto.randomUUID();
+      await env.CORE_DB.batch([
+        env.CORE_DB.prepare(
+          `INSERT INTO matches (id, theme_id, difficulty, mode, kind, status, question_shard_id)
+           VALUES (?1, ?2, 'EASY', 'CASUAL', 'DIRECT_LIVE', ?3, 'questions-01')`,
+        ).bind(matchId, themeId, matchStatus),
+        env.CORE_DB.prepare(
+          "UPDATE challenges SET status = 'ACTIVE', match_id = ?1 WHERE id = ?2",
+        ).bind(matchId, created.challengeId),
+      ]);
+      const live = (await repository.liveLifecycleForUser(first.id))
+        .find((entry) => entry.id === created.challengeId);
+      if (live === undefined) throw new Error('Desafio DIRECT ausente.');
+      expect(await repository.reconcileDirectMatch(live)).toBe(true);
+      expect(await repository.byId(created.challengeId)).toMatchObject({
+        status: matchStatus === 'FINISHED' ? 'COMPLETED' : 'VOID',
+      });
+      expect(await repository.forUser(first.id)).toEqual([]);
+      await expect(repository.create({
+        actorUserId: first.id, difficulty: 'EASY', kind: 'DIRECT',
+        targetPresence: 'ONLINE', targetUserId: second.id, themeId,
+      })).resolves.toMatchObject({ created: true });
+    }
+  });
+
+  it('remove reserva DIRECT sem MatchRoom após a graça e preserva um ASYNC paralelo', async () => {
+    const { themeSlug, users } = await fixture(2);
+    const first = userAt(users, 0);
+    const second = userAt(users, 1);
+    await befriend(first, second);
+    let now = Date.parse('2026-09-10T12:00:00.000Z');
+    const repository = new ChallengeRepository(env.CORE_DB, () => new Date(now));
+    const themeId = await themeIdOf(themeSlug);
+    const direct = await repository.create({
+      actorUserId: first.id, difficulty: 'EASY', kind: 'DIRECT',
+      targetPresence: 'ONLINE', targetUserId: second.id, themeId,
+    });
+    const async = await repository.create({
+      actorUserId: first.id, difficulty: 'EASY', kind: 'ASYNC',
+      targetPresence: 'OFFLINE', targetUserId: second.id, themeId,
+    });
+    await env.CORE_DB.prepare(
+      "UPDATE challenges SET status = 'PREPARING', updated_at = ?1 WHERE id = ?2",
+    ).bind(new Date(now - 7_001).toISOString(), direct.challengeId).run();
+    const stale = (await repository.liveLifecycleForUser(first.id)).find((entry) => entry.id === direct.challengeId);
+    if (stale === undefined) throw new Error('Reserva DIRECT ausente.');
+    now += 7_001;
+    expect(await repository.voidOrphanedLive(stale, now - 7_000)).toBe(true);
+    expect(await repository.byId(direct.challengeId)).toMatchObject({ status: 'VOID' });
+    expect(await repository.byId(async.challengeId)).toMatchObject({ status: 'FIRST_PLAYER_ACTIVE' });
+  });
+
   it('desfazer amizade e bloquear encerram o desafio pendente sem gerar resultado', async () => {
     for (const mode of ['unfriend', 'block'] as const) {
       const { themeSlug, users } = await fixture(2);

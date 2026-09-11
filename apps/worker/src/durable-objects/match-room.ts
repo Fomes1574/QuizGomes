@@ -16,6 +16,8 @@ import {
   LiveMatchRepository,
   type FinalizedLiveMatch,
 } from '../repositories/live-match-repository.js';
+import { ChallengeRepository } from '../repositories/challenge-repository.js';
+import { notifyChallengeUpdated } from '../services/challenge-notifier.js';
 
 interface RoomAttachment {
   seat: LiveSeat;
@@ -439,7 +441,20 @@ export class MatchRoom {
     if (notifyPlayers) {
       for (const socket of this.ctx.getWebSockets()) this.sendTerminal(socket, finalized, summary);
     }
+    await this.reconcileDirectChallenge(state.matchId);
     await this.finishPresenceCleanup();
+  }
+
+  private async reconcileDirectChallenge(matchId: string): Promise<void> {
+    try {
+      const result = await new ChallengeRepository(this.env.CORE_DB).reconcileDirectMatchId(matchId);
+      if (result.changed && result.challengeId !== null && result.participants !== null) {
+        await notifyChallengeUpdated(this.env, result.challengeId, result.participants);
+      }
+    } catch {
+      // Leitura/criação de desafio reaplica a convergência bounded como fallback.
+      console.error(JSON.stringify({ code: 'CHALLENGE_DIRECT_RECONCILE_FAILED', event: 'challenge_direct_terminal' }));
+    }
   }
 
   private async finishPresenceCleanup(): Promise<void> {

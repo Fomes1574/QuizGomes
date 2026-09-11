@@ -59,6 +59,10 @@ const challengeCreateSchema = z.object({
   themeSlug: z.string().min(1).max(160),
 }).strict();
 
+// A mesma graça M8 usada pela sala: uma reserva que não conseguiu sequer abrir
+// uma metade não pode ocupar a dupla indefinidamente.
+const CHALLENGE_INITIAL_GRACE_MS = 7_000;
+
 function validationError(error: z.ZodError): ApiError {
   return new ApiError(400, 'VALIDATION_ERROR', 'Revise os campos enviados.', error.issues.map((issue) => ({
     field: issue.path.join('.'),
@@ -517,6 +521,70 @@ async function abortChallengeRooms(env: Env, challengeId: string): Promise<void>
   }));
 }
 
+/**
+ * Convergência bounded acionada somente em leitura, criação ou ação de desafio.
+ * MatchRoom/ChallengeRoom são a fonte da partida; D1 é corrigido aqui quando uma
+ * finalização foi interrompida entre os dois. Não há cron, polling ou varredura
+ * global: no máximo 50 linhas vivas do próprio usuário.
+ */
+async function reconcileChallengeLifecycle(
+  env: Env,
+  context: ExecutionContext,
+  challenges: ChallengeRepository,
+  userId: string,
+): Promise<void> {
+  const nowMs = Date.now();
+  const expired = await challenges.expireStaleDirect(userId);
+  for (const entry of expired) {
+    notifySocial(env, context, entry.participants, {
+      challengeId: entry.id,
+      type: 'CHALLENGE_UPDATED',
+    });
+  }
+
+  for (const challenge of await challenges.liveLifecycleForUser(userId)) {
+    let changed = false;
+    if (challenge.kind === 'DIRECT') {
+      changed = await challenges.reconcileDirectMatch(challenge);
+      const hasNoRoom = challenge.matchId === null ||
+        await challenges.directMatchStatus(challenge.matchId) === null;
+      if (!changed && ['PREPARING', 'ACTIVE'].includes(challenge.status) &&
+        hasNoRoom && nowMs - challenge.updatedAtMs >= CHALLENGE_INITIAL_GRACE_MS) {
+        // PREPARING sem match e ACTIVE sem MatchRoom recuperável são reservas
+        // quebradas; depois da graça autoritativa elas viram VOID e liberam a dupla.
+        changed = await challenges.voidOrphanedLive(
+          challenge,
+          nowMs - CHALLENGE_INITIAL_GRACE_MS,
+        );
+      }
+    } else if (challenge.status === 'FIRST_PLAYER_ACTIVE' || challenge.status === 'SECOND_PLAYER_ACTIVE') {
+      const seat = challenge.status === 'FIRST_PLAYER_ACTIVE' ? 'FIRST' : 'SECOND';
+      let phase: string | null = null;
+      try {
+        const response = await env.CHALLENGE_ROOM
+          .get(env.CHALLENGE_ROOM.idFromName(`${challenge.id}:${seat}`))
+          .fetch('https://challenge.internal/reconcile', { method: 'POST' });
+        if (response.ok) phase = (await response.json<{ phase?: string }>()).phase ?? null;
+      } catch {
+        // A próxima operação real tenta de novo; o fallback abaixo só toca em
+        // reserva velha cujo DO não existe, nunca em uma metade reconectável.
+      }
+      if (phase === 'MISSING' && nowMs - challenge.updatedAtMs >= CHALLENGE_INITIAL_GRACE_MS) {
+        changed = await challenges.voidOrphanedLive(
+          challenge,
+          nowMs - CHALLENGE_INITIAL_GRACE_MS,
+        );
+      }
+    }
+    if (changed) {
+      notifySocial(env, context, [challenge.firstPlayerUserId, challenge.secondPlayerUserId], {
+        challengeId: challenge.id,
+        type: 'CHALLENGE_UPDATED',
+      });
+    }
+  }
+}
+
 async function challengeRoute(request: Request, env: Env, url: URL, context: ExecutionContext): Promise<Response> {
   const identity = await requireUser(request, env);
   const users = new UserRepository(env.CORE_DB);
@@ -525,15 +593,7 @@ async function challengeRoute(request: Request, env: Env, url: URL, context: Exe
   const challenges = new ChallengeRepository(env.CORE_DB);
 
   if (url.pathname === '/api/challenges' && request.method === 'GET') {
-    // Varredura disparada por atividade real, nunca por timer: encerra os convites
-    // vencidos deste usuário, libera a dupla e avisa os dois lados.
-    const expired = await challenges.expireStaleDirect(profile.userId);
-    for (const entry of expired) {
-      notifySocial(env, context, entry.participants, {
-        challengeId: entry.id,
-        type: 'CHALLENGE_UPDATED',
-      });
-    }
+    await reconcileChallengeLifecycle(env, context, challenges, profile.userId);
     return json({ challenges: await challenges.forUser(profile.userId) });
   }
 
@@ -541,6 +601,8 @@ async function challengeRoute(request: Request, env: Env, url: URL, context: Exe
     const parsed = challengeCreateSchema.safeParse(await readJson(request));
     if (!parsed.success) throw validationError(parsed.error);
     const targetUserId = await challenges.friendTarget(profile.userId, parsed.data.publicId);
+    // Libera uma reserva terminal antes de consultar o índice único da dupla.
+    await reconcileChallengeLifecycle(env, context, challenges, profile.userId);
     const theme = await env.CORE_DB.prepare(
       "SELECT id FROM themes WHERE slug = ?1 COLLATE NOCASE AND status = 'ACTIVE'",
     ).bind(parsed.data.themeSlug).first<{ id: string }>();
@@ -586,6 +648,7 @@ async function challengeRoute(request: Request, env: Env, url: URL, context: Exe
 
   const action = /^\/api\/challenges\/([a-f0-9-]{36})\/(accept|decline|cancel)$/i.exec(url.pathname);
   if (action?.[1] !== undefined && action[2] !== undefined && request.method === 'POST') {
+    await reconcileChallengeLifecycle(env, context, challenges, profile.userId);
     const challenge = await challenges.byId(action[1]);
     if (challenge === null) throw new ApiError(404, 'CHALLENGE_NOT_FOUND', 'Este desafio não existe mais.');
     if (action[2] === 'accept') {
