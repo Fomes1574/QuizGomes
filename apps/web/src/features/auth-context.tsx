@@ -5,7 +5,16 @@ import {
   signOut as firebaseSignOut,
   type User,
 } from 'firebase/auth';
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import { apiRequest, apiUpload, ClientApiError } from '../lib/api.js';
 import { firebaseAuth, googleProvider } from '../lib/firebase.js';
 
@@ -48,6 +57,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<QuizProfile | null>(null);
   const [role, setRole] = useState<'ADMIN' | 'PLAYER' | null>(null);
   const [loading, setLoading] = useState(true);
+  const signingInRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
 
   const loadProfile = useCallback(async (user: User) => {
@@ -65,9 +75,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setProfile(null);
         setRole(null);
         setError(null);
-      } else {
-        setError(profileError instanceof Error ? profileError.message : 'Não foi possível carregar seu perfil.');
+        return;
       }
+      // Falha transitória de rede não é logout: a sessão do Firebase continua válida
+      // e o perfil já carregado permanece na tela.
+      setError(profileError instanceof Error ? profileError.message : 'Não foi possível carregar seu perfil.');
     }
   }, []);
 
@@ -123,6 +135,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     removeCustomAvatar: () => saveAvatar(),
     role,
     signIn: async () => {
+      // Já autenticado ou ainda restaurando: nada de abrir um segundo login.
+      if (firebaseAuth.currentUser !== null || signingInRef.current) return;
+      signingInRef.current = true;
       setError(null);
       try {
         await signInWithPopup(firebaseAuth, googleProvider);
@@ -136,6 +151,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         setError('Não foi possível entrar com Google. Tente novamente.');
         throw signInError;
+      } finally {
+        signingInRef.current = false;
       }
     },
     signOut: async () => firebaseSignOut(firebaseAuth),

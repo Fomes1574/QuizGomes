@@ -14,7 +14,9 @@ const destinations: Array<{ icon: IconName; label: string; to: string }> = [
 ];
 
 export function AppShell() {
-  const { firebaseUser, profile } = useAuth();
+  const { firebaseUser, loading, profile } = useAuth();
+  // Enquanto o Firebase restaura a sessão, nada de anunciar "Visitante".
+  const restoring = loading && profile === null && firebaseUser === null;
   const { onlineCount, pendingCount } = useSocial();
   const location = useLocation();
   return (
@@ -32,8 +34,8 @@ export function AppShell() {
         </div>
         <NavLink className="header-profile" to="/perfil" aria-label="Abrir perfil">
           <span className="header-profile__copy">
-            <small>{profile ? `Nível ${1}` : firebaseUser ? 'Complete seu perfil' : 'Visitante'}</small>
-            <strong>{profile?.displayName ?? firebaseUser?.displayName ?? 'Entrar'}</strong>
+            <small>{profile ? `Nível ${1}` : firebaseUser ? 'Complete seu perfil' : restoring ? 'Restaurando sessão' : 'Visitante'}</small>
+            <strong>{profile?.displayName ?? firebaseUser?.displayName ?? (restoring ? '...' : 'Entrar')}</strong>
           </span>
           <AvatarFrame frameId={profile?.equippedFrameId}>
             <Avatar
