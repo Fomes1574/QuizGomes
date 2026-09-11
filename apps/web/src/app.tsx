@@ -26,6 +26,7 @@ export function App() {
           <Route path="*" element={<NotFoundPage />} />
         </Route>
         <Route path="partida/:roomId" element={<Suspense fallback={<main className="match-lobby-screen"><LoadingState label="Preparando partida" /></main>}><LiveMatchPage /></Suspense>} />
+        <Route path="desafio/:challengeId" element={<Suspense fallback={<main className="match-lobby-screen"><LoadingState label="Preparando desafio" /></main>}><LiveMatchPage variant="challenge" /></Suspense>} />
       </Routes>
       <OnboardingDialog />
     </>

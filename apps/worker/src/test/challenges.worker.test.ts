@@ -1,6 +1,10 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
-import { ChallengeRepository } from '../repositories/challenge-repository.js';
+import {
+  CHALLENGE_RATE_LIMIT,
+  CHALLENGE_RATE_WINDOW_MS,
+  ChallengeRepository,
+} from '../repositories/challenge-repository.js';
 import { SocialRepository } from '../repositories/social-repository.js';
 
 interface FixtureUser {
@@ -38,6 +42,24 @@ async function fixture(count: number): Promise<{ themeSlug: string; users: Fixtu
        VALUES (?1, 'challenge-category', ?2, ?3, 'Fixture.', 'ACTIVE', 'OFFICIAL', 'questions-01', 40)`,
     ).bind(themeId, themeSlug, `Tema ${prefix}`),
   ]);
+  // Pools reais em QUESTIONS_DB para os desafios assíncronos poderem selar o conjunto.
+  for (const difficulty of ['EASY', 'MEDIUM', 'HARD'] as const) {
+    const poolId = `${prefix}-pool-${difficulty.toLowerCase()}`;
+    const count = 16;
+    const statements = [env.QUESTIONS_DB.prepare(
+      `INSERT INTO question_pools (id, theme_id, difficulty, active_count)
+       VALUES (?1, ?2, ?3, ?4)`,
+    ).bind(poolId, themeId, difficulty, count)];
+    for (let index = 1; index <= count; index += 1) {
+      statements.push(env.QUESTIONS_DB.prepare(
+        `INSERT INTO questions
+          (id, pool_id, active_slot, prompt, option_a, option_b, option_c, option_d,
+           correct_option, content_hash, status)
+         VALUES (?1, ?2, ?3, ?4, 'Correta', 'B', 'C', 'D', 0, ?5, 'ACTIVE')`,
+      ).bind(`${poolId}-q-${index}`, poolId, index, `[FIXTURE] ${difficulty} ${index}?`, `${poolId}-hash-${index}`));
+    }
+    await env.QUESTIONS_DB.batch(statements);
+  }
   return { themeSlug, users };
 }
 
@@ -228,8 +250,13 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
     now += 1;
     // Vencido some da lista mesmo antes da varredura.
     expect(await repository.forUser(friend.id, now)).toEqual([]);
-    expect(await repository.expireStaleDirect()).toEqual([created.challengeId]);
+    // A varredura por participante encerra e devolve os dois lados para notificação.
+    expect(await repository.expireStaleDirect(friend.id)).toEqual([
+      { id: created.challengeId, participants: [challenger.id, friend.id] },
+    ]);
     expect(await repository.byId(created.challengeId)).toMatchObject({ status: 'EXPIRED' });
+    // Idempotente: uma segunda varredura não encontra mais nada.
+    expect(await repository.expireStaleDirect(friend.id)).toEqual([]);
 
     const again = await repository.create({
       actorUserId: challenger.id,
@@ -290,6 +317,176 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
 
     await repository.endForRelationship(challenger.id, friend.id);
     expect(await repository.byId(created.challengeId)).toMatchObject({ status: 'SECOND_PLAYER_ACTIVE' });
+  });
+
+  it('aplica teto técnico de criação sem virar cooldown social visível', async () => {
+    const { themeSlug, users } = await fixture(CHALLENGE_RATE_LIMIT + 2);
+    const challenger = userAt(users, 0);
+    const targets = users.slice(1);
+    for (const target of targets) await befriend(challenger, target);
+    const repository = new ChallengeRepository(env.CORE_DB);
+    const themeId = await themeIdOf(themeSlug);
+    const base = { actorUserId: challenger.id, difficulty: 'EASY', kind: 'ASYNC', targetPresence: 'ONLINE', themeId } as const;
+
+    for (let index = 0; index < CHALLENGE_RATE_LIMIT; index += 1) {
+      const target = targets[index];
+      if (target === undefined) throw new Error('Fixture insuficiente.');
+      await expect(repository.create({ ...base, targetUserId: target.id })).resolves.toMatchObject({ created: true });
+    }
+
+    const blocked = targets[CHALLENGE_RATE_LIMIT];
+    if (blocked === undefined) throw new Error('Fixture insuficiente.');
+    await expect(repository.create({ ...base, targetUserId: blocked.id })).rejects.toMatchObject({
+      code: 'CHALLENGE_RATE_LIMITED', status: 429,
+    });
+
+    // Fora da janela o mesmo usuário volta a criar: é limite técnico, não punição.
+    const later = new ChallengeRepository(
+      env.CORE_DB,
+      () => new Date(Date.now() + CHALLENGE_RATE_WINDOW_MS + 1_000),
+    );
+    await expect(later.create({ ...base, targetUserId: blocked.id })).resolves.toMatchObject({ created: true });
+  });
+
+  it('sela um único conjunto e serve exatamente as mesmas perguntas às duas metades', async () => {
+    const { themeSlug, users } = await fixture(2);
+    const first = userAt(users, 0);
+    const second = userAt(users, 1);
+    await befriend(first, second);
+    const repository = new ChallengeRepository(env.CORE_DB);
+    const themeId = await themeIdOf(themeSlug);
+    const created = await repository.create({
+      actorUserId: first.id, difficulty: 'MEDIUM', kind: 'ASYNC',
+      targetPresence: 'OFFLINE', targetUserId: second.id, themeId,
+    });
+
+    await repository.sealQuestionSet(created.challengeId, themeId, 'MEDIUM', env.QUESTIONS_DB);
+    const sealedOnce = await repository.questionSet(created.challengeId);
+    expect(sealedOnce).toHaveLength(8);
+    expect(new Set(sealedOnce.map((question) => question.id)).size).toBe(8);
+
+    // Selar de novo é no-op: o conjunto já selado vence.
+    await repository.sealQuestionSet(created.challengeId, themeId, 'MEDIUM', env.QUESTIONS_DB);
+    const sealedTwice = await repository.questionSet(created.challengeId);
+    expect(sealedTwice.map((question) => question.id)).toEqual(sealedOnce.map((question) => question.id));
+    expect(sealedTwice.map((question) => question.options)).toEqual(sealedOnce.map((question) => question.options));
+    expect(sealedTwice.map((question) => question.correctOption))
+      .toEqual(sealedOnce.map((question) => question.correctOption));
+  });
+
+  it('sela a metade do primeiro jogador, espera o segundo e conclui pagando XP uma única vez', async () => {
+    const { themeSlug, users } = await fixture(2);
+    const first = userAt(users, 0);
+    const second = userAt(users, 1);
+    await befriend(first, second);
+    const repository = new ChallengeRepository(env.CORE_DB);
+    const themeId = await themeIdOf(themeSlug);
+    const created = await repository.create({
+      actorUserId: first.id, difficulty: 'EASY', kind: 'ASYNC',
+      targetPresence: 'OFFLINE', targetUserId: second.id, themeId,
+    });
+    await repository.sealQuestionSet(created.challengeId, themeId, 'EASY', env.QUESTIONS_DB);
+
+    const firstHalf = [20, 0, 15, 11, 18].map((score, index) => ({
+      correct: score > 0, remainingMs: score > 0 ? (score - 10) * 1_000 : 0, score, selectedOption: index % 4,
+    }));
+    await repository.sealHalf({
+      answers: firstHalf, challengeId: created.challengeId, difficulty: 'EASY',
+      isSecondPlayer: false, opponentScore: 0, userId: first.id,
+    });
+    expect(await repository.byId(created.challengeId)).toMatchObject({ status: 'WAITING_FOR_SECOND' });
+    expect(await repository.sealedHalf(created.challengeId, first.id)).toEqual(firstHalf);
+    // O segundo jogador ainda não selou nada.
+    expect(await repository.sealedHalf(created.challengeId, second.id)).toEqual([]);
+
+    await env.CORE_DB.prepare("UPDATE challenges SET status = 'SECOND_PLAYER_ACTIVE' WHERE id = ?1")
+      .bind(created.challengeId).run();
+    const secondHalf = [20, 20, 20, 0, 0].map((score, index) => ({
+      correct: score > 0, remainingMs: score > 0 ? (score - 10) * 1_000 : 0, score, selectedOption: index % 4,
+    }));
+    await repository.sealHalf({
+      answers: secondHalf, challengeId: created.challengeId, difficulty: 'EASY',
+      isSecondPlayer: true, opponentScore: 64, userId: second.id,
+    });
+
+    expect(await repository.byId(created.challengeId)).toMatchObject({ status: 'COMPLETED' });
+    // 64 do primeiro contra 60 do segundo: vitória do primeiro, +10 XP de Fácil.
+    const xp = await env.CORE_DB.prepare(
+      'SELECT user_id, total_xp FROM user_profiles WHERE user_id IN (?1, ?2) ORDER BY user_id',
+    ).bind(first.id, second.id).all<{ total_xp: number; user_id: string }>();
+    const byUser = new Map(xp.results.map((row) => [row.user_id, row.total_xp]));
+    expect(byUser.get(first.id)).toBe(10);
+    expect(byUser.get(second.id)).toBe(0);
+
+    // Reexecutar não duplica resposta nem paga XP duas vezes.
+    await repository.sealHalf({
+      answers: secondHalf, challengeId: created.challengeId, difficulty: 'EASY',
+      isSecondPlayer: true, opponentScore: 64, userId: second.id,
+    });
+    expect(await env.CORE_DB.prepare(
+      'SELECT COUNT(*) AS total FROM challenge_answers WHERE challenge_id = ?1',
+    ).bind(created.challengeId).first()).toEqual({ total: 10 });
+    expect(await env.CORE_DB.prepare('SELECT total_xp FROM user_profiles WHERE user_id = ?1')
+      .bind(first.id).first()).toEqual({ total_xp: 10 });
+  });
+
+  it('empate no assíncrono não paga XP a ninguém e Conhecimento nunca muda', async () => {
+    const { themeSlug, users } = await fixture(2);
+    const first = userAt(users, 0);
+    const second = userAt(users, 1);
+    await befriend(first, second);
+    const repository = new ChallengeRepository(env.CORE_DB);
+    const themeId = await themeIdOf(themeSlug);
+    const created = await repository.create({
+      actorUserId: first.id, difficulty: 'EASY', kind: 'ASYNC',
+      targetPresence: 'OFFLINE', targetUserId: second.id, themeId,
+    });
+    await repository.sealQuestionSet(created.challengeId, themeId, 'EASY', env.QUESTIONS_DB);
+    const half = [20, 0, 0, 0, 0].map((score, index) => ({
+      correct: score > 0, remainingMs: score > 0 ? (score - 10) * 1_000 : 0, score, selectedOption: index % 4,
+    }));
+    await repository.sealHalf({
+      answers: half, challengeId: created.challengeId, difficulty: 'EASY',
+      isSecondPlayer: false, opponentScore: 0, userId: first.id,
+    });
+    await env.CORE_DB.prepare("UPDATE challenges SET status = 'SECOND_PLAYER_ACTIVE' WHERE id = ?1")
+      .bind(created.challengeId).run();
+    await repository.sealHalf({
+      answers: half, challengeId: created.challengeId, difficulty: 'EASY',
+      isSecondPlayer: true, opponentScore: 20, userId: second.id,
+    });
+
+    expect(await repository.byId(created.challengeId)).toMatchObject({ status: 'COMPLETED' });
+    const xp = await env.CORE_DB.prepare(
+      'SELECT SUM(total_xp) AS total FROM user_profiles WHERE user_id IN (?1, ?2)',
+    ).bind(first.id, second.id).first<{ total: number }>();
+    expect(xp?.total).toBe(0);
+    expect(await env.CORE_DB.prepare(
+      'SELECT COUNT(*) AS total FROM theme_rankings WHERE user_id IN (?1, ?2)',
+    ).bind(first.id, second.id).first()).toEqual({ total: 0 });
+  });
+
+  it('anular a metade do segundo jogador não gera vencedor, XP nem payload sobrevivente', async () => {
+    const { themeSlug, users } = await fixture(2);
+    const first = userAt(users, 0);
+    const second = userAt(users, 1);
+    await befriend(first, second);
+    const repository = new ChallengeRepository(env.CORE_DB);
+    const themeId = await themeIdOf(themeSlug);
+    const created = await repository.create({
+      actorUserId: first.id, difficulty: 'EASY', kind: 'ASYNC',
+      targetPresence: 'OFFLINE', targetUserId: second.id, themeId,
+    });
+    await repository.sealQuestionSet(created.challengeId, themeId, 'EASY', env.QUESTIONS_DB);
+
+    await repository.voidChallenge(created.challengeId);
+    expect(await repository.byId(created.challengeId)).toMatchObject({ status: 'VOID' });
+    expect(await env.CORE_DB.prepare(
+      'SELECT COUNT(*) AS total FROM challenge_questions WHERE challenge_id = ?1',
+    ).bind(created.challengeId).first()).toEqual({ total: 0 });
+    expect(await env.CORE_DB.prepare(
+      'SELECT SUM(total_xp) AS total FROM user_profiles WHERE user_id IN (?1, ?2)',
+    ).bind(first.id, second.id).first<{ total: number }>()).toEqual({ total: 0 });
   });
 
   it('todas as rotas de desafio exigem autenticação e não aceitam identidade arbitrária', async () => {

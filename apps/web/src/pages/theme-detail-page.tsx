@@ -115,6 +115,15 @@ export function ThemeDetailPage() {
         <FriendChallengeDialog
           busy={friendChallenge.status !== 'idle'}
           friends={friends}
+          onAsync={(friend, chosenDifficulty) => {
+            setChallengePickerOpen(false);
+            void friendChallenge.challenge({
+              difficulty: chosenDifficulty,
+              displayName: friend.displayName,
+              kind: 'ASYNC',
+              publicId: friend.publicId,
+            });
+          }}
           onClose={() => setChallengePickerOpen(false)}
           onDirect={(friend, chosenDifficulty) => {
             setChallengePickerOpen(false);

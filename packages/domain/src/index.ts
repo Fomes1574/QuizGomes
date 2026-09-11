@@ -1,3 +1,4 @@
+export * from './challenges/async-half.js';
 export * from './challenges/challenge.js';
 export * from './match/rules.js';
 export * from './match/scoring.js';

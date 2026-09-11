@@ -503,6 +503,12 @@ export interface LiveMatchProjection {
     photoUrl: string | null;
     score: number;
   };
+  /**
+   * Exclusivo da primeira metade do desafio assíncrono: o adversário ainda não
+   * jogou, então não existe placar dele para mostrar. A partida simultânea nunca
+   * define este campo.
+   */
+  opponentPending?: boolean;
   paused?: {
     graceRemainingMs: number;
     phase: PausablePhase;

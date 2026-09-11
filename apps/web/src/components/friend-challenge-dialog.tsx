@@ -28,12 +28,14 @@ const PRESENCE_ORDER: Record<FriendPresence, number> = {
 export function FriendChallengeDialog({
   busy,
   friends,
+  onAsync,
   onClose,
   onDirect,
   themeName,
 }: {
   busy: boolean;
   friends: SocialFriend[];
+  onAsync: (friend: SocialFriend, difficulty: Difficulty) => void;
   onClose: () => void;
   onDirect: (friend: SocialFriend, difficulty: Difficulty) => void;
   themeName: string;
@@ -122,13 +124,22 @@ export function FriendChallengeDialog({
                     <strong>{friend.displayName}</strong>
                     <small><i aria-hidden="true" data-presence={friendPresence} />{PRESENCE_LABEL[friendPresence]}</small>
                   </span>
-                  <button
-                    className="challenge-friend__action"
-                    disabled={busy || !available}
-                    onClick={() => onDirect(friend, difficulty)}
-                    title={available ? undefined : 'Este amigo não está disponível agora.'}
-                    type="button"
-                  >Desafiar agora</button>
+                  <span className="challenge-friend__actions">
+                    <button
+                      className="challenge-friend__action"
+                      disabled={busy || !available}
+                      onClick={() => onDirect(friend, difficulty)}
+                      title={available ? undefined : 'Este amigo não está disponível agora.'}
+                      type="button"
+                    >Agora</button>
+                    {/* "Depois" vale para qualquer presença: quem desafia joga a metade dele na hora. */}
+                    <button
+                      className="challenge-friend__action challenge-friend__action--quiet"
+                      disabled={busy}
+                      onClick={() => onAsync(friend, difficulty)}
+                      type="button"
+                    >Depois</button>
+                  </span>
                 </li>
               );
             })}

@@ -29,6 +29,7 @@
   ],
   "durable_objects": {
     "bindings": [
+      { "name": "CHALLENGE_ROOM", "class_name": "ChallengeRoom" },
       { "name": "MATCH_ROOM", "class_name": "MatchRoom" },
       { "name": "MATCHMAKING_QUEUE", "class_name": "MatchmakingQueue" },
       { "name": "PRESENCE_HUB", "class_name": "PresenceHub" },
@@ -44,6 +45,10 @@
     {
       "tag": "v2",
       "new_sqlite_classes": ["SocialRealtimeHub"]
+    },
+    {
+      "tag": "v3",
+      "new_sqlite_classes": ["ChallengeRoom"]
     }
   ]
 }

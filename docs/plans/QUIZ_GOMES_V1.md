@@ -55,15 +55,14 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 - [x] 2026-08-21 — Milestone 9A.1 oficialmente concluído após aprovação física; M8/M8.5, Social Foundation e realtime global permanecem preservados.
 - [ ] Milestone 9A — smoke físico pós-deploy pelo proprietário: descoberta, pedidos, três recusas direcionais, bloqueios/pareamento e push real somente após configuração opcional do Firebase/Cloudflare.
 - [x] 2026-08-21 — Milestone 9B implementado e validado localmente: presença privada/autoritativa entre amigos, snapshot versionado, fanout direcionado e Social responsivo refinado.
-- [ ] Milestone 9B — smoke físico pós-deploy pelo proprietário: amigos online/busca/partida/reconexão/offline, múltiplas sessões e transições visuais em aparelhos reais.
+- [x] 2026-09-11 — smoke físico integral do Milestone 9B APROVADO pelo proprietário em produção: Online, matchmaking, partida, reconexão, offline, múltiplas abas e dispositivos, nova amizade, remoção, bloqueio, busca sem presença, contador global, mobile/desktop/escuro e regressão de gameplay.
+- [x] 2026-09-11 — Milestone 9B oficialmente CONCLUÍDO e FROZEN; M8, M8.5, 9A, 9A.1 e 9B permanecem preservados.
 - [x] 2026-09-10 — apresentação do duelo implementada e validada localmente: composição VS na apresentação e no lobby, coreografia em quatro tempos, continuidade FLIP até o placar e cadência ampliada para 1.200/1.200/900 ms sob autorização explícita do proprietário.
 - [ ] Apresentação do duelo — smoke físico pós-deploy pelo proprietário: coreografia, continuidade modal→lobby→placar, retrato/moldura/liga, paisagem, claro/escuro e `prefers-reduced-motion` em aparelhos reais.
-- [x] 2026-09-10 — regras globais M9C+M10 aplicadas: 5/8/12 perguntas, sorteio sem histórico de exibição, limite de 200 amizades e silenciamento por amizade.
-- [x] 2026-09-10 — desafio simultâneo entre amigos implementado e validado localmente: núcleo de domínio, migration 0008, repositório com CAS, aceite no MatchRoom existente, realtime no canal social e interface no tema e no Social.
-- [ ] Desafio assíncrono (M10) — motor da metade selada, revelação progressiva e interface ainda não implementados.
-- [ ] Desafios entre amigos — smoke físico pós-deploy pelo proprietário.
-- [ ] Milestone 10 — assíncrono selado e revelação progressiva.
-- [ ] Milestone 11 — criação/moderação/import/admin.
+- [x] 2026-09-10 — Milestone 9C+M10 (unificado, Desafios entre amigos) — regras globais aplicadas: 5/8/12 perguntas, sorteio sem histórico de exibição, limite de 200 amizades e silenciamento por amizade.
+- [x] 2026-09-10 — Milestone 9C+M10 — desafio simultâneo ("Desafiar agora") implementado e validado localmente: núcleo de domínio, migration 0008, repositório com CAS, aceite no MatchRoom existente, realtime no canal social e interface no tema e no Social.
+- [ ] Milestone 9C+M10 — smoke físico pós-deploy pelo proprietário: convite, expiração de 30 s, aceite/recusa/cancelamento, metades assíncronas, sigilo, reconexão e regressão de gameplay.
+- [ ] Milestone 11 — criação/moderação/import/admin (não iniciar sem autorização).
 - [ ] Milestone 12 — e2e, performance, acessibilidade, segurança e deploy.
 
 ## Decisões
@@ -699,9 +698,9 @@ fora do diff funcional.
   `215,00 / 67,76 KB gzip`, e a sala congelada permanece em
   `19,59 / 6,52 KB gzip`.
 
-O smoke físico do Milestone 9B permanece **pendente da aprovação explícita do
-proprietário**. Desafio direto, convite, assíncrono, chat, last-seen e Milestone
-9C **não foram iniciados**.
+O smoke físico integral do Milestone 9B foi **aprovado pelo proprietário em
+produção em 2026-09-11**, e o milestone está **CONCLUÍDO e FROZEN**. Chat,
+last-seen, mensagens, grupos e recomendação continuam **não iniciados**.
 
 ### 2026-09-10 — apresentação do duelo: composição, coreografia e continuidade
 

@@ -124,6 +124,7 @@ export function MatchScreen({
   onAnswer,
   opponent,
   opponentAnswered = false,
+  opponentPending = false,
   opponentScore,
   player,
   playerScore,
@@ -141,6 +142,8 @@ export function MatchScreen({
   onAnswer: (option: number) => void;
   opponent: MatchParticipantView;
   opponentAnswered?: boolean;
+  /** Metade do primeiro jogador assíncrono: o adversário ainda não jogou nenhuma rodada. */
+  opponentPending?: boolean;
   opponentScore: number;
   player: MatchParticipantView;
   playerScore: number;
@@ -211,7 +214,9 @@ export function MatchScreen({
       <header className="match-scoreboard" ref={scoreboardRef}>
         <div className="opponent-chip">
           <span
-            aria-label={opponentAnswered ? 'Adversário respondeu' : 'Adversário pensando'}
+            aria-label={opponentPending
+              ? 'Adversário ainda não jogou'
+              : opponentAnswered ? 'Adversário respondeu' : 'Adversário pensando'}
             className={`status-dot ${opponentAnswered ? 'status-dot--answered' : ''}`}
             role="status"
           />
@@ -220,7 +225,11 @@ export function MatchScreen({
           </AvatarFrame>
           <span className="match-scoreboard__copy">
             <small>{opponent.name}</small>
-            <strong aria-live="polite" key={displayedScores.opponent}>{displayedScores.opponent}</strong>
+            <strong
+              aria-label={opponentPending ? 'Adversário ainda não jogou' : undefined}
+              aria-live="polite"
+              key={opponentPending ? 'pending' : displayedScores.opponent}
+            >{opponentPending ? '—' : displayedScores.opponent}</strong>
           </span>
         </div>
         {round !== undefined && <span className="round-counter">PERGUNTA {round.number} / {round.total}</span>}

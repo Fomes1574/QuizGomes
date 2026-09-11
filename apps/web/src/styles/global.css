@@ -456,6 +456,9 @@ h1, h2, h3, .brand-lockup__name, .hero-stat strong, .level-card > strong, .count
 .challenge-friend__identity small i[data-presence='OFFLINE'] { background: var(--presence-offline); }
 .challenge-friend__action { flex: none; margin-left: auto; padding: 8px 13px; border: 1px solid var(--brand); border-radius: 11px; color: var(--text-on-brand); background: var(--brand); cursor: pointer; font: 700 .74rem/1 Inter, sans-serif; }
 .challenge-friend__action:disabled { border-color: var(--border); color: var(--text-secondary); background: var(--background-subtle); cursor: not-allowed; }
+.challenge-friend__actions { display: flex; flex: none; margin-left: auto; gap: 6px; }
+.challenge-friend__action--quiet { border-color: var(--border-strong); color: var(--text-primary); background: transparent; }
+.challenge-friend__action--quiet:disabled { border-color: var(--border); color: var(--text-secondary); background: var(--background-subtle); }
 .challenge-waiting { position: fixed; z-index: 90; right: max(16px, env(safe-area-inset-right)); bottom: calc(var(--nav-height) + 16px); left: max(16px, env(safe-area-inset-left)); display: flex; align-items: center; gap: 13px; margin-inline: auto; width: min(100%, 420px); padding: 13px 15px; border: 1px solid var(--border); border-radius: 17px; background: var(--surface-raised); box-shadow: var(--shadow-md); animation: content-in 220ms ease-out both; }
 .challenge-waiting .spinner { width: 26px; height: 26px; flex: none; border-width: 3px; }
 .challenge-waiting div { display: grid; min-width: 0; gap: 2px; }

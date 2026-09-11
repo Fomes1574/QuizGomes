@@ -5,6 +5,7 @@ export interface Env {
   CORE_DB: D1Database;
   FCM_SERVICE_ACCOUNT_JSON?: string;
   FIREBASE_PROJECT_ID: string;
+  CHALLENGE_ROOM: DurableObjectNamespace;
   MATCH_ROOM: DurableObjectNamespace;
   MATCHMAKING_QUEUE: DurableObjectNamespace;
   PRESENCE_HUB: DurableObjectNamespace;

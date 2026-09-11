@@ -62,8 +62,10 @@ interface PauseVisualState {
   localLossStartedAtMonotonicMs?: number;
 }
 
-export function LiveMatchPage() {
-  const { roomId = '' } = useParams();
+export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | 'match' } = {}) {
+  const { challengeId = '', roomId = '' } = useParams();
+  const isChallenge = variant === 'challenge';
+  const sessionId = isChallenge ? challengeId : roomId;
   const location = useLocation();
   const { getToken } = useAuth();
   const navigate = useNavigate();
@@ -388,7 +390,10 @@ export function LiveMatchPage() {
         }
         if (token === null) throw new Error('Sua sessão expirou. Entre novamente.');
         const ticket = await apiRequest<{ ticket: string }>('/api/realtime/tickets', {
-          body: { resource: roomId, scope: 'room' }, getToken, method: 'POST', token,
+          body: { resource: sessionId, scope: isChallenge ? 'challenge' : 'room' },
+          getToken,
+          method: 'POST',
+          token,
         });
         if (disposed || currentGeneration !== generation) {
           connecting = false;
@@ -397,7 +402,10 @@ export function LiveMatchPage() {
         connecting = false;
         const search = new URLSearchParams({ ticket: ticket.ticket });
         if (terminalRecovery) search.set('terminal', '1');
-        bindSocket(new WebSocket(websocketUrl(`/api/realtime/rooms/${roomId}?${search}`)));
+        const path = isChallenge
+          ? `/api/realtime/challenges/${sessionId}?${search}`
+          : `/api/realtime/rooms/${sessionId}?${search}`;
+        bindSocket(new WebSocket(websocketUrl(path)));
       } catch (connectError) {
         connecting = false;
         if (disposed || currentGeneration !== generation) return;
@@ -406,7 +414,8 @@ export function LiveMatchPage() {
       }
     };
 
-    const prepared = takePreparedMatchRoom(roomId);
+    // A metade assíncrona nunca vem pré-conectada: ela abre a própria sala ao entrar.
+    const prepared = isChallenge ? null : takePreparedMatchRoom(sessionId);
     if (prepared === null) void connect();
     else {
       generation += 1;
@@ -453,7 +462,7 @@ export function LiveMatchPage() {
       socketRef.current = null;
       socket?.close(1_000, 'Tela encerrada');
     };
-  }, [getToken, roomId]);
+  }, [getToken, isChallenge, sessionId]);
 
   // A continuidade visual pertence a esta sala: sair da partida descarta a geometria guardada.
   useEffect(() => () => clearDuelHandoff(), []);
@@ -532,7 +541,7 @@ export function LiveMatchPage() {
       <>
         <MatchScreen
           deadlineMs={preparingQuestion ? 0 : deadlineMs ?? 0}
-          duelRoomId={roomId}
+          duelRoomId={isChallenge ? undefined : sessionId}
           key={`${projection.round.number}:${activeQuestion.id}`}
           onAnswer={(selectedOption) => {
             socketRef.current?.send(JSON.stringify({
@@ -549,6 +558,7 @@ export function LiveMatchPage() {
             photoUrl: projection.opponent.photoUrl,
           }}
           opponentAnswered={projection.opponent.answered}
+          opponentPending={projection.opponentPending ?? false}
           opponentScore={projection.opponent.score}
           player={{
             customAvatarUrl: projection.viewer.customAvatarUrl,
@@ -597,7 +607,7 @@ export function LiveMatchPage() {
             frameId: lobbyDuel.opponent.frameId,
             photoUrl: lobbyDuel.opponent.photoUrl,
           }}
-          roomId={roomId}
+          roomId={sessionId}
           viewer={{
             customAvatarUrl: lobbyDuel.viewer.customAvatarUrl,
             displayName: lobbyDuel.viewer.displayName,

@@ -17,6 +17,7 @@ export type ChallengeStatus =
   | 'WAITING_FOR_SECOND';
 
 export interface ChallengeView {
+  challenged: SocialUser;
   challenger: SocialUser;
   difficulty: Difficulty;
   expiresAt: string | null;

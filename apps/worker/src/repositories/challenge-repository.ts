@@ -3,20 +3,31 @@ import {
   decideChallengeCreation,
   directChallengeExpiresAt,
   isTerminalChallenge,
+  questionsForDifficulty,
   transitionChallenge,
+  xpAward,
   ChallengeRuleError,
   LIVE_CHALLENGE_STATUSES,
+  TOTAL_XP_TO_MAX_LEVEL,
   type ChallengeAction,
   type ChallengeKind,
   type ChallengeRecord,
   type ChallengeStatus,
   type Difficulty,
   type FriendPresence,
+  type LiveQuestion,
+  type SealedRoundAnswer,
 } from '@quiz-gomes/domain';
 import { ApiError } from '../http/api-error.js';
+import { QuestionRepository } from './question-repository.js';
+import { QuestionSelectionService } from '../services/question-selection-service.js';
 import { customAvatarUrl } from '../storage/custom-avatar.js';
 
 const LIVE_STATUS_LIST = LIVE_CHALLENGE_STATUSES.map((status) => `'${status}'`).join(', ');
+
+/** Teto técnico de criação de desafios por usuário numa janela curta. */
+export const CHALLENGE_RATE_LIMIT = 12;
+export const CHALLENGE_RATE_WINDOW_MS = 60_000;
 
 export interface ChallengeParticipant {
   customAvatarUrl: string | null;
@@ -28,6 +39,7 @@ export interface ChallengeParticipant {
 }
 
 export interface ChallengeView {
+  challenged: ChallengeParticipant;
   challenger: ChallengeParticipant;
   difficulty: Difficulty;
   expiresAt: string | null;
@@ -53,6 +65,12 @@ interface ChallengeRow {
 }
 
 interface ChallengeViewRow extends ChallengeRow {
+  challenged_avatar_version: number | null;
+  challenged_display_name: string;
+  challenged_frame_id: string | null;
+  challenged_photo_url: string | null;
+  challenged_public_id: string;
+  challenged_user_id: string;
   challenger_avatar_version: number | null;
   challenger_display_name: string;
   challenger_frame_id: string | null;
@@ -93,7 +111,11 @@ const VIEW_COLUMNS = `
   p.user_id AS challenger_user_id, p.public_id AS challenger_public_id,
   p.display_name AS challenger_display_name, p.photo_url AS challenger_photo_url,
   p.equipped_frame_id AS challenger_frame_id,
-  CASE WHEN a.active = 1 THEN a.version ELSE NULL END AS challenger_avatar_version
+  CASE WHEN a.active = 1 THEN a.version ELSE NULL END AS challenger_avatar_version,
+  q.user_id AS challenged_user_id, q.public_id AS challenged_public_id,
+  q.display_name AS challenged_display_name, q.photo_url AS challenged_photo_url,
+  q.equipped_frame_id AS challenged_frame_id,
+  CASE WHEN b.active = 1 THEN b.version ELSE NULL END AS challenged_avatar_version
 `;
 
 export class ChallengeRepository {
@@ -145,6 +167,22 @@ export class ChallengeRepository {
   }
 
   /**
+   * Limite técnico de criação, não um cooldown social: protege o servidor de
+   * rajadas automatizadas sem virar punição visível entre amigos. A mensagem é
+   * neutra e não revela nada sobre o alvo nem sobre o histórico da dupla.
+   */
+  private async assertCreationRate(actorUserId: string, nowMs: number): Promise<void> {
+    const since = new Date(nowMs - CHALLENGE_RATE_WINDOW_MS).toISOString();
+    const row = await this.db.prepare(
+      `SELECT COUNT(*) AS total FROM challenges
+        WHERE first_player_user_id = ?1 AND created_at >= ?2`,
+    ).bind(actorUserId, since).first<{ total: number }>();
+    if ((row?.total ?? 0) >= CHALLENGE_RATE_LIMIT) {
+      throw new ApiError(429, 'CHALLENGE_RATE_LIMITED', 'Muitos desafios em pouco tempo. Tente de novo em instantes.');
+    }
+  }
+
+  /**
    * Cria o desafio ou reconhece o desafio cruzado como aceite/concordância.
    * O índice único da dupla é a barreira final contra corrida entre A e B.
    */
@@ -160,6 +198,7 @@ export class ChallengeRepository {
     if (input.kind === 'DIRECT' && input.targetPresence !== 'ONLINE') {
       throw new ApiError(409, 'FRIEND_UNAVAILABLE', 'Este amigo não está disponível para uma partida agora.');
     }
+    await this.assertCreationRate(input.actorUserId, nowMs);
     const existing = await this.activeForPair(input.actorUserId, input.targetUserId);
     let decision;
     try {
@@ -246,6 +285,184 @@ export class ChallengeRepository {
     return applied;
   }
 
+  /**
+   * Sorteia e sela o conjunto do desafio assíncrono uma única vez.
+   *
+   * Os dois jogadores recebem exatamente as mesmas perguntas, na mesma ordem e com
+   * as mesmas alternativas. A segunda chamada é no-op: o conjunto já selado vence.
+   */
+  async sealQuestionSet(
+    challengeId: string,
+    themeId: string,
+    difficulty: Difficulty,
+    questionsDb: D1Database,
+  ): Promise<void> {
+    const existing = await this.db.prepare(
+      'SELECT COUNT(*) AS total FROM challenge_questions WHERE challenge_id = ?1',
+    ).bind(challengeId).first<{ total: number }>();
+    if ((existing?.total ?? 0) > 0) return;
+
+    const selected = await new QuestionSelectionService(new QuestionRepository(questionsDb))
+      .select(themeId, difficulty, questionsForDifficulty(difficulty));
+    await this.db.batch(selected.questions.map((question, index) => this.db.prepare(
+      `INSERT OR IGNORE INTO challenge_questions
+         (challenge_id, round_number, question_id, pool_slot, public_snapshot_json, correct_option)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6)`,
+    ).bind(
+      challengeId,
+      index + 1,
+      question.id,
+      question.slot,
+      JSON.stringify({ options: question.options, prompt: question.prompt }),
+      question.correctOption,
+    )));
+    await this.db.prepare(
+      'UPDATE challenges SET pool_id = ?1, pool_version = ?2, updated_at = ?3 WHERE id = ?4',
+    ).bind(selected.poolId, selected.poolVersion, this.clock().toISOString(), challengeId).run();
+  }
+
+  /** Conjunto selado, na ordem das rodadas. */
+  async questionSet(challengeId: string): Promise<LiveQuestion[]> {
+    const result = await this.db.prepare(
+      `SELECT round_number, question_id, pool_slot, public_snapshot_json, correct_option
+         FROM challenge_questions WHERE challenge_id = ?1 ORDER BY round_number`,
+    ).bind(challengeId).all<{
+      correct_option: number;
+      pool_slot: number;
+      public_snapshot_json: string;
+      question_id: string;
+      round_number: number;
+    }>();
+    return result.results.map((row) => {
+      const snapshot = JSON.parse(row.public_snapshot_json) as {
+        options: [string, string, string, string];
+        prompt: string;
+      };
+      return {
+        correctOption: row.correct_option,
+        id: row.question_id,
+        imageUrl: null,
+        options: snapshot.options,
+        prompt: snapshot.prompt,
+        slot: row.pool_slot,
+      };
+    });
+  }
+
+  /** Metade já selada de um jogador, na ordem das rodadas. */
+  async sealedHalf(challengeId: string, userId: string): Promise<SealedRoundAnswer[]> {
+    const result = await this.db.prepare(
+      `SELECT round_number, selected_option, remaining_ms, is_correct, score
+         FROM challenge_answers
+        WHERE challenge_id = ?1 AND user_id = ?2
+        ORDER BY round_number`,
+    ).bind(challengeId, userId).all<{
+      is_correct: number;
+      remaining_ms: number;
+      round_number: number;
+      score: number;
+      selected_option: number | null;
+    }>();
+    return result.results.map((row) => ({
+      correct: row.is_correct === 1,
+      remainingMs: row.remaining_ms,
+      score: row.score,
+      selectedOption: row.selected_option,
+    }));
+  }
+
+  /**
+   * Sela a metade de um jogador e avança o desafio, tudo em um único batch.
+   *
+   * Idempotente: reexecutar não duplica respostas nem aplica XP duas vezes, porque
+   * a inserção ignora conflito e a transição exige o estado de origem exato.
+   */
+  async sealHalf(input: {
+    answers: readonly SealedRoundAnswer[];
+    challengeId: string;
+    difficulty: Difficulty;
+    isSecondPlayer: boolean;
+    opponentScore: number;
+    userId: string;
+  }): Promise<void> {
+    const now = this.clock().toISOString();
+    const score = input.answers.reduce((total, answer) => total + answer.score, 0);
+    const statements: D1PreparedStatement[] = input.answers.map((answer, index) => this.db.prepare(
+      `INSERT OR IGNORE INTO challenge_answers
+         (challenge_id, round_number, user_id, selected_option, remaining_ms, is_correct, score, answered_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
+    ).bind(
+      input.challengeId,
+      index + 1,
+      input.userId,
+      answer.selectedOption,
+      answer.remainingMs,
+      answer.correct ? 1 : 0,
+      answer.score,
+      now,
+    ));
+
+    if (!input.isSecondPlayer) {
+      statements.push(this.db.prepare(
+        `UPDATE challenges
+            SET status = 'WAITING_FOR_SECOND', first_half_sealed_at = ?1,
+                updated_at = ?1, revision = revision + 1
+          WHERE id = ?2 AND status = 'FIRST_PLAYER_ACTIVE'`,
+      ).bind(now, input.challengeId));
+      await this.db.batch(statements);
+      return;
+    }
+
+    // Desafio entre amigos é sempre Casual: Conhecimento nunca muda, só XP de vitória.
+    const result = score === input.opponentScore ? 'DRAW' : score > input.opponentScore ? 'WIN' : 'LOSS';
+    const xpDelta = xpAward(input.difficulty, result);
+    statements.push(this.db.prepare(
+      `UPDATE challenges SET status = 'COMPLETED', updated_at = ?1, revision = revision + 1
+        WHERE id = ?2 AND status = 'SECOND_PLAYER_ACTIVE'`,
+    ).bind(now, input.challengeId));
+    const applied = await this.db.batch(statements);
+    if ((applied.at(-1)?.meta.changes ?? 0) !== 1) return;
+    await this.awardChallengeXp(input.challengeId, input.difficulty, score, input.opponentScore, input.userId, xpDelta);
+  }
+
+  /**
+   * XP de desafio concluído, para os dois jogadores. O ledger por partida garante
+   * que uma reexecução não pague duas vezes.
+   */
+  private async awardChallengeXp(
+    challengeId: string,
+    difficulty: Difficulty,
+    secondScore: number,
+    firstScore: number,
+    secondUserId: string,
+    secondXp: number,
+  ): Promise<void> {
+    const challenge = await this.byId(challengeId);
+    if (challenge === null) return;
+    const firstResult = firstScore === secondScore ? 'DRAW' : firstScore > secondScore ? 'WIN' : 'LOSS';
+    const awards: Array<[string, number]> = [
+      [challenge.firstPlayerUserId, xpAward(difficulty, firstResult)],
+      [secondUserId, secondXp],
+    ];
+    // Empate paga zero aos dois: sem escrita nenhuma, e sem batch vazio.
+    const payable = awards.filter(([, xp]) => xp > 0);
+    if (payable.length === 0) return;
+    await this.db.batch(payable.map(([userId, xp]) => this.db.prepare(
+      `UPDATE user_profiles
+          SET total_xp = MIN(?1, total_xp + ?2), updated_at = CURRENT_TIMESTAMP
+        WHERE user_id = ?3`,
+    ).bind(TOTAL_XP_TO_MAX_LEVEL, xp, userId)));
+  }
+
+  /** Marca a metade do segundo jogador como anulada, sem vencedor, XP ou Conhecimento. */
+  async voidChallenge(challengeId: string): Promise<void> {
+    await this.db.prepare(
+      `UPDATE challenges SET status = 'VOID', updated_at = ?1, revision = revision + 1
+        WHERE id = ?2 AND status IN (${LIVE_STATUS_LIST})`,
+    ).bind(this.clock().toISOString(), challengeId).run();
+    await this.cleanupPayload(challengeId);
+  }
+
   /** Nenhum payload competitivo sobrevive a um desafio encerrado sem resultado. */
   async cleanupPayload(challengeId: string): Promise<void> {
     await this.db.batch([
@@ -267,22 +484,44 @@ export class ChallengeRepository {
     }
   }
 
-  /** Convites diretos vencidos, encerrados sem virar recusa. */
-  async expireStaleDirect(): Promise<string[]> {
+  /**
+   * Encerra convites diretos vencidos sem tratá-los como recusa, liberando a dupla.
+   *
+   * A varredura é disparada por atividade real do usuário — abrir o Social, listar
+   * desafios — e não por um timer: nenhuma escrita periódica no D1. Escopo por
+   * participante mantém o custo proporcional a quem está usando o app, e o LIMIT
+   * impede que uma varredura cresça sem teto.
+   */
+  async expireStaleDirect(participantUserId?: string): Promise<Array<{ id: string; participants: [string, string] }>> {
     const now = this.clock().toISOString();
-    const stale = await this.db.prepare(
-      `SELECT id FROM challenges
-        WHERE status = 'PENDING_DIRECT' AND expires_at IS NOT NULL AND expires_at <= ?1
-        LIMIT 50`,
-    ).bind(now).all<{ id: string }>();
+    const scope = participantUserId === undefined
+      ? this.db.prepare(
+        `SELECT id, first_player_user_id, second_player_user_id FROM challenges
+          WHERE status = 'PENDING_DIRECT' AND expires_at IS NOT NULL AND expires_at <= ?1
+          LIMIT 50`,
+      ).bind(now)
+      : this.db.prepare(
+        `SELECT id, first_player_user_id, second_player_user_id FROM challenges
+          WHERE status = 'PENDING_DIRECT' AND expires_at IS NOT NULL AND expires_at <= ?1
+            AND (first_player_user_id = ?2 OR second_player_user_id = ?2)
+          LIMIT 50`,
+      ).bind(now, participantUserId);
+    const stale = await scope.all<{
+      first_player_user_id: string;
+      id: string;
+      second_player_user_id: string;
+    }>();
     if (stale.results.length === 0) return [];
-    const ids = stale.results.map((row) => row.id);
-    await this.db.batch(ids.map((id) => this.db.prepare(
+    const expired = stale.results.map((row) => ({
+      id: row.id,
+      participants: [row.first_player_user_id, row.second_player_user_id] as [string, string],
+    }));
+    await this.db.batch(expired.map(({ id }) => this.db.prepare(
       `UPDATE challenges SET status = 'EXPIRED', updated_at = ?1, revision = revision + 1
         WHERE id = ?2 AND status = 'PENDING_DIRECT'`,
     ).bind(now, id)));
-    await Promise.all(ids.map((id) => this.cleanupPayload(id)));
-    return ids;
+    await Promise.all(expired.map(({ id }) => this.cleanupPayload(id)));
+    return expired;
   }
 
   /** Desafios que o usuário precisa ver no Social, dos dois lados. */
@@ -292,7 +531,9 @@ export class ChallengeRepository {
          FROM challenges c
          JOIN themes t ON t.id = c.theme_id
          JOIN user_profiles p ON p.user_id = c.first_player_user_id
+         JOIN user_profiles q ON q.user_id = c.second_player_user_id
          LEFT JOIN user_custom_avatars a ON a.user_id = c.first_player_user_id
+         LEFT JOIN user_custom_avatars b ON b.user_id = c.second_player_user_id
         WHERE (c.first_player_user_id = ?1 OR c.second_player_user_id = ?1)
           AND c.status IN (${LIVE_STATUS_LIST})
         ORDER BY c.created_at DESC
@@ -303,6 +544,14 @@ export class ChallengeRepository {
       // Um convite vencido nunca aparece como pendente, mesmo antes da varredura.
       if (row.status === 'PENDING_DIRECT' && expiresAtMs !== null && nowMs >= expiresAtMs) return [];
       return [{
+        challenged: {
+          customAvatarUrl: customAvatarUrl(row.challenged_user_id, row.challenged_avatar_version),
+          displayName: row.challenged_display_name,
+          frameId: row.challenged_frame_id,
+          photoUrl: row.challenged_photo_url,
+          publicId: row.challenged_public_id,
+          userId: row.challenged_user_id,
+        },
         challenger: {
           customAvatarUrl: customAvatarUrl(row.challenger_user_id, row.challenger_avatar_version),
           displayName: row.challenger_display_name,

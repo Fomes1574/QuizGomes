@@ -243,59 +243,73 @@ function ChallengesSection({
   onAccept,
   onCancel,
   onDecline,
+  onResume,
 }: {
   busy: boolean;
   challenges: ChallengeView[];
   onAccept: (challenge: ChallengeView) => void;
   onCancel: (challenge: ChallengeView) => void;
   onDecline: (challenge: ChallengeView) => void;
+  onResume: (challenge: ChallengeView) => void;
 }) {
   if (challenges.length === 0) return null;
   return (
     <section aria-label="Desafios" className="social-section">
       <div className="section-heading"><div><h2>Desafios</h2></div></div>
       <div className="social-list">
-        {challenges.map((challenge) => (
-          <article className="social-person" key={challenge.id}>
-            <div className="social-person__identity">
-              <AvatarFrame frameId={challenge.challenger.frameId}>
-                <Avatar
-                  customUrl={challenge.challenger.customAvatarUrl}
-                  googleUrl={challenge.challenger.photoUrl}
-                  name={challenge.challenger.displayName}
-                  size="small"
-                />
-              </AvatarFrame>
-              <span>
-                <strong>{challenge.role === 'CHALLENGED' ? challenge.challenger.displayName : 'Você desafiou'}</strong>
-                <small>
-                  {challenge.theme.name} · {DIFFICULTY_LABEL[challenge.difficulty]} ·
-                  {challenge.kind === 'DIRECT' ? ' agora' : ' quando puder'}
-                </small>
-              </span>
-            </div>
-            <div className="social-person__actions">
-              {challenge.role === 'CHALLENGED' ? (
-                <>
-                  <Button disabled={busy} onClick={() => onAccept(challenge)}>Jogar</Button>
+        {challenges.map((challenge) => {
+          const other = challenge.role === 'CHALLENGED' ? challenge.challenger : challenge.challenged;
+          // A própria metade do desafiante ainda aberta: ele volta e termina.
+          const resumable = challenge.role === 'CHALLENGER' && challenge.status === 'FIRST_PLAYER_ACTIVE';
+          const playable = challenge.role === 'CHALLENGED' &&
+            (challenge.status === 'PENDING_DIRECT' || challenge.status === 'WAITING_FOR_SECOND');
+          const cancellable = challenge.role === 'CHALLENGER' && challenge.status !== 'SECOND_PLAYER_ACTIVE';
+          return (
+            <article className="social-person" key={challenge.id}>
+              <div className="social-person__identity">
+                <AvatarFrame frameId={other.frameId}>
+                  <Avatar
+                    customUrl={other.customAvatarUrl}
+                    googleUrl={other.photoUrl}
+                    name={other.displayName}
+                    size="small"
+                  />
+                </AvatarFrame>
+                <span>
+                  <strong>{other.displayName}</strong>
+                  <small>
+                    {challenge.theme.name} · {DIFFICULTY_LABEL[challenge.difficulty]} ·{' '}
+                    {challenge.kind === 'DIRECT'
+                      ? 'desafio agora'
+                      : resumable
+                        ? 'sua vez'
+                        : challenge.role === 'CHALLENGER' ? 'aguardando resposta' : 'sua vez'}
+                  </small>
+                </span>
+              </div>
+              <div className="social-person__actions">
+                {resumable && <Button disabled={busy} onClick={() => onResume(challenge)}>Continuar</Button>}
+                {playable && <Button disabled={busy} onClick={() => onAccept(challenge)}>Jogar</Button>}
+                {playable && (
                   <button
                     className="social-person__quiet-action"
                     disabled={busy}
                     onClick={() => onDecline(challenge)}
                     type="button"
                   >Recusar</button>
-                </>
-              ) : (
-                <button
-                  className="social-person__quiet-action"
-                  disabled={busy}
-                  onClick={() => onCancel(challenge)}
-                  type="button"
-                >Cancelar desafio</button>
-              )}
-            </div>
-          </article>
-        ))}
+                )}
+                {cancellable && (
+                  <button
+                    className="social-person__quiet-action"
+                    disabled={busy}
+                    onClick={() => onCancel(challenge)}
+                    type="button"
+                  >Cancelar</button>
+                )}
+              </div>
+            </article>
+          );
+        })}
       </div>
     </section>
   );
@@ -355,12 +369,16 @@ export function SocialPage() {
       setBusy(challenge.id);
       setError(null);
       try {
-        const response = await apiRequest<{ roomId?: string }>(`/api/challenges/${challenge.id}/${action}`, {
-          getToken,
-          method: 'POST',
-        });
+        const response = await apiRequest<{ half?: string; roomId?: string }>(
+          `/api/challenges/${challenge.id}/${action}`,
+          { getToken, method: 'POST' },
+        );
         if (action === 'accept' && typeof response.roomId === 'string') {
           void navigate(`/partida/${response.roomId}`);
+          return;
+        }
+        if (action === 'accept' && response.half === 'SECOND') {
+          void navigate(`/desafio/${challenge.id}`);
           return;
         }
         await loadChallenges();
@@ -533,6 +551,7 @@ export function SocialPage() {
                 onAccept={(challenge) => challengeAction(challenge, 'accept')}
                 onCancel={(challenge) => challengeAction(challenge, 'cancel')}
                 onDecline={(challenge) => challengeAction(challenge, 'decline')}
+                onResume={(challenge) => void navigate(`/desafio/${challenge.id}`)}
               />
 
               <FriendsSection

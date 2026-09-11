@@ -1,6 +1,7 @@
 import { z } from 'zod';
-import { discoveredCount, type FriendPresence } from '@quiz-gomes/domain';
+import { discoveredCount, type ChallengeRecord, type FriendPresence } from '@quiz-gomes/domain';
 import { bootstrapAdminUids, hasAdminAccess, requireAdmin, requireUser } from './auth/authorize.js';
+import { ChallengeRoom } from './durable-objects/challenge-room.js';
 import { MatchRoom } from './durable-objects/match-room.js';
 import { MatchmakingQueue } from './durable-objects/matchmaking-queue.js';
 import { PresenceHub, type ActivityState } from './durable-objects/presence-hub.js';
@@ -36,11 +37,11 @@ import { SocialPushService } from './services/social-push-service.js';
 import { inspectWebp, THEME_ARTWORK_MAX_BYTES } from './storage/webp.js';
 import { CUSTOM_AVATAR_BYTES, CUSTOM_AVATAR_DIMENSION } from './storage/custom-avatar.js';
 
-export { MatchRoom, MatchmakingQueue, PresenceHub, SocialRealtimeHub, TicketBroker };
+export { ChallengeRoom, MatchRoom, MatchmakingQueue, PresenceHub, SocialRealtimeHub, TicketBroker };
 
 const ticketSchema = z.object({
   resource: z.string().min(1).max(256),
-  scope: z.enum(['matchmaking', 'presence', 'room', 'social']),
+  scope: z.enum(['challenge', 'matchmaking', 'presence', 'room', 'social']),
 }).strict();
 
 const socialTargetSchema = z.object({
@@ -130,6 +131,9 @@ async function createRealtimeTicket(request: Request, env: Env): Promise<Respons
   if (parsed.data.scope === 'social' && parsed.data.resource !== 'social') {
     throw new ApiError(400, 'INVALID_REALTIME_RESOURCE', 'Canal social inválido.');
   }
+  if (parsed.data.scope === 'challenge') {
+    await assertChallengeHalfAccess(env, profile.userId, parsed.data.resource);
+  }
   const resource = parsed.data.scope === 'presence' ? user.uid : parsed.data.resource;
   return ticketBroker(env).fetch('https://tickets.internal/create', {
     body: JSON.stringify({ expiresAt: 0, resource, scope: parsed.data.scope, uid: user.uid }),
@@ -138,10 +142,36 @@ async function createRealtimeTicket(request: Request, env: Env): Promise<Respons
   });
 }
 
+/**
+ * Acesso à metade assíncrona: só participa quem é dono da metade que está aberta
+ * agora. O primeiro jogador joga em FIRST_PLAYER_ACTIVE; o segundo, só depois de
+ * aceitar, em SECOND_PLAYER_ACTIVE. Nenhum dos dois alcança a metade do outro.
+ */
+async function assertChallengeHalfAccess(
+  env: Env,
+  userId: string,
+  challengeId: string,
+): Promise<{ seat: 'FIRST' | 'SECOND' }> {
+  if (!/^[a-f0-9-]{36}$/i.test(challengeId)) {
+    throw new ApiError(403, 'CHALLENGE_ACCESS_DENIED', 'Você não pertence a este desafio.');
+  }
+  const challenge = await new ChallengeRepository(env.CORE_DB).byId(challengeId);
+  if (challenge === null || challenge.kind !== 'ASYNC') {
+    throw new ApiError(403, 'CHALLENGE_ACCESS_DENIED', 'Você não pertence a este desafio.');
+  }
+  if (challenge.firstPlayerUserId === userId && challenge.status === 'FIRST_PLAYER_ACTIVE') {
+    return { seat: 'FIRST' };
+  }
+  if (challenge.secondPlayerUserId === userId && challenge.status === 'SECOND_PLAYER_ACTIVE') {
+    return { seat: 'SECOND' };
+  }
+  throw new ApiError(403, 'CHALLENGE_ACCESS_DENIED', 'Você não pertence a este desafio.');
+}
+
 async function consumeRealtimeTicket(
   env: Env,
   ticket: string,
-  scope: 'matchmaking' | 'presence' | 'room' | 'social',
+  scope: 'challenge' | 'matchmaking' | 'presence' | 'room' | 'social',
   resource: string,
 ): Promise<string> {
   const response = await ticketBroker(env).fetch('https://tickets.internal/consume', {
@@ -165,6 +195,27 @@ async function realtimeRoute(request: Request, env: Env, url: URL): Promise<Resp
     const uid = await consumeRealtimeTicket(env, ticket, 'presence', resource);
     const stub = env.PRESENCE_HUB.get(env.PRESENCE_HUB.idFromName(uid));
     return stub.fetch(new Request('https://presence.internal/socket', { headers: { Upgrade: 'websocket' } }));
+  }
+
+  const challengeMatch = /^\/api\/realtime\/challenges\/([a-f0-9-]{36})$/i.exec(url.pathname);
+  if (challengeMatch?.[1] !== undefined) {
+    const challengeId = challengeMatch[1];
+    const uid = await consumeRealtimeTicket(env, ticket, 'challenge', challengeId);
+    const profile = await new UserRepository(env.CORE_DB).findByFirebaseUid(uid);
+    if (profile === null) throw new ApiError(409, 'PROFILE_REQUIRED', 'Conclua seu perfil antes de jogar.');
+    const { seat } = await assertChallengeHalfAccess(env, profile.userId, challengeId);
+    const stub = env.CHALLENGE_ROOM.get(env.CHALLENGE_ROOM.idFromName(`${challengeId}:${seat}`));
+    const ready = await stub.fetch('https://challenge.internal/initialize', {
+      body: JSON.stringify({ challengeId, createdAtMs: Date.now(), seat, userId: profile.userId }),
+      method: 'POST',
+    });
+    if (!ready.ok) {
+      const failure = await ready.json<{ error?: { code?: string } }>();
+      throw new ApiError(409, failure.error?.code ?? 'CHALLENGE_UNAVAILABLE', 'Este desafio não está disponível.');
+    }
+    return stub.fetch(new Request('https://challenge.internal/socket', {
+      headers: { Upgrade: 'websocket', 'X-QG-Authenticated-User-Id': profile.userId },
+    }));
   }
 
   if (url.pathname === '/api/realtime/social') {
@@ -458,6 +509,15 @@ async function challengeRoute(request: Request, env: Env, url: URL, context: Exe
   const challenges = new ChallengeRepository(env.CORE_DB);
 
   if (url.pathname === '/api/challenges' && request.method === 'GET') {
+    // Varredura disparada por atividade real, nunca por timer: encerra os convites
+    // vencidos deste usuário, libera a dupla e avisa os dois lados.
+    const expired = await challenges.expireStaleDirect(profile.userId);
+    for (const entry of expired) {
+      notifySocial(env, context, entry.participants, {
+        challengeId: entry.id,
+        type: 'CHALLENGE_UPDATED',
+      });
+    }
     return json({ challenges: await challenges.forUser(profile.userId) });
   }
 
@@ -483,11 +543,24 @@ async function challengeRoute(request: Request, env: Env, url: URL, context: Exe
     if (created.crossAccepted) {
       return await acceptChallenge(env, context, challenges, users, profile.userId, created.challengeId);
     }
+    if (parsed.data.kind === 'ASYNC' && created.created) {
+      // O conjunto é sorteado e selado aqui, uma única vez, e servirá os dois jogadores.
+      try {
+        await challenges.sealQuestionSet(created.challengeId, theme.id, parsed.data.difficulty, env.QUESTIONS_DB);
+      } catch (error) {
+        await challenges.voidChallenge(created.challengeId);
+        throw error;
+      }
+    }
     notifySocial(env, context, [targetUserId, profile.userId], {
       challengeId: created.challengeId,
       type: 'CHALLENGE_UPDATED',
     });
-    return json({ challengeId: created.challengeId, created: created.created });
+    return json({
+      challengeId: created.challengeId,
+      created: created.created,
+      ...(parsed.data.kind === 'ASYNC' ? { halfReady: true } : {}),
+    });
   }
 
   const action = /^\/api\/challenges\/([a-f0-9-]{36})\/(accept|decline|cancel)$/i.exec(url.pathname);
@@ -513,6 +586,41 @@ async function challengeRoute(request: Request, env: Env, url: URL, context: Exe
 }
 
 /**
+ * Aceite do desafio assíncrono: o segundo jogador começa a metade dele na hora.
+ *
+ * Não existe estado intermediário de "aceito esperando": o CAS leva direto de
+ * WAITING_FOR_SECOND para SECOND_PLAYER_ACTIVE, e a partir daí cancelar e recusar
+ * deixam de ser permitidos.
+ */
+async function acceptAsyncChallenge(
+  env: Env,
+  context: ExecutionContext,
+  challenges: ChallengeRepository,
+  challenge: ChallengeRecord,
+  actorUserId: string,
+): Promise<Response> {
+  if (challenge.secondPlayerUserId !== actorUserId) {
+    throw new ApiError(403, 'NOT_CHALLENGED', 'Só quem foi desafiado pode aceitar.');
+  }
+  if (challenge.status !== 'WAITING_FOR_SECOND') {
+    throw new ApiError(409, 'CHALLENGE_NOT_PENDING', 'Este desafio não aguarda você agora.');
+  }
+  const claimed = await env.CORE_DB.prepare(
+    `UPDATE challenges SET status = 'SECOND_PLAYER_ACTIVE', updated_at = ?1, revision = revision + 1
+      WHERE id = ?2 AND revision = ?3 AND status = 'WAITING_FOR_SECOND'`,
+  ).bind(new Date().toISOString(), challenge.id, challenge.revision).run();
+  if ((claimed.meta.changes ?? 0) !== 1) {
+    throw new ApiError(409, 'CHALLENGE_CONFLICT', 'Este desafio mudou de estado. Atualize a tela.');
+  }
+  notifySocial(env, context, [challenge.firstPlayerUserId, challenge.secondPlayerUserId], {
+    challengeId: challenge.id,
+    type: 'CHALLENGE_UPDATED',
+  });
+  void challenges;
+  return json({ challengeId: challenge.id, half: 'SECOND' });
+}
+
+/**
  * Aceite do desafio simultâneo: revalida tudo server-side no instante do aceite e
  * entrega a sala do MatchRoom existente. O cliente nunca decide elegibilidade.
  */
@@ -529,7 +637,8 @@ async function acceptChallenge(
   if (challenge.secondPlayerUserId !== actorUserId) {
     throw new ApiError(403, 'NOT_CHALLENGED', 'Só quem foi desafiado pode aceitar.');
   }
-  if (challenge.kind !== 'DIRECT' || challenge.status !== 'PENDING_DIRECT') {
+  if (challenge.kind === 'ASYNC') return await acceptAsyncChallenge(env, context, challenges, challenge, actorUserId);
+  if (challenge.status !== 'PENDING_DIRECT') {
     throw new ApiError(409, 'CHALLENGE_NOT_PENDING', 'Este desafio não aguarda aceite.');
   }
   if (challenge.expiresAtMs !== null && Date.now() >= challenge.expiresAtMs) {

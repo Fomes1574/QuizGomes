@@ -90,7 +90,7 @@ export function useFriendChallenge(themeSlug: string) {
     setError(null);
     setStatus('sending');
     try {
-      const response = await apiRequest<{ challengeId: string; roomId?: string }>('/api/challenges', {
+      const response = await apiRequest<{ challengeId: string; halfReady?: boolean; roomId?: string }>('/api/challenges', {
         body: {
           difficulty: input.difficulty,
           kind: input.kind,
@@ -110,11 +110,15 @@ export function useFriendChallenge(themeSlug: string) {
         return;
       }
       setStatus('idle');
+      if (input.kind === 'ASYNC' && response.halfReady === true) {
+        // Quem desafia depois joga a própria metade imediatamente.
+        void navigate(`/desafio/${response.challengeId}`);
+      }
     } catch (reason) {
       setStatus('idle');
       setError(reason instanceof Error ? reason.message : 'Não foi possível enviar o desafio.');
     }
-  }, [getToken, themeSlug]);
+  }, [getToken, navigate, themeSlug]);
 
   const cancel = useCallback(async () => {
     const current = waiting;
