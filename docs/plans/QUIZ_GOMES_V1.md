@@ -62,7 +62,9 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 - [x] 2026-09-10 — Milestone 9C+M10 (unificado, Desafios entre amigos) — regras globais aplicadas: 5/8/12 perguntas, sorteio sem histórico de exibição, limite de 200 amizades e silenciamento por amizade.
 - [x] 2026-09-10 — Milestone 9C+M10 — desafio simultâneo ("Desafiar agora") implementado e validado localmente: núcleo de domínio, migration 0008, repositório com CAS, aceite no MatchRoom existente, realtime no canal social e interface no tema e no Social.
 - [x] 2026-09-11 — Milestone 9C+M10 — desafio assíncrono ("Desafiar depois") implementado e validado localmente: conjunto selado uma vez para os dois, metade por vez com as primitivas do M8, sigilo e revelação progressiva, resultado/XP idempotentes, rate limiting técnico e varredura de convites vencidos.
-- [ ] Milestone 9C+M10 — smoke físico pós-deploy pelo proprietário: convite, expiração de 30 s, aceite/recusa/cancelamento, metades assíncronas, sigilo, reconexão e regressão de gameplay.
+- [x] 2026-09-11 — Milestone 9C+M10 — smoke físico REPROVADO pelo proprietário em produção. Oito defeitos reportados: lista do Social só mudava com recarregar; cards com texto genérico e botão "Jogar" fora de hora; "Desafiar amigo" aparecia em Ranqueada; DIRECT bloqueado por um ASYNC vivo da mesma dupla; espera do convite direto presa à tela do tema e perdida no reload; metade assíncrona sem saída; seletor de amigo sobreposto no celular; sessão do Firebase caindo a cada recarga no celular.
+- [x] 2026-09-11 — Milestone 9C+M10 — passe corretivo do smoke aplicado e validado localmente: `CHALLENGE_UPDATED` em toda transição autoritativa, textos e ações dos cards por papel/estado, desafio entre amigos restrito ao Casual, migration forward-only `0009` separando o limite por tipo, espera global do convite direto recuperável do servidor, "Cancelar e voltar" na metade assíncrona, seletor de amigo empilhado no celular e persistência declarada do Firebase Auth.
+- [ ] Milestone 9C+M10 — NOVO smoke físico pós-deploy pelo proprietário (o milestone permanece ABERTO, não congelado): convite, expiração de 30 s, aceite/recusa/cancelamento, metades assíncronas, sigilo, reconexão, além dos oito pontos reprovados acima.
 - [ ] Milestone 11 — criação/moderação/import/admin (não iniciar sem autorização).
 - [ ] Milestone 12 — e2e, performance, acessibilidade, segurança e deploy.
 
@@ -872,6 +874,58 @@ Verificação: `lint`, `typecheck`, 252 testes unitários e de domínio, 71 test
 Worker/WebSocket, `test:migrations` (banco vazio, upgrade 0007→0008, invariantes
 de dupla e rollback) e `build` verdes. Nenhum smoke físico foi executado.
 
+### 2026-09-11 — M9C+M10: smoke físico REPROVADO e passe corretivo
+
+O proprietário executou o smoke físico do M9C+M10 em produção e **REPROVOU** a
+entrega. O milestone **permanece ABERTO** — não foi congelado, e o M11 não foi
+iniciado. Os oito defeitos reportados e o que cada um exigiu:
+
+1. **A lista do Social não se atualizava sozinha.** Toda transição autoritativa
+   do desafio (selar a primeira metade, iniciar a segunda, concluir, anular,
+   cancelar, recusar) passa a emitir `CHALLENGE_UPDATED` pelo canal social já
+   existente, via `services/challenge-notifier.ts`. Nenhum polling novo, nenhum
+   segundo WebSocket, nenhuma escrita periódica no D1.
+2. **Os cards diziam "sua vez" para todo mundo e ofereciam "Jogar" cedo demais.**
+   `challengeCardCopy` passou a derivar texto e ações de papel + estado:
+   "Você desafiou {Nome} em {Tema} na dificuldade {Dif}" / "{Nome} te desafiou
+   …", e "Jogar" só existe depois de `WAITING_FOR_SECOND`. Nenhum status revela
+   número de rodada, progresso ou placar parcial do adversário.
+3. **"Desafiar amigo" aparecia em Ranqueada.** O botão só existe em Casual e
+   trocar para Ranqueada fecha o seletor aberto — desafio entre amigos é sempre
+   Casual, por regra do próprio milestone.
+4. **Um ASYNC vivo bloqueava o convite direto da mesma dupla.** O índice único
+   `idx_challenges_live_pair` tratava os dois tipos como um só. A migration
+   forward-only `0009` o substitui por `idx_challenges_live_pair_async` e
+   `idx_challenges_live_pair_direct`. A `0008`, já aplicada em produção, não foi
+   tocada. Cenário obrigatório coberto por regressão: A criou ASYNC para B, A
+   terminou a primeira metade (`WAITING_FOR_SECOND`) e A pode enviar DIRECT para
+   B com B Online.
+5. **A espera do convite direto morria com a tela do tema e sumia no reload.** O
+   estado saiu do hook da página para um `ChallengeProvider` global; o convite
+   pendente é recuperado do servidor e a contagem deriva do `expiresAt`
+   autoritativo. `CHALLENGE_STARTED` passou a ter um consumidor único e global,
+   então o aceite remoto leva o desafiante à sala de qualquer tela.
+6. **A metade assíncrona não tinha saída.** `ChallengeRoom` ganhou `CANCEL` pelo
+   WebSocket e `/abort` pelo servidor; a tela espera a confirmação autoritativa
+   antes de sair e volta ao tema de origem — cancelar o próprio desafio não vira
+   tela de resultado anulado.
+7. **O seletor de amigo se sobrepunha no celular.** O card empilha por padrão
+   (ações em `grid-column: 1 / -1`) e só vira linha a partir de 640px.
+8. **A sessão do Firebase caía a cada recarga no celular.** Persistência
+   declarada explicitamente (IndexedDB → localStorage) com fallback para o auth
+   já inicializado; falha transitória de `/api/profile/me` não apaga mais o
+   perfil e a shell mostra "Restaurando sessão" em vez de "Visitante".
+
+Correção de rota encontrada pelo próprio passe: no desafio, "Cancelar e voltar"
+navegava sem o estado de origem e a tela do tema reabria nos padrões. Agora volta
+com dificuldade e modalidade, igual ao cancelamento da partida simultânea.
+
+Verificação: `lint`, `typecheck`, 277 testes unitários e de domínio, 79 testes de
+Worker/WebSocket, `test:migrations` (banco vazio, upgrade até `0009`, invariantes
+de dupla por tipo e rollback) e `build` verdes. **Nenhum smoke físico novo foi
+executado nem declarado** — a reprovação acima continua valendo até que o
+proprietário execute e aprove o novo smoke em aparelhos reais.
+
 ## Critério de saída desta execução
 
 - Milestones 8 e 8.5 aprovados fisicamente e congelados;
@@ -879,6 +933,6 @@ de dupla e rollback) e `build` verdes. Nenhum smoke físico foi executado.
 - presença privada 9B implementada/validada localmente e publicada em commits lógicos na `main` por fast-forward;
 - suíte unitária, runtime Workers/WebSocket, PWA, Worker, migrations, rollback, npm audit e secrets verdes;
 - push FCM opcional sem impedir amizades/bloqueios quando não configurado;
-- smoke físico completo do 9A e smoke físico do 9B continuam pendentes até confirmação externa do proprietário;
-- Milestone 9C+M10 unificado (Desafios entre amigos) implementado por inteiro e validado localmente; smoke físico pendente;
+- smoke físico do 9B APROVADO em 2026-09-11 e o milestone CONCLUÍDO/FROZEN; o smoke físico completo do 9A continua pendente até confirmação externa do proprietário;
+- Milestone 9C+M10 unificado (Desafios entre amigos) implementado por inteiro e validado localmente; smoke físico REPROVADO em 2026-09-11, passe corretivo dos oito defeitos aplicado e o milestone segue ABERTO até um novo smoke físico do proprietário;
 - Milestone 11 não iniciado; sem preview de branch, R2, billing ou produto pago.
