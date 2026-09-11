@@ -41,22 +41,22 @@ export interface ChallengeCardCopy {
   canPlay: boolean;
   canResume: boolean;
   headline: string;
-  status: string;
+  subtitle: string;
 }
 
 /**
  * Texto e ações do card, derivados do estado AUTORITATIVO do desafio.
  *
- * Nada de progresso, número de pergunta ou score parcial do outro lado: a segunda
- * linha diz apenas de quem é a vez.
+ * A presença visual é resolvida separadamente pelo SocialRealtime. Aqui não há
+ * progresso, número de pergunta, score parcial nem estado textual concatenado.
  */
 export function challengeCardCopy(challenge: ChallengeView): ChallengeCardCopy {
   const mine = challenge.role === 'CHALLENGER';
   const other = mine ? challenge.challenged : challenge.challenger;
-  const context = `em ${challenge.theme.name} na dificuldade ${DIFFICULTY_LABEL[challenge.difficulty]}`;
   const headline = mine
-    ? `Você desafiou ${other.displayName} ${context}`
-    : `${other.displayName} te desafiou ${context}`;
+    ? `Você desafiou ${other.displayName}`
+    : `${other.displayName} te desafiou`;
+  const subtitle = `${challenge.theme.name} · ${DIFFICULTY_LABEL[challenge.difficulty]}`;
   const idle = { canCancel: false, canDecline: false, canPlay: false, canResume: false };
 
   if (challenge.kind === 'DIRECT') {
@@ -67,9 +67,9 @@ export function challengeCardCopy(challenge: ChallengeView): ChallengeCardCopy {
         canDecline: !mine,
         canPlay: !mine,
         headline,
-        status: mine ? 'Aguardando resposta' : 'Convite para jogar agora',
+        subtitle,
       }
-      : { ...idle, headline, status: 'Em partida' };
+      : { ...idle, headline, subtitle };
   }
 
   if (challenge.status === 'FIRST_PLAYER_ACTIVE') {
@@ -78,7 +78,7 @@ export function challengeCardCopy(challenge: ChallengeView): ChallengeCardCopy {
       canCancel: mine,
       canResume: mine,
       headline,
-      status: mine ? 'Em partida' : 'Desafiante jogando',
+      subtitle,
     };
   }
   if (challenge.status === 'WAITING_FOR_SECOND') {
@@ -88,15 +88,15 @@ export function challengeCardCopy(challenge: ChallengeView): ChallengeCardCopy {
       canDecline: !mine,
       canPlay: !mine,
       headline,
-      status: mine ? `Aguardando ${other.displayName}` : 'Pronto para jogar',
+      subtitle,
     };
   }
   if (challenge.status === 'SECOND_PLAYER_ACTIVE') {
     return {
       ...idle,
       headline,
-      status: mine ? `${other.displayName} está jogando` : 'Em partida',
+      subtitle,
     };
   }
-  return { ...idle, headline, status: 'Em partida' };
+  return { ...idle, headline, subtitle };
 }

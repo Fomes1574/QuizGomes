@@ -32,33 +32,33 @@ function view(overrides: Partial<ChallengeView> = {}): ChallengeView {
 }
 
 describe('texto e ações do card de desafio', () => {
-  it('usa a frase completa de cada papel, com tema e dificuldade', () => {
+  it('separa descrição compacta de tema e dificuldade', () => {
     expect(challengeCardCopy(view()).headline)
-      .toBe('Você desafiou Ana em Elden Ring na dificuldade Médio');
+      .toBe('Você desafiou Ana');
     expect(challengeCardCopy(view({ role: 'CHALLENGED' })).headline)
-      .toBe('Gomes te desafiou em Elden Ring na dificuldade Médio');
+      .toBe('Gomes te desafiou');
+    expect(challengeCardCopy(view()).subtitle).toBe('Elden Ring · Médio');
   });
 
-  it('não usa mais o texto genérico "sua vez"', () => {
+  it('não concatena status de gameplay na descrição', () => {
     const statuses: ChallengeStatus[] = [
       'FIRST_PLAYER_ACTIVE', 'WAITING_FOR_SECOND', 'SECOND_PLAYER_ACTIVE', 'PENDING_DIRECT',
     ];
     for (const status of statuses) {
       for (const role of ['CHALLENGER', 'CHALLENGED'] as const) {
         const copy = challengeCardCopy(view({ role, status }));
-        expect(copy.status.toLowerCase()).not.toContain('sua vez');
+        expect(copy.headline.toLowerCase()).not.toMatch(/aguardando|em partida|jogando/);
+        expect(copy.subtitle.toLowerCase()).not.toMatch(/aguardando|em partida|jogando/);
       }
     }
   });
 
   it('ASYNC FIRST_PLAYER_ACTIVE: desafiante retoma, desafiado só observa', () => {
     const challenger = challengeCardCopy(view({ status: 'FIRST_PLAYER_ACTIVE' }));
-    expect(challenger.status).toBe('Em partida');
     expect(challenger.canResume).toBe(true);
     expect(challenger.canCancel).toBe(true);
 
     const challenged = challengeCardCopy(view({ role: 'CHALLENGED', status: 'FIRST_PLAYER_ACTIVE' }));
-    expect(challenged.status).toBe('Desafiante jogando');
     // Jogar só aparece depois que a primeira metade estiver selada.
     expect(challenged.canPlay).toBe(false);
     expect(challenged.canResume).toBe(false);
@@ -66,34 +66,28 @@ describe('texto e ações do card de desafio', () => {
 
   it('ASYNC WAITING_FOR_SECOND: desafiado ganha Jogar e Recusar', () => {
     const challenger = challengeCardCopy(view({ status: 'WAITING_FOR_SECOND' }));
-    expect(challenger.status).toBe('Aguardando Ana');
     expect(challenger.canPlay).toBe(false);
     expect(challenger.canResume).toBe(false);
 
     const challenged = challengeCardCopy(view({ role: 'CHALLENGED', status: 'WAITING_FOR_SECOND' }));
-    expect(challenged.status).toBe('Pronto para jogar');
     expect(challenged.canPlay).toBe(true);
     expect(challenged.canDecline).toBe(true);
   });
 
   it('ASYNC SECOND_PLAYER_ACTIVE: ninguém cancela e ninguém recusa', () => {
     const challenger = challengeCardCopy(view({ status: 'SECOND_PLAYER_ACTIVE' }));
-    expect(challenger.status).toBe('Ana está jogando');
     expect(challenger.canCancel).toBe(false);
 
     const challenged = challengeCardCopy(view({ role: 'CHALLENGED', status: 'SECOND_PLAYER_ACTIVE' }));
-    expect(challenged.status).toBe('Em partida');
     expect(challenged.canDecline).toBe(false);
     expect(challenged.canPlay).toBe(false);
   });
 
   it('DIRECT pendente distingue quem espera de quem foi convidado', () => {
     const challenger = challengeCardCopy(view({ kind: 'DIRECT', status: 'PENDING_DIRECT' }));
-    expect(challenger.status).toBe('Aguardando resposta');
     expect(challenger.canCancel).toBe(true);
 
     const challenged = challengeCardCopy(view({ kind: 'DIRECT', role: 'CHALLENGED', status: 'PENDING_DIRECT' }));
-    expect(challenged.status).toBe('Convite para jogar agora');
     expect(challenged.canPlay).toBe(true);
     expect(challenged.canDecline).toBe(true);
   });
@@ -105,8 +99,8 @@ describe('texto e ações do card de desafio', () => {
     for (const status of statuses) {
       for (const role of ['CHALLENGER', 'CHALLENGED'] as const) {
         const copy = challengeCardCopy(view({ role, status }));
-        expect(copy.status).not.toMatch(/\d/);
-        expect(copy.status.toLowerCase()).not.toMatch(/pergunta|ponto|placar|score/);
+        expect(copy.headline).not.toMatch(/\d/);
+        expect(copy.subtitle.toLowerCase()).not.toMatch(/pergunta|ponto|placar|score/);
       }
     }
   });

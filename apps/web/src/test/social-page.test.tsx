@@ -57,6 +57,18 @@ const friendUser = {
   publicId: '#QGBIA333',
 };
 
+const asyncWaitingChallenge = {
+  challenged: friendUser,
+  challenger: friendUser,
+  difficulty: 'HARD' as const,
+  expiresAt: null,
+  id: '22222222-2222-4222-8222-222222222222',
+  kind: 'ASYNC' as const,
+  role: 'CHALLENGED' as const,
+  status: 'WAITING_FOR_SECOND' as const,
+  theme: { name: 'Tema muito longo para testar a quebra sem sobreposição', slug: 'tema-longo' },
+};
+
 describe('Social Foundation — interface web', () => {
   beforeEach(() => {
     mocks.apiRequest.mockReset();
@@ -313,6 +325,32 @@ describe('Social Foundation — interface web', () => {
     } finally {
       if (previousTheme === undefined) delete document.documentElement.dataset.theme;
       else document.documentElement.dataset.theme = previousTheme;
+    }
+  });
+
+  it('mantém card de desafio compacto, presença real e ações abaixo em 360/390/412px e desktop', async () => {
+    mocks.presence = new Map([[friendUser.publicId, {
+      presence: 'RECONNECTING', publicId: friendUser.publicId, revision: 11,
+    }]]);
+    mocks.apiRequest.mockImplementation((path: string) => {
+      if (path === '/api/social') return Promise.resolve({ friends: [friendUser], incoming: [], outgoing: [] });
+      if (path === '/api/challenges') return Promise.resolve({ challenges: [asyncWaitingChallenge] });
+      return Promise.resolve({ ok: true });
+    });
+    for (const width of [360, 390, 412, 1440]) {
+      vi.stubGlobal('innerWidth', width);
+      const view = render(socialPage());
+      const section = await screen.findByRole('region', { name: 'Desafios' });
+      const card = section.querySelector('.social-challenge');
+      expect(card).toHaveTextContent('Bia Amiga te desafiou');
+      expect(card).toHaveTextContent('Tema muito longo para testar a quebra sem sobreposição · Difícil');
+      expect(card?.querySelector('.social-challenge__presence')).toHaveAttribute('data-presence', 'RECONNECTING');
+      expect(within(section).getByLabelText('Bia Amiga está reconectando')).toBeInTheDocument();
+      expect(within(section).getByRole('button', { name: 'Jogar' })).toBeEnabled();
+      expect(within(section).getByRole('button', { name: 'Recusar' })).toBeEnabled();
+      expect(card?.querySelector('.social-challenge__summary')).toBeInTheDocument();
+      expect(card?.querySelector('.social-challenge__actions')).toBeInTheDocument();
+      view.unmount();
     }
   });
 });

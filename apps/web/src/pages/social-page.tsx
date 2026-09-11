@@ -253,6 +253,7 @@ function ChallengesSection({
   onDecline: (challenge: ChallengeView) => void;
   onResume: (challenge: ChallengeView) => void;
 }) {
+  const friendPresence = useFriendPresence();
   if (challenges.length === 0) return null;
   return (
     <section aria-label="Desafios" className="social-section">
@@ -261,23 +262,33 @@ function ChallengesSection({
         {challenges.map((challenge) => {
           const other = challenge.role === 'CHALLENGER' ? challenge.challenged : challenge.challenger;
           const copy = challengeCardCopy(challenge);
+          // Presença é somente indicativa: as ações acima continuam derivadas do
+          // status autoritativo do desafio, nunca de ONLINE/IN_MATCH local.
+          const presence = friendPresence.get(other.publicId)?.presence ?? 'OFFLINE';
           return (
             <article className="social-person social-challenge" key={challenge.id}>
-              <div className="social-person__identity">
-                <AvatarFrame frameId={other.frameId}>
-                  <Avatar
-                    customUrl={other.customAvatarUrl}
-                    googleUrl={other.photoUrl}
-                    name={other.displayName}
-                    size="small"
-                  />
-                </AvatarFrame>
-                <span>
+              <div className="social-challenge__summary">
+                <div className="social-person__identity social-challenge__identity">
+                  <AvatarFrame frameId={other.frameId}>
+                    <Avatar
+                      customUrl={other.customAvatarUrl}
+                      googleUrl={other.photoUrl}
+                      name={other.displayName}
+                      size="small"
+                    />
+                  </AvatarFrame>
+                  <span className="social-challenge__copy">
                   <strong>{copy.headline}</strong>
-                  <small>{copy.status}</small>
-                </span>
+                    <small title={copy.subtitle}>{copy.subtitle}</small>
+                  </span>
+                </div>
+                <span
+                  aria-label={`${other.displayName} está ${PRESENCE_LABELS[presence].toLocaleLowerCase('pt-BR')}`}
+                  className="friend-presence-label social-challenge__presence"
+                  data-presence={presence}
+                ><i aria-hidden="true" />{PRESENCE_LABELS[presence]}</span>
               </div>
-              <div className="social-person__actions">
+              <div className="social-person__actions social-challenge__actions">
                 {copy.canResume && <Button disabled={busy} onClick={() => onResume(challenge)}>Continuar</Button>}
                 {copy.canPlay && <Button disabled={busy} onClick={() => onAccept(challenge)}>Jogar</Button>}
                 {copy.canDecline && (
