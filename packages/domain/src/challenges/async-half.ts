@@ -17,6 +17,7 @@ import type { Difficulty } from '../types.js';
 
 export type AsyncHalfPhase =
   | 'ANSWERING'
+  | 'CANCELLED'
   | 'FINALIZING'
   | 'FINISHED'
   | 'PAUSED'
@@ -68,6 +69,7 @@ export interface AsyncHalfState {
 
 export type AsyncHalfCommand =
   | { type: 'ALARM' }
+  | { type: 'CANCEL' }
   | { type: 'CONNECT' }
   | { type: 'DISCONNECT' }
   | { questionId: string; roundNumber: number; selectedOption: number; type: 'ANSWER' }
@@ -75,6 +77,7 @@ export type AsyncHalfCommand =
   | { type: 'SYSTEM_FAILURE' };
 
 export type AsyncHalfEvent =
+  | { type: 'CANCELLED' }
   | { type: 'CONNECTED' }
   | { type: 'FINALIZE' }
   | { type: 'NOOP' }
@@ -94,6 +97,15 @@ export class AsyncHalfCommandError extends Error {
     super(message);
     this.name = 'AsyncHalfCommandError';
   }
+}
+
+function pausablePhase(phase: AsyncHalfPhase): PausablePhase | null {
+  return phase === 'ROUND_READY' || phase === 'ANSWERING' || phase === 'ROUND_RESULT' ? phase : null;
+}
+
+/** Fases que não aceitam mais nenhuma ação do jogador. */
+export function isTerminalHalf(phase: AsyncHalfPhase): boolean {
+  return phase === 'FINISHED' || phase === 'VOID' || phase === 'CANCELLED';
 }
 
 function assertNow(nowMs: number): void {
@@ -122,11 +134,14 @@ function beginRoundReady(state: AsyncHalfState, nowMs: number): AsyncHalfTransit
   return { event: { type: 'QUESTION_AVAILABLE' }, state };
 }
 
-function finalize(state: AsyncHalfState, phase: 'FINALIZING' | 'VOID'): AsyncHalfTransition {
+function finalize(
+  state: AsyncHalfState,
+  phase: 'CANCELLED' | 'FINALIZING' | 'VOID',
+): AsyncHalfTransition {
   state.phase = phase;
   state.phaseDeadlineMs = null;
   state.pause = null;
-  return { event: { type: 'FINALIZE' }, state };
+  return { event: { type: phase === 'CANCELLED' ? 'CANCELLED' : 'FINALIZE' }, state };
 }
 
 function resolveRound(state: AsyncHalfState, nowMs: number): AsyncHalfTransition {
@@ -224,10 +239,18 @@ export function transitionAsyncHalf(
 
   if (command.type === 'ALARM') return alarm(state, nowMs);
   if (command.type === 'SYSTEM_FAILURE') {
-    if (state.phase === 'FINISHED' || state.phase === 'VOID') return { event: { type: 'NOOP' }, state };
+    if (isTerminalHalf(state.phase)) return { event: { type: 'NOOP' }, state };
     return finalize(state, 'VOID');
   }
-  if (state.phase === 'FINISHED' || state.phase === 'VOID' || state.phase === 'FINALIZING') {
+  if (command.type === 'CANCEL') {
+    // Desistir da própria metade é cancelamento explícito, nunca queda nem VOID.
+    if (state.phase === 'CANCELLED') return { event: { type: 'NOOP' }, state };
+    if (isTerminalHalf(state.phase)) {
+      throw new AsyncHalfCommandError('MATCH_NOT_ACTIVE', 'Esta metade não aceita mais ações.');
+    }
+    return finalize(state, 'CANCELLED');
+  }
+  if (isTerminalHalf(state.phase) || state.phase === 'FINALIZING') {
     throw new AsyncHalfCommandError('MATCH_NOT_ACTIVE', 'Esta metade não aceita mais ações.');
   }
 
@@ -250,10 +273,8 @@ export function transitionAsyncHalf(
     if (!state.connected) return { event: { type: 'NOOP' }, state };
     state.connected = false;
     if (state.phase === 'PAUSED') return { event: { type: 'PAUSED' }, state };
-    if (!['ROUND_READY', 'ANSWERING', 'ROUND_RESULT'].includes(state.phase)) {
-      return { event: { type: 'NOOP' }, state };
-    }
-    const phase: PausablePhase = state.phase;
+    const phase = pausablePhase(state.phase);
+    if (phase === null) return { event: { type: 'NOOP' }, state };
     const phaseRemainingMs = state.phaseDeadlineMs === null ? 0 : remainingAt(nowMs, state.phaseDeadlineMs);
     state.phase = 'PAUSED';
     state.phaseDeadlineMs = nowMs + RECONNECT_GRACE_MS;
@@ -354,7 +375,7 @@ export function projectAsyncHalf(state: AsyncHalfState, nowMs: number): LiveMatc
       photoUrl: state.opponent.photoUrl,
       score: revealedOpponentScore,
     },
-    phase: state.phase === 'FINALIZING' ? 'FINALIZING' : state.phase,
+    phase: state.phase === 'FINALIZING' || state.phase === 'CANCELLED' ? 'FINALIZING' : state.phase,
     serverNow: nowMs,
     viewer: {
       customAvatarUrl: state.viewer.customAvatarUrl,

@@ -117,7 +117,11 @@ export type ChallengeCreationDecision =
 
 /**
  * Resolve o que fazer quando `requesterUserId` pede um novo desafio contra
- * `targetUserId` e a dupla já pode ter um desafio ativo.
+ * `targetUserId` e a dupla já pode ter um desafio ativo DO MESMO TIPO.
+ *
+ * O limite é por tipo: um assíncrono aguardando resposta não impede um convite
+ * imediato entre as mesmas duas pessoas, e vice-versa. Quem chama passa em
+ * `existing` apenas o desafio vivo do tipo pedido.
  *
  * Desafio cruzado nunca cria um segundo registro:
  * - se o pedido cruzado bate num convite direto pendente do outro lado, isso é
@@ -147,8 +151,7 @@ export function decideChallengeCreation(input: {
     return { challengeId: existing.id, kind: 'ACCEPT_EXISTING_DIRECT' };
   }
   if (existing.kind === 'ASYNC' && (existing.status === 'FIRST_PLAYER_ACTIVE' || existing.status === 'WAITING_FOR_SECOND')) {
-    void requestedKind;
-    return { challengeId: existing.id, kind: 'AGREE_WITH_EXISTING' };
+    if (requestedKind === 'ASYNC') return { challengeId: existing.id, kind: 'AGREE_WITH_EXISTING' };
   }
   throw new ChallengeRuleError(
     'CHALLENGE_ALREADY_ACTIVE',

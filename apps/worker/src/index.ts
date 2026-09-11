@@ -501,6 +501,22 @@ async function friendPresenceOf(env: Env, userId: string): Promise<FriendPresenc
   return snapshot.friends.find((friend) => friend.userId === userId)?.presence ?? 'OFFLINE';
 }
 
+/**
+ * Sinal interno para as salas de metade encerrarem. Idempotente e best-effort: o
+ * estado autoritativo do desafio já foi persistido antes desta chamada.
+ */
+async function abortChallengeRooms(env: Env, challengeId: string): Promise<void> {
+  await Promise.all((['FIRST', 'SECOND'] as const).map(async (seat) => {
+    try {
+      await env.CHALLENGE_ROOM
+        .get(env.CHALLENGE_ROOM.idFromName(`${challengeId}:${seat}`))
+        .fetch('https://challenge.internal/abort', { method: 'POST' });
+    } catch {
+      console.error(JSON.stringify({ code: 'CHALLENGE_ROOM_UNAVAILABLE', event: 'challenge_abort_failed' }));
+    }
+  }));
+}
+
 async function challengeRoute(request: Request, env: Env, url: URL, context: ExecutionContext): Promise<Response> {
   const identity = await requireUser(request, env);
   const users = new UserRepository(env.CORE_DB);
@@ -556,9 +572,14 @@ async function challengeRoute(request: Request, env: Env, url: URL, context: Exe
       challengeId: created.challengeId,
       type: 'CHALLENGE_UPDATED',
     });
+    const stored = await challenges.byId(created.challengeId);
     return json({
       challengeId: created.challengeId,
       created: created.created,
+      // O prazo vem do servidor: o cliente nunca deriva expiração de relógio local.
+      expiresAt: stored?.expiresAtMs === null || stored?.expiresAtMs === undefined
+        ? null
+        : new Date(stored.expiresAtMs).toISOString(),
       ...(parsed.data.kind === 'ASYNC' ? { halfReady: true } : {}),
     });
   }
@@ -575,6 +596,8 @@ async function challengeRoute(request: Request, env: Env, url: URL, context: Exe
       type: action[2] === 'cancel' ? 'CANCEL' : 'DECLINE',
     });
     if (!applied) throw new ApiError(409, 'CHALLENGE_CONFLICT', 'Este desafio mudou de estado. Atualize a tela.');
+    // A sala da metade aberta precisa parar de finalizar; sem isso ela selaria depois do cancelamento.
+    if (challenge.kind === 'ASYNC') await abortChallengeRooms(env, challenge.id);
     notifySocial(env, context, [challenge.firstPlayerUserId, challenge.secondPlayerUserId], {
       challengeId: challenge.id,
       type: 'CHALLENGE_UPDATED',
@@ -787,8 +810,14 @@ async function socialRoute(request: Request, env: Env, url: URL, context: Execut
     const target = await env.CORE_DB.prepare('SELECT user_id FROM user_profiles WHERE public_id = ?1 COLLATE NOCASE')
       .bind(parsed.data.publicId).first<{ user_id: string }>();
     if (target !== null) {
-      // Desafio pendente da dupla morre junto; partida já iniciada é preservada.
-      await challenges.endForRelationship(profile.userId, target.user_id);
+      // Desafios pendentes da dupla morrem junto; partida já iniciada é preservada.
+      for (const ended of await challenges.endForRelationship(profile.userId, target.user_id)) {
+        if (ended.kind === 'ASYNC') await abortChallengeRooms(env, ended.id);
+        notifySocial(env, context, [profile.userId, target.user_id], {
+          challengeId: ended.id,
+          type: 'CHALLENGE_UPDATED',
+        });
+      }
       invalidateSocial(env, context, [profile.userId, target.user_id]);
     }
     return json({ ok: true });
@@ -803,7 +832,15 @@ async function socialRoute(request: Request, env: Env, url: URL, context: Execut
       const target = await env.CORE_DB.prepare('SELECT user_id FROM user_profiles WHERE public_id = ?1 COLLATE NOCASE')
         .bind(parsed.data.publicId).first<{ user_id: string }>();
       if (target !== null) {
-        if (request.method === 'POST') await challenges.endForRelationship(profile.userId, target.user_id);
+        if (request.method === 'POST') {
+          for (const ended of await challenges.endForRelationship(profile.userId, target.user_id)) {
+            if (ended.kind === 'ASYNC') await abortChallengeRooms(env, ended.id);
+            notifySocial(env, context, [profile.userId, target.user_id], {
+              challengeId: ended.id,
+              type: 'CHALLENGE_UPDATED',
+            });
+          }
+        }
         invalidateSocial(env, context, [profile.userId, target.user_id]);
       }
       return json({ ok: true });

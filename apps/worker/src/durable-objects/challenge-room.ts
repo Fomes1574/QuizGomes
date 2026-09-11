@@ -10,9 +10,11 @@ import {
   type AsyncHalfEvent,
   type AsyncHalfSeat,
   type AsyncHalfState,
+  isTerminalHalf,
 } from '@quiz-gomes/domain';
 import type { Env } from '../env.js';
 import { ChallengeRepository } from '../repositories/challenge-repository.js';
+import { notifyChallengeUpdated } from '../services/challenge-notifier.js';
 
 /**
  * Sala de uma metade do desafio assíncrono.
@@ -72,6 +74,7 @@ export class ChallengeRoom {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     if (request.method === 'POST' && url.pathname === '/initialize') return this.initialize(request);
+    if (request.method === 'POST' && url.pathname === '/abort') return this.abort();
     if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
       return new Response('Upgrade necessário', { status: 426 });
     }
@@ -107,6 +110,8 @@ export class ChallengeRoom {
         selectedOption: input.selectedOption,
         type: 'ANSWER',
       };
+    } else if (input.type === 'CANCEL') {
+      command = { type: 'CANCEL' };
     } else {
       this.sendError(socket, 'INVALID_MESSAGE', 'Mensagem inválida.');
       return;
@@ -126,7 +131,7 @@ export class ChallengeRoom {
     if (code === REPLACED_SOCKET_CODE) return;
     if (readAttachment(socket) === null) return;
     const state = await this.state();
-    if (state === null || ['FINALIZING', 'FINISHED', 'VOID'].includes(state.phase)) return;
+    if (state === null || state.phase === 'FINALIZING' || isTerminalHalf(state.phase)) return;
     // Outra aba do mesmo jogador ainda conectada mantém a metade viva.
     if (this.ctx.getWebSockets().some((candidate) => candidate !== socket)) return;
     await this.applyCommand({ type: 'DISCONNECT' }, Date.now());
@@ -139,7 +144,12 @@ export class ChallengeRoom {
   async alarm(): Promise<void> {
     const state = await this.state();
     if (state === null) return;
-    if (state.phase === 'FINISHED' || state.phase === 'VOID') {
+    // Uma metade cancelada já encerrou o desafio: nada mais finaliza aqui.
+    if (state.phase === 'CANCELLED') {
+      await this.ctx.storage.delete(SEALED_KEY);
+      return;
+    }
+    if (isTerminalHalf(state.phase)) {
       if (await this.ctx.storage.get<boolean>(SEALED_KEY) === true) {
         await this.trySeal(state);
       }
@@ -150,6 +160,34 @@ export class ChallengeRoom {
       return;
     }
     await this.applyCommand({ type: 'ALARM' }, Date.now());
+  }
+
+  /**
+   * Encerramento vindo do servidor (cancelar pelo Social, unfriend, bloqueio).
+   * Idempotente: uma sala já terminal simplesmente confirma.
+   */
+  private async abort(): Promise<Response> {
+    const state = await this.state();
+    if (state === null) return Response.json({ status: 'empty' });
+    if (isTerminalHalf(state.phase)) return Response.json({ status: 'already' });
+    const cancelled = transitionAsyncHalf(state, { type: 'CANCEL' }, Date.now()).state;
+    await this.ctx.storage.put(STATE_KEY, cancelled);
+    await this.ctx.storage.delete(SEALED_KEY);
+    const payload = JSON.stringify({
+      challengeId: cancelled.challengeId,
+      match: projectAsyncHalf(cancelled, Date.now()),
+      result: {
+        opponent: { result: 'VOID', score: 0 },
+        viewer: {
+          knowledgeAfter: 0, knowledgeBefore: 0, knowledgeDelta: 0,
+          result: 'VOID', score: cancelled.score, xpDelta: 0,
+        },
+      },
+      type: 'MATCH_VOID',
+      voidReason: 'CANCELLED',
+    });
+    for (const socket of this.ctx.getWebSockets()) this.safeSend(socket, payload);
+    return Response.json({ status: 'cancelled' });
   }
 
   private repository(): ChallengeRepository {
@@ -259,14 +297,49 @@ export class ChallengeRoom {
     await this.ctx.storage.put(STATE_KEY, transition.state);
     await this.scheduleAlarm(transition.state);
     this.broadcast(transition.state, transition.event, nowMs, origin);
+    if (transition.state.phase === 'CANCELLED') {
+      await this.ctx.storage.delete(SEALED_KEY);
+      await this.applyCancellation(transition.state);
+      return;
+    }
     if (transition.state.phase === 'FINALIZING') {
       await this.ctx.storage.put(SEALED_KEY, true);
       await this.trySeal(transition.state);
     }
   }
 
+  /**
+   * Cancelamento explícito da própria metade: encerra o desafio no D1, apaga o
+   * payload competitivo, libera a dupla e avisa os dois lados. Idempotente — o
+   * estado CANCELLED persistido impede qualquer finalização posterior.
+   */
+  private async applyCancellation(state: AsyncHalfState): Promise<void> {
+    const challenges = this.repository();
+    const challenge = await challenges.byId(state.challengeId);
+    if (challenge === null) return;
+    await challenges.cancelChallenge(state.challengeId);
+    await notifyChallengeUpdated(this.env, state.challengeId, [
+      challenge.firstPlayerUserId,
+      challenge.secondPlayerUserId,
+    ]);
+    const payload = JSON.stringify({
+      challengeId: state.challengeId,
+      match: projectAsyncHalf(state, Date.now()),
+      result: {
+        opponent: { result: 'VOID', score: 0 },
+        viewer: {
+          knowledgeAfter: 0, knowledgeBefore: 0, knowledgeDelta: 0,
+          result: 'VOID', score: state.score, xpDelta: 0,
+        },
+      },
+      type: 'MATCH_VOID',
+      voidReason: 'CANCELLED',
+    });
+    for (const socket of this.ctx.getWebSockets()) this.safeSend(socket, payload);
+  }
+
   private async scheduleAlarm(state: AsyncHalfState): Promise<void> {
-    if (state.phase === 'FINISHED' || state.phase === 'VOID') return;
+    if (isTerminalHalf(state.phase)) return;
     const deadline = state.phase === 'FINALIZING'
       ? Date.now() + FINALIZATION_RETRY_MS
       : state.phaseDeadlineMs;
@@ -312,6 +385,10 @@ export class ChallengeRoom {
     if (state.phase === 'VOID') {
       await challenges.voidChallenge(state.challengeId);
       await this.ctx.storage.delete(SEALED_KEY);
+      await notifyChallengeUpdated(this.env, state.challengeId, [
+        challenge.firstPlayerUserId,
+        challenge.secondPlayerUserId,
+      ]);
       this.announceTerminal(state, 'MATCH_VOID', 0);
       return;
     }
@@ -335,6 +412,11 @@ export class ChallengeRoom {
     const finalized = state.phase === 'FINALIZING' ? markAsyncHalfFinalized(state) : state;
     await this.ctx.storage.put(STATE_KEY, finalized);
     await this.ctx.storage.delete(SEALED_KEY);
+    // A lista de desafios dos dois lados converge sem polling e sem reload.
+    await notifyChallengeUpdated(this.env, state.challengeId, [
+      challenge.firstPlayerUserId,
+      challenge.secondPlayerUserId,
+    ]);
     this.announceTerminal(finalized, 'MATCH_FINISHED', opponentScore);
   }
 

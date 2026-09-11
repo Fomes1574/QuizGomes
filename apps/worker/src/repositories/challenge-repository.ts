@@ -146,15 +146,29 @@ export class ChallengeRepository {
     return row.user_id;
   }
 
-  async activeForPair(first: string, second: string): Promise<ChallengeRecord | null> {
+  /** Desafio vivo da dupla no tipo pedido; o limite é por tipo, não global. */
+  async activeForPair(first: string, second: string, kind: ChallengeKind): Promise<ChallengeRecord | null> {
     const [low, high] = challengePair(first, second);
     const row = await this.db.prepare(
       `SELECT id, difficulty, expires_at, first_player_user_id, kind, revision,
               second_player_agreed, second_player_user_id, status, theme_id
          FROM challenges
-        WHERE pair_low_id = ?1 AND pair_high_id = ?2 AND status IN (${LIVE_STATUS_LIST})`,
-    ).bind(low, high).first<ChallengeRow>();
+        WHERE pair_low_id = ?1 AND pair_high_id = ?2 AND kind = ?3
+          AND status IN (${LIVE_STATUS_LIST})`,
+    ).bind(low, high, kind).first<ChallengeRow>();
     return row === null ? null : record(row);
+  }
+
+  /** Todos os desafios vivos da dupla, dos dois tipos. */
+  async allActiveForPair(first: string, second: string): Promise<ChallengeRecord[]> {
+    const [low, high] = challengePair(first, second);
+    const result = await this.db.prepare(
+      `SELECT id, difficulty, expires_at, first_player_user_id, kind, revision,
+              second_player_agreed, second_player_user_id, status, theme_id
+         FROM challenges
+        WHERE pair_low_id = ?1 AND pair_high_id = ?2 AND status IN (${LIVE_STATUS_LIST})`,
+    ).bind(low, high).all<ChallengeRow>();
+    return result.results.map(record);
   }
 
   async byId(challengeId: string): Promise<ChallengeRecord | null> {
@@ -199,7 +213,7 @@ export class ChallengeRepository {
       throw new ApiError(409, 'FRIEND_UNAVAILABLE', 'Este amigo não está disponível para uma partida agora.');
     }
     await this.assertCreationRate(input.actorUserId, nowMs);
-    const existing = await this.activeForPair(input.actorUserId, input.targetUserId);
+    const existing = await this.activeForPair(input.actorUserId, input.targetUserId, input.kind);
     let decision;
     try {
       decision = decideChallengeCreation({
@@ -254,7 +268,7 @@ export class ChallengeRepository {
       if (error instanceof ApiError) throw error;
       if (error instanceof Error && /UNIQUE constraint failed/i.test(error.message)) {
         // Corrida perdida: a reserva persistida primeiro é a autoritativa.
-        const winner = await this.activeForPair(input.actorUserId, input.targetUserId);
+        const winner = await this.activeForPair(input.actorUserId, input.targetUserId, input.kind);
         if (winner !== null) {
           return { challengeId: winner.id, created: false, crossAccepted: false };
         }
@@ -454,6 +468,18 @@ export class ChallengeRepository {
     ).bind(TOTAL_XP_TO_MAX_LEVEL, xp, userId)));
   }
 
+  /**
+   * Cancelamento explícito do primeiro jogador, antes de o segundo começar.
+   * Idempotente: só atravessa enquanto o desafio ainda está vivo.
+   */
+  async cancelChallenge(challengeId: string): Promise<void> {
+    await this.db.prepare(
+      `UPDATE challenges SET status = 'CANCELLED', updated_at = ?1, revision = revision + 1
+        WHERE id = ?2 AND status IN (${LIVE_STATUS_LIST}) AND status <> 'SECOND_PLAYER_ACTIVE'`,
+    ).bind(this.clock().toISOString(), challengeId).run();
+    await this.cleanupPayload(challengeId);
+  }
+
   /** Marca a metade do segundo jogador como anulada, sem vencedor, XP ou Conhecimento. */
   async voidChallenge(challengeId: string): Promise<void> {
     await this.db.prepare(
@@ -471,17 +497,22 @@ export class ChallengeRepository {
     ]);
   }
 
-  /** Encerra o desafio pendente de uma dupla ao desfazer amizade ou bloquear. */
-  async endForRelationship(first: string, second: string): Promise<void> {
-    const challenge = await this.activeForPair(first, second);
-    if (challenge === null) return;
-    try {
-      await this.applyAction(challenge, { type: 'RELATIONSHIP_ENDED' });
-    } catch (error) {
-      // Partida já iniciada nunca é derrubada por unfriend ou bloqueio.
-      if (error instanceof ApiError && error.code === 'CHALLENGE_ALREADY_STARTED') return;
-      throw error;
+  /**
+   * Encerra os desafios pendentes de uma dupla ao desfazer amizade ou bloquear.
+   * Como a dupla pode ter um ASYNC e um DIRECT vivos ao mesmo tempo, os dois são
+   * varridos; partida já iniciada nunca é derrubada.
+   */
+  async endForRelationship(first: string, second: string): Promise<ChallengeRecord[]> {
+    const ended: ChallengeRecord[] = [];
+    for (const challenge of await this.allActiveForPair(first, second)) {
+      try {
+        if (await this.applyAction(challenge, { type: 'RELATIONSHIP_ENDED' })) ended.push(challenge);
+      } catch (error) {
+        if (error instanceof ApiError && error.code === 'CHALLENGE_ALREADY_STARTED') continue;
+        throw error;
+      }
     }
+    return ended;
   }
 
   /**

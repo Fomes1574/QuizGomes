@@ -161,7 +161,8 @@ function assertFinalSchema(scenario) {
        'friendship_mutes', 'challenges', 'challenge_questions', 'challenge_answers',
        'idx_friend_requests_pending_unordered_pair', 'idx_user_blocks_blocked_blocker',
        'idx_push_installations_user_enabled', 'idx_friendships_high',
-       'idx_challenges_live_pair', 'idx_challenges_second_player',
+       'idx_challenges_live_pair_async', 'idx_challenges_live_pair_direct',
+       'idx_challenges_pair_kind_status', 'idx_challenges_second_player',
        'idx_challenges_first_player', 'idx_challenges_direct_expiry',
        'idx_challenge_answers_user'
      )
@@ -194,7 +195,9 @@ function assertFinalSchema(scenario) {
     'idx_user_blocks_blocked_blocker',
     'idx_push_installations_user_enabled',
     'idx_friendships_high',
-    'idx_challenges_live_pair',
+    'idx_challenges_live_pair_async',
+    'idx_challenges_live_pair_direct',
+    'idx_challenges_pair_kind_status',
     'idx_challenges_second_player',
     'idx_challenges_first_player',
     'idx_challenges_direct_expiry',
@@ -239,8 +242,8 @@ function assertFinalSchema(scenario) {
 
   const appliedMigrations = query(scenario, 'SELECT name FROM d1_migrations ORDER BY id');
   assert(
-    appliedMigrations.at(-1)?.name === '0008_challenges_and_mutes.sql',
-    `${scenario.name}: 0008 de desafios não foi registrada como última migration`,
+    appliedMigrations.at(-1)?.name === '0009_challenge_pair_limits_by_kind.sql',
+    `${scenario.name}: 0009 de limite por tipo não foi registrada como última migration`,
   );
   const upgradedTheme = query(scenario, `
     SELECT artwork_kind, artwork_icon_key, artwork_version, active_question_count
@@ -309,13 +312,29 @@ function assertChallengeInvariants(scenario) {
     VALUES ('async-${scenario.name}', '${first}', '${second}', '${first}', '${second}',
             '${syntheticThemeId}', 'MEDIUM', 'ASYNC', 'WAITING_FOR_SECOND');
   `);
-  // Segunda tentativa da mesma dupla, em qualquer direção, é barrada pelo índice.
+  // Segundo ASYNC da mesma dupla, em qualquer direção, é barrado pelo índice do tipo.
   executeSql(scenario, `
     INSERT INTO challenges
       (id, pair_low_id, pair_high_id, first_player_user_id, second_player_user_id,
        theme_id, difficulty, kind, status)
     VALUES ('crossed-${scenario.name}', '${first}', '${second}', '${second}', '${first}',
-            '${syntheticThemeId}', 'EASY', 'DIRECT', 'PENDING_DIRECT')
+            '${syntheticThemeId}', 'EASY', 'ASYNC', 'FIRST_PLAYER_ACTIVE')
+  `, true);
+  // Um DIRECT convive com o ASYNC aguardando resposta: o limite é por tipo.
+  executeSql(scenario, `
+    INSERT INTO challenges
+      (id, pair_low_id, pair_high_id, first_player_user_id, second_player_user_id,
+       theme_id, difficulty, kind, status, expires_at)
+    VALUES ('direct-${scenario.name}', '${first}', '${second}', '${first}', '${second}',
+            '${syntheticThemeId}', 'EASY', 'DIRECT', 'PENDING_DIRECT', '2099-01-01T00:00:00.000Z')
+  `);
+  // Mas um segundo DIRECT vivo para a mesma dupla continua proibido.
+  executeSql(scenario, `
+    INSERT INTO challenges
+      (id, pair_low_id, pair_high_id, first_player_user_id, second_player_user_id,
+       theme_id, difficulty, kind, status, expires_at)
+    VALUES ('direct-dup-${scenario.name}', '${first}', '${second}', '${second}', '${first}',
+            '${syntheticThemeId}', 'EASY', 'DIRECT', 'PENDING_DIRECT', '2099-01-01T00:00:00.000Z')
   `, true);
   // Duplas diferentes continuam livres.
   executeSql(scenario, `
@@ -350,13 +369,20 @@ function assertChallengeInvariants(scenario) {
     INSERT INTO friendship_mutes (muter_user_id, muted_user_id)
     VALUES ('${first}', '${second}')
   `);
-  const live = query(scenario, `
+  const liveAsync = query(scenario, `
     SELECT COUNT(*) AS total FROM challenges
-     WHERE pair_low_id = '${first}' AND pair_high_id = '${second}'
+     WHERE pair_low_id = '${first}' AND pair_high_id = '${second}' AND kind = 'ASYNC'
        AND status IN ('PENDING_DIRECT', 'PREPARING', 'ACTIVE',
                       'FIRST_PLAYER_ACTIVE', 'WAITING_FOR_SECOND', 'SECOND_PLAYER_ACTIVE')
   `);
-  assert(live[0]?.total === 1, `${scenario.name}: índice permitiu dois desafios ativos na mesma dupla`);
+  assert(liveAsync[0]?.total === 1, `${scenario.name}: índice permitiu dois ASYNC ativos na mesma dupla`);
+  const liveDirect = query(scenario, `
+    SELECT COUNT(*) AS total FROM challenges
+     WHERE pair_low_id = '${first}' AND pair_high_id = '${second}' AND kind = 'DIRECT'
+       AND status IN ('PENDING_DIRECT', 'PREPARING', 'ACTIVE',
+                      'FIRST_PLAYER_ACTIVE', 'WAITING_FOR_SECOND', 'SECOND_PLAYER_ACTIVE')
+  `);
+  assert(liveDirect[0]?.total === 1, `${scenario.name}: índice permitiu dois DIRECT ativos na mesma dupla`);
 }
 
 /** @param {MigrationScenario} scenario */
@@ -585,6 +611,10 @@ try {
   assert(migrationNames.includes('0006_expand_synthetic_smoke_test.sql'), 'Migration Core 0006 ausente');
   assert(migrationNames.includes('0007_social_foundation.sql'), 'Migration Core 0007 social ausente');
   assert(migrationNames.includes('0008_challenges_and_mutes.sql'), 'Migration Core 0008 de desafios ausente');
+  assert(
+    migrationNames.includes('0009_challenge_pair_limits_by_kind.sql'),
+    'Migration Core 0009 de limite por tipo ausente',
+  );
   assert(questionMigrationNames.includes('0003_expand_synthetic_smoke_test.sql'), 'Migration Questions 0003 ausente');
 
   await assertRemoteParser(coreSourceMigrationsDirectory, migrationNames);
@@ -607,6 +637,7 @@ try {
       '0006_expand_synthetic_smoke_test.sql',
       '0007_social_foundation.sql',
       '0008_challenges_and_mutes.sql',
+      '0009_challenge_pair_limits_by_kind.sql',
     ].includes(name)),
   );
   console.log('Validando upgrade D1 exato de 0003 para 0004...');
@@ -657,6 +688,16 @@ try {
     join(upgradeDatabase.migrationsDirectory, '0008_challenges_and_mutes.sql'),
   );
   applyMigrations(upgradeDatabase);
+  console.log('Validando upgrade D1 atual exato de 0008 para 0009 limite por tipo...');
+  assert(
+    !query(upgradeDatabase, "SELECT name FROM sqlite_master WHERE name = 'idx_challenges_live_pair_async'").length,
+    'upgrade-0003: índice por tipo já existia antes da 0009',
+  );
+  await copyFile(
+    join(coreSourceMigrationsDirectory, '0009_challenge_pair_limits_by_kind.sql'),
+    join(upgradeDatabase.migrationsDirectory, '0009_challenge_pair_limits_by_kind.sql'),
+  );
+  applyMigrations(upgradeDatabase);
   assertFinalSchema(upgradeDatabase);
   assertChallengeInvariants(upgradeDatabase);
   console.log('Validando rollback transacional de migration com erro...');
@@ -697,7 +738,7 @@ try {
   applyMigrations(upgradeQuestions);
   assertFinalQuestionDataset(upgradeQuestions);
 
-  console.log('Migrations D1 aprovadas: parser Wrangler, bancos vazios, upgrades Core 0003→0004→0005→0006→0007→0008 e Questions 0002→0003, invariantes sociais e de desafio, rollback e schemas finais.');
+  console.log('Migrations D1 aprovadas: parser Wrangler, bancos vazios, upgrades Core 0003→0004→0005→0006→0007→0008→0009 e Questions 0002→0003, invariantes sociais e de desafio, rollback e schemas finais.');
 } finally {
   await rm(temporaryRoot, { force: true, recursive: true });
 }
