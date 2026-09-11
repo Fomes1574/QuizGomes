@@ -211,7 +211,10 @@ export class ChallengeRepository {
     if (challenge.kind !== 'DIRECT' || challenge.matchId === null || !['PREPARING', 'ACTIVE'].includes(challenge.status)) {
       return false;
     }
-    const match = await this.directMatchStatus(challenge.matchId);
+    // Esta consulta só converte um terminal que já foi decidido pelo
+    // MatchRoom; ela nunca é usada como prova de que uma sala ainda vive.
+    const match = (await this.db.prepare('SELECT status FROM matches WHERE id = ?1')
+      .bind(challenge.matchId).first<{ status: string }>())?.status ?? null;
     if (match !== 'FINISHED' && match !== 'VOID') return false;
     const terminal = match === 'FINISHED' ? 'COMPLETED' : 'VOID';
     const applied = await this.db.prepare(
@@ -220,12 +223,6 @@ export class ChallengeRepository {
     ).bind(terminal, this.clock().toISOString(), challenge.id, challenge.revision).run();
     if ((applied.meta.changes ?? 0) === 1 && terminal === 'VOID') await this.cleanupPayload(challenge.id);
     return (applied.meta.changes ?? 0) === 1;
-  }
-
-  /** Estado mínimo usado exclusivamente pela reconciliação de reservas DIRECT. */
-  async directMatchStatus(matchId: string): Promise<string | null> {
-    return (await this.db.prepare('SELECT status FROM matches WHERE id = ?1')
-      .bind(matchId).first<{ status: string }>())?.status ?? null;
   }
 
   async reconcileDirectMatchId(matchId: string): Promise<{

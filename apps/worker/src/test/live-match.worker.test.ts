@@ -901,6 +901,22 @@ describe('Milestone 8 no runtime Workers simulado', () => {
     await active.stub.fetch('https://room.internal/system-failure', { method: 'POST' });
   });
 
+  it('reconcile do MatchRoom distingue ausência de reserva de sala realmente ativa', async () => {
+    const missingId = crypto.randomUUID();
+    const missing = await env.MATCH_ROOM.get(env.MATCH_ROOM.idFromName(missingId))
+      .fetch('https://room.internal/reconcile', { method: 'POST' });
+    expect(await missing.json()).toEqual({ phase: 'MISSING' });
+
+    const fixture = await seedMatchFixture('reconcile-live');
+    const { roomId, stub } = await initializeRoom(fixture);
+    const active = await stub.fetch('https://room.internal/reconcile', { method: 'POST' });
+    expect(await active.json()).toEqual({ phase: 'LOBBY' });
+    expect(await env.CORE_DB.prepare(
+      'SELECT COUNT(*) AS total FROM active_match_players WHERE match_id = ?1',
+    ).bind(roomId).first()).toEqual({ total: 2 });
+    await stub.fetch('https://room.internal/system-failure', { method: 'POST' });
+  });
+
   it('propaga QUESTION_POOL_INSUFFICIENT com código seguro pela fila', async () => {
     // O pool abaixo do mínimo da dificuldade é a única origem de insuficiência agora
     // que o sorteio não consulta histórico de exibição.

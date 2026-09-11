@@ -527,13 +527,14 @@ async function abortChallengeRooms(env: Env, challengeId: string): Promise<void>
  * finalização foi interrompida entre os dois. Não há cron, polling ou varredura
  * global: no máximo 50 linhas vivas do próprio usuário.
  */
-async function reconcileChallengeLifecycle(
+export async function reconcileChallengeLifecycle(
   env: Env,
   context: ExecutionContext,
   challenges: ChallengeRepository,
   userId: string,
 ): Promise<void> {
   const nowMs = Date.now();
+  const matches = new LiveMatchRepository(env.CORE_DB, env.QUESTIONS_DB);
   const expired = await challenges.expireStaleDirect(userId);
   for (const entry of expired) {
     notifySocial(env, context, entry.participants, {
@@ -545,17 +546,36 @@ async function reconcileChallengeLifecycle(
   for (const challenge of await challenges.liveLifecycleForUser(userId)) {
     let changed = false;
     if (challenge.kind === 'DIRECT') {
-      changed = await challenges.reconcileDirectMatch(challenge);
-      const hasNoRoom = challenge.matchId === null ||
-        await challenges.directMatchStatus(challenge.matchId) === null;
-      if (!changed && ['PREPARING', 'ACTIVE'].includes(challenge.status) &&
-        hasNoRoom && nowMs - challenge.updatedAtMs >= CHALLENGE_INITIAL_GRACE_MS) {
-        // PREPARING sem match e ACTIVE sem MatchRoom recuperável são reservas
-        // quebradas; depois da graça autoritativa elas viram VOID e liberam a dupla.
-        changed = await challenges.voidOrphanedLive(
-          challenge,
-          nowMs - CHALLENGE_INITIAL_GRACE_MS,
-        );
+      if (challenge.matchId === null) {
+        if (nowMs - challenge.updatedAtMs >= CHALLENGE_INITIAL_GRACE_MS) {
+          changed = await challenges.voidOrphanedLive(
+            challenge,
+            nowMs - CHALLENGE_INITIAL_GRACE_MS,
+          );
+        }
+      } else {
+        let phase: string | null = null;
+        try {
+          const response = await env.MATCH_ROOM
+            .get(env.MATCH_ROOM.idFromName(challenge.matchId))
+            .fetch('https://match.internal/reconcile', { method: 'POST' });
+          if (response.ok) phase = (await response.json<{ phase?: string }>()).phase ?? null;
+        } catch {
+          // Indisponibilidade transitória não autoriza apagar uma sala viva.
+        }
+
+        if (phase === 'MISSING' && nowMs - challenge.updatedAtMs >= CHALLENGE_INITIAL_GRACE_MS) {
+          const orphan = await matches.voidOrphanedPreparingMatch(
+            challenge.matchId,
+            nowMs - CHALLENGE_INITIAL_GRACE_MS,
+          );
+          if (orphan.voided) {
+            await Promise.all(orphan.firebaseUids.map((uid) => releaseTerminalPresence(env, matches, uid)));
+          }
+        }
+        // O MatchRoom terminal (ou a limpeza de reserva órfã acima) é quem
+        // grava FINISHED/VOID. Só então D1 converte o desafio e limpa payload.
+        changed = await challenges.reconcileDirectMatch(challenge);
       }
     } else if (challenge.status === 'FIRST_PLAYER_ACTIVE' || challenge.status === 'SECOND_PLAYER_ACTIVE') {
       const seat = challenge.status === 'FIRST_PLAYER_ACTIVE' ? 'FIRST' : 'SECOND';

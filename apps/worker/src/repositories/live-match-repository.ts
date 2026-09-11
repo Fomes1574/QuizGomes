@@ -87,6 +87,11 @@ export interface MatchMembership {
   userId: string;
 }
 
+export interface OrphanedPreparingMatch {
+  firebaseUids: string[];
+  voided: boolean;
+}
+
 export interface ParsedMatchResource {
   difficulty: Difficulty;
   mode: MatchMode;
@@ -289,6 +294,34 @@ export class LiveMatchRepository {
     if ((result.meta.changes ?? 0) > 0) return;
     const row = await this.coreDb.prepare('SELECT status FROM matches WHERE id = ?1').bind(matchId).first<{ status: string }>();
     if (row?.status !== 'PLAYING') throw new Error('Partida não pôde entrar em PLAYING.');
+  }
+
+  /**
+   * Recupera uma reserva que chegou a escrever `matches`/locks, mas nunca
+   * persistiu um MatchRoom. O CAS exige PREPARING sem início e idade além da
+   * graça: uma sala real em memória jamais é anulada por esta rotina.
+   */
+  async voidOrphanedPreparingMatch(matchId: string, beforeMs: number): Promise<OrphanedPreparingMatch> {
+    const players = await this.coreDb.prepare(
+      `SELECT u.firebase_uid
+         FROM match_players mp
+         JOIN users u ON u.id = mp.user_id
+        WHERE mp.match_id = ?1`,
+    ).bind(matchId).all<{ firebase_uid: string }>();
+    const updated = await this.coreDb.prepare(
+      `UPDATE matches
+          SET status = 'VOID', winner_user_id = NULL, result_reason = 'SYSTEM_FAILURE',
+              result_version = 1, finished_at = CURRENT_TIMESTAMP
+        WHERE id = ?1 AND status = 'PREPARING' AND started_at IS NULL
+          AND julianday(created_at) <= julianday(?2)`,
+    ).bind(matchId, new Date(beforeMs).toISOString()).run();
+    if ((updated.meta.changes ?? 0) !== 1) return { firebaseUids: [], voided: false };
+    await this.coreDb.prepare(
+      `DELETE FROM active_match_players
+        WHERE match_id = ?1
+          AND EXISTS (SELECT 1 FROM matches WHERE id = ?1 AND status = 'VOID')`,
+    ).bind(matchId).run();
+    return { firebaseUids: players.results.map((player) => player.firebase_uid), voided: true };
   }
 
   async finalize(state: LiveMatchState): Promise<FinalizedLiveMatch> {

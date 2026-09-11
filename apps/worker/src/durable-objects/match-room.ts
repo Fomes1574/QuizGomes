@@ -110,6 +110,7 @@ export class MatchRoom {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     if (request.method === 'POST' && url.pathname === '/initialize') return this.initialize(request);
+    if (request.method === 'POST' && url.pathname === '/reconcile') return this.reconcile();
     if (request.method === 'POST' && url.pathname === '/system-failure') return this.systemFailure();
     if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
       return new Response('Upgrade necessário', { status: 426 });
@@ -276,6 +277,31 @@ export class MatchRoom {
     }
     await this.applyCommand({ type: 'SYSTEM_FAILURE' }, Date.now());
     return Response.json({ status: 'VOID' });
+  }
+
+  /**
+   * Sonda interna de ciclo de vida. A existência de uma linha em `matches` não
+   * prova que este Durable Object chegou a persistir uma sala; por isso a
+   * reconciliação externa consulta este estado, e não o D1, para decidir se a
+   * reserva DIRECT ainda é recuperável.
+   */
+  private async reconcile(): Promise<Response> {
+    let state = await this.state();
+    if (state === null) return Response.json({ phase: 'MISSING' });
+
+    const deadlineReached = state.phaseDeadlineMs !== null && state.phaseDeadlineMs <= Date.now();
+    if (state.phase === 'FINALIZING' || deadlineReached ||
+      state.phase === 'FINISHED' || state.phase === 'VOID') {
+      await this.alarm();
+      state = await this.state();
+    }
+
+    if (state !== null && (state.phase === 'FINISHED' || state.phase === 'VOID')) {
+      // Também cobre terminais persistidos por versões anteriores que ainda
+      // não tenham alcançado a linha de desafio.
+      await this.reconcileDirectChallenge(state.matchId);
+    }
+    return Response.json({ phase: state?.phase ?? 'MISSING' });
   }
 
   private async connect(request: Request): Promise<Response> {

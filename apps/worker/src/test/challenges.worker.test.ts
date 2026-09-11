@@ -5,7 +5,9 @@ import {
   CHALLENGE_RATE_WINDOW_MS,
   ChallengeRepository,
 } from '../repositories/challenge-repository.js';
+import { reconcileChallengeLifecycle } from '../index.js';
 import { SocialRepository } from '../repositories/social-repository.js';
+import { DirectChallengeService } from '../services/direct-challenge-service.js';
 import { befriend, fixture, themeIdOf, userAt } from './challenge-fixture.worker.js';
 
 describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
@@ -231,6 +233,82 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
         targetPresence: 'ONLINE', targetUserId: second.id, themeId,
       })).resolves.toMatchObject({ created: true });
     }
+  });
+
+  it('anula reserva DIRECT PREPARING sem MatchRoom, limpa locks e libera novo convite', async () => {
+    const { themeSlug, users } = await fixture(2);
+    const first = userAt(users, 0);
+    const second = userAt(users, 1);
+    await befriend(first, second);
+    const challenges = new ChallengeRepository(env.CORE_DB);
+    const themeId = await themeIdOf(themeSlug);
+    const created = await challenges.create({
+      actorUserId: first.id, difficulty: 'EASY', kind: 'DIRECT',
+      targetPresence: 'ONLINE', targetUserId: second.id, themeId,
+    });
+    const matchId = crypto.randomUUID();
+    await env.CORE_DB.batch([
+      env.CORE_DB.prepare(
+        `INSERT INTO matches
+          (id, theme_id, difficulty, mode, kind, status, question_shard_id, created_at)
+         VALUES (?1, ?2, 'EASY', 'CASUAL', 'DIRECT_LIVE', 'PREPARING', 'questions-01', '2000-01-01T00:00:00.000Z')`,
+      ).bind(matchId, themeId),
+      env.CORE_DB.prepare(
+        'INSERT INTO match_players (match_id, user_id, seat) VALUES (?1, ?2, 1), (?1, ?3, 2)',
+      ).bind(matchId, first.id, second.id),
+      env.CORE_DB.prepare(
+        'INSERT INTO active_match_players (user_id, match_id) VALUES (?1, ?3), (?2, ?3)',
+      ).bind(first.id, second.id, matchId),
+      env.CORE_DB.prepare(
+        "UPDATE challenges SET status = 'ACTIVE', match_id = ?1, updated_at = '2000-01-01T00:00:00.000Z' WHERE id = ?2",
+      ).bind(matchId, created.challengeId),
+    ]);
+
+    // O MatchRoom deste id nunca foi inicializado: GET /api/challenges consulta
+    // essa prova autoritativa e executa a limpeza bounded abaixo.
+    const missing = await env.MATCH_ROOM.get(env.MATCH_ROOM.idFromName(matchId))
+      .fetch('https://match.internal/reconcile', { method: 'POST' });
+    expect(await missing.json()).toEqual({ phase: 'MISSING' });
+    await reconcileChallengeLifecycle(env, {
+      waitUntil(promise: Promise<unknown>) { void promise; },
+    } as unknown as ExecutionContext, challenges, first.id);
+    expect(await env.CORE_DB.prepare('SELECT status FROM matches WHERE id = ?1').bind(matchId).first())
+      .toEqual({ status: 'VOID' });
+    expect(await env.CORE_DB.prepare('SELECT COUNT(*) AS total FROM active_match_players WHERE match_id = ?1')
+      .bind(matchId).first()).toEqual({ total: 0 });
+    expect(await challenges.byId(created.challengeId)).toMatchObject({ status: 'VOID' });
+    await expect(challenges.create({
+      actorUserId: first.id, difficulty: 'EASY', kind: 'DIRECT',
+      targetPresence: 'ONLINE', targetUserId: second.id, themeId,
+    })).resolves.toMatchObject({ created: true });
+  });
+
+  it('MatchRoom terminal converge o desafio DIRECT e remove seus locks', async () => {
+    const { themeSlug, users } = await fixture(2);
+    const first = userAt(users, 0);
+    const second = userAt(users, 1);
+    await befriend(first, second);
+    const challenges = new ChallengeRepository(env.CORE_DB);
+    const themeId = await themeIdOf(themeSlug);
+    const created = await challenges.create({
+      actorUserId: first.id, difficulty: 'EASY', kind: 'DIRECT',
+      targetPresence: 'ONLINE', targetUserId: second.id, themeId,
+    });
+    const pending = await challenges.byId(created.challengeId);
+    if (pending === null) throw new Error('Convite DIRECT ausente.');
+    const started = await new DirectChallengeService(env).start(pending, [first.uid, second.uid]);
+    await env.CORE_DB.prepare(
+      "UPDATE challenges SET status = 'ACTIVE', match_id = ?1 WHERE id = ?2",
+    ).bind(started.roomId, created.challengeId).run();
+
+    const room = env.MATCH_ROOM.get(env.MATCH_ROOM.idFromName(started.roomId));
+    expect((await room.fetch('https://match.internal/system-failure', { method: 'POST' })).ok).toBe(true);
+    expect(await room.fetch('https://match.internal/reconcile', { method: 'POST' })
+      .then((response) => response.json())).toEqual({ phase: 'VOID' });
+    expect(await challenges.byId(created.challengeId)).toMatchObject({ status: 'VOID' });
+    expect(await env.CORE_DB.prepare(
+      'SELECT COUNT(*) AS total FROM active_match_players WHERE match_id = ?1',
+    ).bind(started.roomId).first()).toEqual({ total: 0 });
   });
 
   it('remove reserva DIRECT sem MatchRoom após a graça e preserva um ASYNC paralelo', async () => {
