@@ -64,6 +64,7 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 - [x] 2026-09-11 — Milestone 9C+M10 — desafio assíncrono ("Desafiar depois") implementado e validado localmente: conjunto selado uma vez para os dois, metade por vez com as primitivas do M8, sigilo e revelação progressiva, resultado/XP idempotentes, rate limiting técnico e varredura de convites vencidos.
 - [x] 2026-09-11 — Milestone 9C+M10 — smoke físico REPROVADO pelo proprietário em produção. Oito defeitos reportados: lista do Social só mudava com recarregar; cards com texto genérico e botão "Jogar" fora de hora; "Desafiar amigo" aparecia em Ranqueada; DIRECT bloqueado por um ASYNC vivo da mesma dupla; espera do convite direto presa à tela do tema e perdida no reload; metade assíncrona sem saída; seletor de amigo sobreposto no celular; sessão do Firebase caindo a cada recarga no celular.
 - [x] 2026-09-11 — Milestone 9C+M10 — passe corretivo do smoke aplicado e validado localmente: `CHALLENGE_UPDATED` em toda transição autoritativa, textos e ações dos cards por papel/estado, desafio entre amigos restrito ao Casual, migration forward-only `0009` separando o limite por tipo, espera global do convite direto recuperável do servidor, "Cancelar e voltar" na metade assíncrona, seletor de amigo empilhado no celular e persistência declarada do Firebase Auth.
+- [x] 2026-09-11 — Milestone 9C+M10 — passe corretivo #2 aplicado após a reprovação física: reconciliação bounded de ciclos DIRECT/ASYNC, terminal do `MatchRoom`/`ChallengeRoom` convergindo D1, recuperação da graça de 7 s sem socket, card Social compacto com presença privada real e regressões de lifecycle/mobile. Nenhum novo smoke físico foi declarado.
 - [ ] Milestone 9C+M10 — NOVO smoke físico pós-deploy pelo proprietário (o milestone permanece ABERTO, não congelado): convite, expiração de 30 s, aceite/recusa/cancelamento, metades assíncronas, sigilo, reconexão, além dos oito pontos reprovados acima.
 - [ ] Milestone 11 — criação/moderação/import/admin (não iniciar sem autorização).
 - [ ] Milestone 12 — e2e, performance, acessibilidade, segurança e deploy.
@@ -926,6 +927,35 @@ de dupla por tipo e rollback) e `build` verdes. **Nenhum smoke físico novo foi
 executado nem declarado** — a reprovação acima continua valendo até que o
 proprietário execute e aprove o novo smoke em aparelhos reais.
 
+### 2026-09-11 — M9C+M10: passe corretivo #2 para desafios fantasma
+
+O smoke físico anterior continua **REPROVADO** e o milestone continua **ABERTO**.
+Este passe não escondeu cards nem introduziu cancelamento para maquiar estado
+inválido: corrigiu a fonte autoritativa do lifecycle.
+
+- DIRECT em `PREPARING`/`ACTIVE` agora converge para `COMPLETED` quando o
+  `MatchRoom` persistiu `FINISHED` e para `VOID` quando persistiu `VOID`. A
+  própria finalização do `MatchRoom` faz a convergência e emite
+  `CHALLENGE_UPDATED`; leitura/criação reaplicam uma reconciliação bounded para
+  linhas antigas, incluindo reserva sem MatchRoom após a graça de 7 s.
+- ASYNC agora sela o `VOID` no D1 também quando `ALARM` chega diretamente em
+  `VOID`; antes o selo de finalização era feito apenas em `FINALIZING`. A rota
+  interna bounded `/reconcile` recupera alarmes vencidos/hibernação e salas
+  canceladas legadas. Não há polling, cron nem migration: `0008`/`0009` foram
+  preservadas e a migration `0010` não foi necessária.
+- A regra de dupla continua exatamente uma reserva ASYNC e uma DIRECT em
+  paralelo; terminais liberam somente o índice do seu tipo.
+- O card Social passou a usar duas linhas compactas (autoria; tema ·
+  dificuldade) e badge de presença real do outro amigo. `WAITING_FOR_SECOND`
+  segue sendo a única origem de `Jogar`/`Recusar`; presença é apenas visual.
+  Em 360/390/412px as ações ficam em área própria abaixo do resumo, sem disputar
+  largura com avatar, texto ou badge.
+
+Verificação local deste passe: lint, typecheck, regressões web (card, presença e
+360/390/412/desktop) e Worker/DO (DIRECT `FINISHED`/`VOID`, limpeza/liberação,
+reserva sem sala e primeira metade async sem socket) verdes. O gate completo,
+migrations, build, audit e diff review permanecem obrigatórios antes do push.
+
 ## Critério de saída desta execução
 
 - Milestones 8 e 8.5 aprovados fisicamente e congelados;
@@ -934,5 +964,5 @@ proprietário execute e aprove o novo smoke em aparelhos reais.
 - suíte unitária, runtime Workers/WebSocket, PWA, Worker, migrations, rollback, npm audit e secrets verdes;
 - push FCM opcional sem impedir amizades/bloqueios quando não configurado;
 - smoke físico do 9B APROVADO em 2026-09-11 e o milestone CONCLUÍDO/FROZEN; o smoke físico completo do 9A continua pendente até confirmação externa do proprietário;
-- Milestone 9C+M10 unificado (Desafios entre amigos) implementado por inteiro e validado localmente; smoke físico REPROVADO em 2026-09-11, passe corretivo dos oito defeitos aplicado e o milestone segue ABERTO até um novo smoke físico do proprietário;
+- Milestone 9C+M10 unificado (Desafios entre amigos) implementado por inteiro e validado localmente; smoke físico REPROVADO em 2026-09-11, passes corretivos dos oito defeitos e dos desafios fantasma aplicados e o milestone segue ABERTO até um novo smoke físico do proprietário;
 - Milestone 11 não iniciado; sem preview de branch, R2, billing ou produto pago.
