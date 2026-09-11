@@ -61,6 +61,7 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 - [ ] Apresentação do duelo — smoke físico pós-deploy pelo proprietário: coreografia, continuidade modal→lobby→placar, retrato/moldura/liga, paisagem, claro/escuro e `prefers-reduced-motion` em aparelhos reais.
 - [x] 2026-09-10 — Milestone 9C+M10 (unificado, Desafios entre amigos) — regras globais aplicadas: 5/8/12 perguntas, sorteio sem histórico de exibição, limite de 200 amizades e silenciamento por amizade.
 - [x] 2026-09-10 — Milestone 9C+M10 — desafio simultâneo ("Desafiar agora") implementado e validado localmente: núcleo de domínio, migration 0008, repositório com CAS, aceite no MatchRoom existente, realtime no canal social e interface no tema e no Social.
+- [x] 2026-09-11 — Milestone 9C+M10 — desafio assíncrono ("Desafiar depois") implementado e validado localmente: conjunto selado uma vez para os dois, metade por vez com as primitivas do M8, sigilo e revelação progressiva, resultado/XP idempotentes, rate limiting técnico e varredura de convites vencidos.
 - [ ] Milestone 9C+M10 — smoke físico pós-deploy pelo proprietário: convite, expiração de 30 s, aceite/recusa/cancelamento, metades assíncronas, sigilo, reconexão e regressão de gameplay.
 - [ ] Milestone 11 — criação/moderação/import/admin (não iniciar sem autorização).
 - [ ] Milestone 12 — e2e, performance, acessibilidade, segurança e deploy.
@@ -810,14 +811,64 @@ Desafio simultâneo entre amigos (M9C) entregue de ponta a ponta:
 Todo desafio entre amigos é Casual por construção: não há seletor de modalidade e
 o Conhecimento nunca muda.
 
-**Não implementado nesta execução:** o desafio assíncrono (M10) tem domínio,
-schema e repositório prontos, mas o motor da metade selada, a revelação
-progressiva por rodada e a interface correspondente ainda não existem. Por isso a
-opção "Desafiar depois" **não foi exposta na interface** — o backend aceita
-`kind: 'ASYNC'`, mas nenhuma tela cria ou joga esse desafio. A fronteira está
-registrada aqui para a próxima execução.
+O desafio assíncrono foi completado na execução seguinte, registrada abaixo.
 
 Verificação: `lint`, `typecheck`, 241 testes unitários e de domínio, 66 testes de
+Worker/WebSocket, `test:migrations` (banco vazio, upgrade 0007→0008, invariantes
+de dupla e rollback) e `build` verdes. Nenhum smoke físico foi executado.
+
+### 2026-09-11 — M9C+M10 concluído: desafio assíncrono, rate limiting e reconciliação
+
+A branch de desafios foi reconciliada com a `main` por **merge normal**, sem
+reset, revert ou reconstrução: os cinco commits existentes (`77a9e80`, `ed9c3aa`,
+`e84a3c2`, `de73757`, `14234ef`) permanecem na ancestralidade, e `7bcc5b0` — que é
+o merge do próprio trabalho do duelo na `main` — também. O merge não teve
+conflito porque os dois lados carregavam o mesmo conteúdo do duelo.
+
+**Desafio assíncrono ("Desafiar depois") completo:**
+
+- quem desafia joga a metade dele imediatamente; o amigo joga quando puder, em
+  qualquer presença, sem expiração;
+- o conjunto é sorteado e selado uma única vez na criação — mesmas perguntas,
+  mesma ordem, mesmas alternativas, mesmo tempo para os dois. Selar de novo é
+  no-op;
+- **sigilo por construção**: só a sala do segundo jogador recebe a metade selada
+  do primeiro, e a projeção revela uma rodada apenas depois que o segundo a
+  resolve. Escolha, tempo, score e resposta correta futuros nunca atravessam;
+- na metade do primeiro jogador o adversário aparece como pendente, com traço no
+  lugar do placar (`opponentPending`), porque ele ainda não jogou — nenhum zero
+  é inventado;
+- o motor reutiliza as primitivas do M8 (10 s por pergunta, `scoreAnswer`,
+  resolução e graça exata de 7 s com 6999 retomando e 7000/7001 anulando) e
+  projeta no formato da partida simultânea, então a tela de jogo é a mesma, sem
+  interface duplicada;
+- resultado, XP e limpeza idempotentes: reexecutar não duplica resposta nem paga
+  XP duas vezes, empate não paga a ninguém, anulação não deixa payload. O
+  Conhecimento nunca muda, porque desafio entre amigos é sempre Casual.
+
+**Novo Durable Object `ChallengeRoom` — necessidade demonstrada e registrada:** a
+metade assíncrona é um jogador só contra o relógio e a regra do M8 exige detecção
+AUTORITATIVA de desconexão com graça de 7 s. Isso não cabe em HTTP puro, porque
+não há conexão para observar, e não cabe no `MatchRoom`, que é máquina de dois
+assentos e está FROZEN — encaixar uma metade solo ali exigiria forjar o segundo
+assento dentro de motor congelado. O DO não recria scoring, timer, graça nem
+resolução: todos vêm do domínio compartilhado. Sem polling, sem segundo canal
+social, sem presença nova e sem escrita periódica no D1.
+
+**Rate limiting técnico** de criação de desafios por usuário numa janela curta,
+com mensagem neutra: é proteção de servidor, não cooldown social visível, e fora
+da janela o mesmo usuário volta a criar normalmente.
+
+**Cleanup de convite direto vencido** corrigido: a varredura transiciona
+`PENDING_DIRECT` para `EXPIRED`, libera a dupla e notifica os dois lados. É
+disparada por atividade real — abrir o Social, listar desafios — e nunca por
+timer, mantendo a regra de nenhuma escrita periódica.
+
+**Bug encontrado pelos próprios testes e corrigido:** um empate no assíncrono
+deixava a lista de pagamentos de XP vazia e o `batch([])` do D1 falhava. Empate
+agora não escreve nada.
+
+Verificação: `lint`, `typecheck`, 252 testes unitários e de domínio, 71 testes de
 Worker/WebSocket, `test:migrations` (banco vazio, upgrade 0007→0008, invariantes
 de dupla e rollback) e `build` verdes. Nenhum smoke físico foi executado.
 
@@ -829,4 +880,5 @@ de dupla e rollback) e `build` verdes. Nenhum smoke físico foi executado.
 - suíte unitária, runtime Workers/WebSocket, PWA, Worker, migrations, rollback, npm audit e secrets verdes;
 - push FCM opcional sem impedir amizades/bloqueios quando não configurado;
 - smoke físico completo do 9A e smoke físico do 9B continuam pendentes até confirmação externa do proprietário;
-- Milestone 9C não iniciado; sem preview de branch, R2, billing, migration adicional ou produto pago.
+- Milestone 9C+M10 unificado (Desafios entre amigos) implementado por inteiro e validado localmente; smoke físico pendente;
+- Milestone 11 não iniciado; sem preview de branch, R2, billing ou produto pago.

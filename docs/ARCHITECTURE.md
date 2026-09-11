@@ -102,6 +102,8 @@ dificuldade e modalidade; desconexão, abandono iniciado e demais voids não mud
 - `active_match_players.user_id` exclusivo impede o mesmo usuário em duas partidas, inclusive as vindas de desafio entre amigos.
 - Índice único parcial em `challenges(pair_low_id, pair_high_id)` sobre os estados vivos impede dois desafios ativos na mesma dupla; a primeira reserva persistida vence a corrida e define o primeiro jogador.
 - Toda transição de desafio usa CAS na revisão lida, então retry, double tap e multi-aba não reaplicam nada.
+- `ChallengeRoom` hospeda uma metade do desafio assíncrono. Existe porque a metade solo exige detecção autoritativa de desconexão com a graça de 7 s do M8, que HTTP puro não observa e que o `MatchRoom` — máquina de dois assentos e FROZEN — só aceitaria forjando um segundo assento. Scoring, timer, graça e resolução vêm do domínio compartilhado, não são recriados.
+- O conjunto do desafio assíncrono é selado uma única vez em `challenge_questions` e serve os dois jogadores; a metade do primeiro só é revelada ao segundo rodada a rodada, depois que ele resolve cada uma.
 - `matches.result_version` e chave única no ledger impedem resultado duplicado.
 - Finalização usa um batch transacional: trava estado final e grava ledger, ranking, XP, respostas, histórico do pool e liberação dos locks; retries observam o resultado já aplicado.
 - Requests mutáveis aceitam `Idempotency-Key` quando repetição de rede é provável.
