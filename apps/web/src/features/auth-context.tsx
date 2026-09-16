@@ -17,6 +17,7 @@ import {
 } from 'react';
 import { apiRequest, apiUpload, ClientApiError } from '../lib/api.js';
 import { firebaseAuth, googleProvider } from '../lib/firebase.js';
+import { clearAuthIntent } from '../lib/auth-intent.js';
 
 export interface QuizProfile {
   avatarKey: string;
@@ -155,7 +156,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         signingInRef.current = false;
       }
     },
-    signOut: async () => firebaseSignOut(firebaseAuth),
+    signOut: async () => {
+      clearAuthIntent();
+      await firebaseSignOut(firebaseAuth);
+    },
     updateDisplayName: (displayName) => saveProfile(displayName, 'PATCH'),
     uploadCustomAvatar: (avatar) => saveAvatar(avatar),
   }), [error, firebaseUser, getToken, loading, profile, role, saveAvatar, saveProfile]);

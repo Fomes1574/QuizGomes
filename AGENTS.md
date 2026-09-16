@@ -38,7 +38,7 @@ Estas regras valem para toda alteração neste repositório.
 - O sorteio não consulta histórico de exibição: amostra uniforme sem reposição sobre os slots do pool. Repetir entre partidas diferentes é permitido; repetir dentro da mesma partida, não.
 - Por usuário+pool, manter apenas a descoberta histórica em estado compacto.
 - Fácil = 5, Médio = 8 e Difícil = 12 perguntas, com 10 s por pergunta, em toda modalidade.
-- No máximo 200 amizades ativas por usuário e no máximo um desafio ativo por dupla.
+- No máximo 200 amizades ativas por usuário. Por dupla podem coexistir no máximo um desafio ASYNC vivo e um DIRECT vivo; DIRECT dura 30 s, ASYNC não expira e ambos são sempre Casual.
 - Manter camada de repository e roteamento de shards para perguntas.
 - Migrations D1 são versionadas e nunca reescritas depois de aplicadas.
 

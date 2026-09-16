@@ -325,6 +325,15 @@ async function profileRoute(request: Request, env: Env): Promise<Response> {
   throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Método não permitido.');
 }
 
+async function profileSummaryRoute(request: Request, env: Env): Promise<Response> {
+  if (request.method !== 'GET') throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Método não permitido.');
+  const identity = await requireUser(request, env);
+  const repository = new UserRepository(env.CORE_DB);
+  const profile = await repository.findByFirebaseUid(identity.uid);
+  if (profile === null) throw new ApiError(404, 'PROFILE_NOT_FOUND', 'Perfil ainda não criado.');
+  return json({ bestTheme: await repository.bestTheme(profile.userId) });
+}
+
 async function profileAvatarRoute(request: Request, env: Env): Promise<Response> {
   const identity = await requireUser(request, env);
   const repository = new UserRepository(env.CORE_DB);
@@ -958,6 +967,7 @@ async function apiRoute(request: Request, env: Env, url: URL, context: Execution
     return json({ name: 'QUIZ GOMES', status: 'ok', version: '0.1.0' });
   }
   if (url.pathname === '/api/profile/me') return profileRoute(request, env);
+  if (url.pathname === '/api/profile/summary') return profileSummaryRoute(request, env);
   if (url.pathname === '/api/profile/avatar') return profileAvatarRoute(request, env);
   if (url.pathname === '/api/social' || url.pathname.startsWith('/api/social/')) {
     return socialRoute(request, env, url, context);

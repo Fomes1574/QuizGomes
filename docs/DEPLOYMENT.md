@@ -25,7 +25,7 @@ Os dois bancos foram criados manualmente no Dashboard e permanecem no Workers Fr
 | `CORE_DB` | `quiz-gomes-core` | `3260deba-54ab-4e47-8c7f-a4d088dad728` |
 | `QUESTIONS_DB` | `quiz-gomes-questions-01` | `40ea8ac4-9dd6-40a8-b032-89cb3cede229` |
 
-Não execute `wrangler d1 create`, não altere esses nomes e não crie outros bancos. Os comandos remotos usam `--experimental-provision=false` para impedir provisionamento inferido; o deploy ainda aplica normalmente as classes Durable Objects SQLite declaradas explicitamente nas migrations `v1` e `v2`. A `v2` acrescenta somente `SocialRealtimeHub`, sem novo D1, sem billing e sem SQL manual.
+Não execute `wrangler d1 create`, não altere esses nomes e não crie outros bancos. Os comandos remotos usam `--experimental-provision=false` para impedir provisionamento inferido; o deploy aplica as classes Durable Objects SQLite `v1`, `v2` e `v3`. A `v2` acrescenta `SocialRealtimeHub` e a `v3`, `ChallengeRoom`, sem novo D1, billing ou SQL manual.
 
 ## 3. Workers Builds conectado ao GitHub
 
@@ -133,7 +133,7 @@ npm run deploy:cloudflare -w @quiz-gomes/worker
 O primeiro comando aplica somente migrations pendentes:
 
 - `QUESTIONS_DB`: `0001_questions.sql`, `0002_synthetic_smoke_test.sql` e `0003_expand_synthetic_smoke_test.sql`;
-- `CORE_DB`: `0001_core.sql`, `0002_live_matches.sql`, `0003_synthetic_smoke_test.sql`, `0004_theme_artwork.sql`, `0005_user_custom_avatars.sql`, `0006_expand_synthetic_smoke_test.sql` e `0007_social_foundation.sql`.
+- `CORE_DB`: `0001_core.sql` até `0009_challenge_pair_limits_by_kind.sql`.
 
 Questions é aplicado primeiro para que o tema temporário só fique visível depois que seu pool estiver pronto. Wrangler registra o histórico em `d1_migrations`; retries não reaplicam versões concluídas. Se uma migration falhar, o D1 reverte integralmente aquela migration, preserva as anteriores e o deploy não começa. Arquivos já aplicados são imutáveis e qualquer correção posterior é forward-only. Uma migration que falhou e não foi registrada, como a primeira tentativa remota da `0004_theme_artwork.sql`, continua pendente e deve ser corrigida no próprio arquivo antes do retry — não recebe uma compensação vazia ou manual.
 
@@ -141,8 +141,8 @@ Questions é aplicado primeiro para que o tema temporário só fique visível de
 
 - lê e passa todas as migrations pelo splitter SQL exportado pelo Wrangler, incluindo o statement de tracking;
 - exige LF e bloqueia `CREATE TRIGGER`, pois compound statements continuam sujeitos a diferenças entre o splitter local e o parser multi-statement do endpoint D1 `/query` usado por migrations remotas;
-- aplica Core `0001–0007` e Questions `0001–0003` em bancos vazios e isolados;
-- prova os upgrades Core `0003→0004→0005→0006→0007` e Questions `0002→0003`, incluindo a passagem exata do pool sintético de 30 para 250 slots;
+- aplica Core `0001–0009` e Questions `0001–0003` em bancos vazios e isolados;
+- prova os upgrades Core `0003→0004→0005→0006→0007→0008→0009` e Questions `0002→0003`, incluindo a passagem exata do pool sintético de 30 para 250 slots;
 - valida pedidos cruzados, constraints direcionais de recusas/bloqueios e instalações FCM no schema social;
 - inspeciona colunas, índice e FK composta, e tenta estados inválidos de metadata/BLOB;
 - injeta uma migration temporária que falha depois de criar/escrever e comprova rollback de schema e de `d1_migrations`.
@@ -165,7 +165,7 @@ O build do Worker usa `apps/web/dist` como static assets e `not_found_handling: 
 
 ## 6. Primeiro deploy e smoke tests reais
 
-O primeiro push/build bem-sucedido cria o Worker `quiz-gomes`, aplica as migrations Durable Objects SQLite declaradas (`v1`; `v2` para o hub social quando pendente) e publica uma URL semelhante a:
+O primeiro push/build bem-sucedido cria o Worker `quiz-gomes`, aplica as migrations Durable Objects SQLite declaradas (`v1`, `v2` para o hub social e `v3` para ChallengeRoom quando pendentes) e publica uma URL semelhante a:
 
 ```text
 https://quiz-gomes.<seu-subdominio>.workers.dev

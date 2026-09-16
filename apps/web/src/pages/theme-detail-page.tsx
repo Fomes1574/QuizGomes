@@ -1,5 +1,5 @@
 import { questionsForDifficulty, type Difficulty, type MatchMode } from '@quiz-gomes/domain';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useParams } from 'react-router-dom';
 import { Avatar } from '../components/avatar.js';
 import { AvatarFrame } from '../components/avatar-frame.js';
@@ -14,6 +14,7 @@ import { useAuth } from '../features/auth-context.js';
 import { useFriendChallenge } from '../hooks/use-friend-challenge.js';
 import { useMatchmaking } from '../hooks/use-matchmaking.js';
 import { apiRequest } from '../lib/api.js';
+import { consumePlayAuthIntent, savePlayAuthIntent } from '../lib/auth-intent.js';
 import type { ThemeDetailResponse } from '../lib/models.js';
 import type { SocialFriend, SocialSnapshot } from '../lib/social.js';
 
@@ -33,7 +34,9 @@ export function ThemeDetailPage() {
   const [reload, setReload] = useState(0);
   const [friends, setFriends] = useState<SocialFriend[]>([]);
   const [challengePickerOpen, setChallengePickerOpen] = useState(false);
+  const consumedIntent = useRef(false);
   const matchmaking = useMatchmaking();
+  const startMatchmaking = matchmaking.start;
   const friendChallenge = useFriendChallenge(slug);
 
   useEffect(() => {
@@ -52,6 +55,17 @@ export function ThemeDetailPage() {
       .then((snapshot) => setFriends(snapshot.friends))
       .catch(() => setFriends([]));
   }, [getToken, profile]);
+
+  // A intenção só pode ser retomada na mesma aba, uma vez, e é revalidada pelo
+  // ticket/servidor dentro de `start`. Não há callback do Firebase que abra uma
+  // segunda fila por conta própria.
+  useEffect(() => {
+    if (consumedIntent.current || profile === null || data === null) return;
+    const intent = consumePlayAuthIntent();
+    consumedIntent.current = true;
+    if (intent === null || intent.themeId !== data.theme.id || intent.themeSlug !== slug) return;
+    void startMatchmaking(intent.themeId, intent.difficulty, intent.mode, intent.themeSlug);
+  }, [data, profile, slug, startMatchmaking]);
 
   if (data === null && error === null) return <LoadingState label="Abrindo o tema" />;
   if (error !== null || data === null) return <ErrorState message={error ?? 'Tema indisponível.'} onRetry={() => setReload((value) => value + 1)} />;
@@ -89,7 +103,10 @@ export function ThemeDetailPage() {
           {matchmaking.error && <p className="form-error">{matchmaking.error}</p>}
           {friendChallenge.error && <p className="form-error">{friendChallenge.error}</p>}
           {profile === null
-            ? <Button onClick={() => void signIn()}>Entrar para jogar</Button>
+            ? <Button onClick={() => {
+              savePlayAuthIntent({ difficulty, mode, themeId: data.theme.id, themeSlug: slug });
+              void signIn();
+            }}>Entrar para jogar</Button>
             : (
               <div className="play-card__actions">
                 <Button

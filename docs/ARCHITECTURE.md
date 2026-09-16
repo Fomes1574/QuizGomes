@@ -1,5 +1,10 @@
 # Arquitetura
 
+> Regras vigentes: EASY/MEDIUM/HARD = 5/8/12; 10 s por pergunta; seleção uniforme
+> sem histórico entre partidas e sem repetição somente dentro da partida. DIRECT é
+> Casual e expira em 30 s; ASYNC é Casual, não expira e pode coexistir com um DIRECT
+> vivo da mesma dupla. Reconexão abaixo de 7 s retoma; a partir de 7 s anula.
+
 ## Visão geral
 
 ```mermaid

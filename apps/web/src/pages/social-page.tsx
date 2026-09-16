@@ -189,7 +189,9 @@ function FriendsSection({
       })));
     }
     return {
-      available: online.filter(({ presence }) => presence === 'ONLINE' || presence === 'MATCHMAKING').length,
+      // "Procurando partida" não pode receber DIRECT: disponibilidade é ONLINE
+      // exclusivamente. A fila continua visível separadamente na lista.
+      available: online.filter(({ presence }) => presence === 'ONLINE').length,
       busy: online.filter(({ presence }) => presence === 'IN_MATCH' || presence === 'RECONNECTING').length,
       rows,
     };

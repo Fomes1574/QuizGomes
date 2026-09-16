@@ -56,6 +56,7 @@ describe('Perfil — privacidade e notificações opcionais', () => {
     mocks.notificationState = 'prompt';
     mocks.pushConfigured = true;
     mocks.apiRequest.mockImplementation((path: string) => {
+      if (path === '/api/profile/summary') return Promise.resolve({ bestTheme: null });
       if (path === '/api/social/blocks') return Promise.resolve({ users: [{
         customAvatarUrl: '/api/avatars/blocked/v1.webp',
         displayName: 'Pessoa Bloqueada',
@@ -71,7 +72,7 @@ describe('Perfil — privacidade e notificações opcionais', () => {
 
   it('carrega bloqueados somente ao abrir Privacidade e Segurança e confirma o desbloqueio', async () => {
     render(<ProfilePage />);
-    expect(mocks.apiRequest).not.toHaveBeenCalled();
+    expect(mocks.apiRequest).toHaveBeenCalledWith('/api/profile/summary', expect.any(Object));
     fireEvent.click(screen.getByRole('button', { name: 'Usuários bloqueados' }));
     expect(await screen.findByText('Pessoa Bloqueada')).toBeInTheDocument();
     expect(screen.getByText('#QGBLOCKED1')).toBeInTheDocument();

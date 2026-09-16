@@ -458,9 +458,16 @@ export class SocialRepository {
   async removeFriend(actorUserId: string, targetPublicId: string): Promise<void> {
     const target = await this.visibleTarget(actorUserId, targetPublicId);
     const [low, high] = normalizedPair(actorUserId, target.user_id);
-    await this.db.prepare(
-      'DELETE FROM friendships WHERE user_low_id = ?1 AND user_high_id = ?2',
-    ).bind(low, high).run();
+    // Mute só existe enquanto a amizade existe. Preservá-lo fazia uma nova amizade
+    // reaparecer silenciosa sem uma ação explícita do usuário.
+    await this.db.batch([
+      this.db.prepare('DELETE FROM friendships WHERE user_low_id = ?1 AND user_high_id = ?2').bind(low, high),
+      this.db.prepare(
+        `DELETE FROM friendship_mutes
+          WHERE (muter_user_id = ?1 AND muted_user_id = ?2)
+             OR (muter_user_id = ?2 AND muted_user_id = ?1)`,
+      ).bind(actorUserId, target.user_id),
+    ]);
   }
 
   async block(actorUserId: string, targetPublicId: string): Promise<void> {
@@ -476,6 +483,11 @@ export class SocialRepository {
         'INSERT OR IGNORE INTO user_blocks (blocker_user_id, blocked_user_id, created_at) VALUES (?1, ?2, ?3)',
       ).bind(actorUserId, target.user_id, now),
       this.db.prepare('DELETE FROM friendships WHERE user_low_id = ?1 AND user_high_id = ?2').bind(low, high),
+      this.db.prepare(
+        `DELETE FROM friendship_mutes
+          WHERE (muter_user_id = ?1 AND muted_user_id = ?2)
+             OR (muter_user_id = ?2 AND muted_user_id = ?1)`,
+      ).bind(actorUserId, target.user_id),
       this.db.prepare(
         `UPDATE friend_requests SET status = 'CANCELLED', resolved_at = ?1
           WHERE status = 'PENDING'

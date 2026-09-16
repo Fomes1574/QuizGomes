@@ -125,7 +125,7 @@ Nível máximo 999 (`MAX`), total 5.230.904 XP e mínimo teórico de 174.364 vit
 
 ## 7. Perguntas e sorteio
 
-Quantidade por partida: Fácil 5, Médio 10, Difícil 15. Cada pergunta tem 10 segundos.
+Quantidade por partida: Fácil 5, Médio 8, Difícil 12. Cada pergunta tem 10 segundos.
 
 Toda pergunta possui enunciado, quatro alternativas, exatamente uma correta, tema, dificuldade, status, fontes, imagem opcional e metadata administrativa. Publicada exige evidência. Conteúdo enviado por usuários entra em revisão.
 
@@ -133,14 +133,7 @@ Regra editorial: pergunta até 3 linhas no menor viewport; resposta ideal até 1
 
 Imagem opcional fica acima do enunciado e deve ter menos de 100 KB, teto inicial de 720 px e formato otimizado. Origem/licença é registrada.
 
-Anti-repetição por usuário+tema+dificuldade:
-
-- exatamente as últimas 200 respondidas ficam inelegíveis;
-- a 201ª libera a mais antiga;
-- duelo exclui a união das duas filas (até cerca de 400 IDs);
-- descoberta histórica é independente e exata em bitmap por slots densos.
-
-Após remover recentes, inativas e em revisão, todas as elegíveis têm chance igual. Não há peso por popularidade, estatística, imagem ou assunto. Não usar `ORDER BY RANDOM()`. Cada pool usa slots ativos densos 1..N; ativação/desativação mantém densidade por swap transacional.
+O sorteio é uniforme sem reposição apenas dentro da própria partida. Entre partidas, perguntas podem reaparecer; descoberta histórica permanece independente e exata em bitmap por slots densos. Não há peso por popularidade, estatística, imagem ou assunto e nunca se usa `ORDER BY RANDOM()`.
 
 ## 8. Pontuação e timing
 
@@ -160,11 +153,11 @@ Somente simultâneo e humano. Fila exige mesmo tema, dificuldade e modo. Entre v
 
 ### Desafio simultâneo
 
-Amigo online recebe convite com tema, dificuldade e modo por até 60 s. Ao aceitar: “PREPARE-SE PARA A PARTIDA”, 3–2–1 e cancelamento curto. Cancelamento anula sem consequência.
+Amigo ONLINE recebe convite Casual com tema e dificuldade por até 30 s. Ao aceitar: “PREPARE-SE PARA A PARTIDA”, 3–2–1 e cancelamento curto. Cancelamento anula sem consequência.
 
 ### Assíncrono
 
-Somente amigos, sem expiração e no máximo um pendente por dupla em qualquer direção. Perguntas, ordem, alternativas e imagens são idênticas. Primeiro joga imediatamente, mas resultado, XP e Conhecimento ficam selados. Segundo pode cancelar antes de iniciar.
+Somente amigos e Casual. ASYNC não expira e permite no máximo uma reserva viva por dupla; pode coexistir com uma reserva DIRECT. Perguntas, ordem, alternativas e imagens são idênticas. Primeiro joga imediatamente, mas resultado, XP e Conhecimento ficam selados. Segundo pode cancelar antes de iniciar.
 
 Antes de cada resposta do segundo, o payload não inclui escolha, tempo, score da rodada/final do primeiro nem resposta correta. Após resposta/timeout local, revela somente a rodada atual e atualiza score acumulado revelado. O primeiro não pode cancelar após concluir sua metade.
 

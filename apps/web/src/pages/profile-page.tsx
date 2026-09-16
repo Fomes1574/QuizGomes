@@ -1,5 +1,5 @@
 import { levelProgress } from '@quiz-gomes/domain';
-import { lazy, Suspense, useState, type FormEvent } from 'react';
+import { lazy, Suspense, useEffect, useState, type FormEvent } from 'react';
 import { Avatar } from '../components/avatar.js';
 import { AvatarFrame } from '../components/avatar-frame.js';
 import { LoadingState } from '../components/async-state.js';
@@ -40,7 +40,17 @@ export function ProfilePage() {
   const [notificationState, setNotificationState] = useState(browserNotificationState);
   const [notificationBusy, setNotificationBusy] = useState(false);
   const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [bestTheme, setBestTheme] = useState<{ knowledge: number; name: string; rankedMatches: number; slug: string } | null>(null);
   const progress = levelProgress(profile?.totalXp ?? 0);
+
+  useEffect(() => {
+    if (profile === null) return;
+    let active = true;
+    void apiRequest<{ bestTheme: typeof bestTheme }>('/api/profile/summary', { getToken })
+      .then((response) => { if (active) setBestTheme(response.bestTheme ?? null); })
+      .catch(() => { if (active) setBestTheme(null); });
+    return () => { active = false; };
+  }, [getToken, profile]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -123,7 +133,7 @@ export function ProfilePage() {
       {editing && <form className="inline-edit" onSubmit={(event) => void submit(event)}><label className="field"><span>Novo nome</span><input maxLength={32} minLength={2} onChange={(event) => setName(event.target.value)} value={name} /></label><Button type="submit">Salvar</Button></form>}
       <div className="profile-grid">
         <article className="level-card"><span>Nível</span><strong>{progress.level}</strong><div className="progress-track"><span style={{ transform: `scaleX(${progress.progress})` }} /></div><small>{progress.nextLevelXp === null ? 'MAX' : `${progress.currentLevelXp} / ${progress.nextLevelXp} XP`}</small></article>
-        <article className="profile-card"><span className="eyebrow">Melhor tema</span><RankBadge knowledge={0} showKnowledge /><p>Jogue sua primeira Ranqueada para preencher este espaço.</p></article>
+        <article className="profile-card"><span className="eyebrow">Melhor tema</span>{bestTheme === null ? <p>Jogue sua primeira Ranqueada para preencher este espaço.</p> : <><h2>{bestTheme.name}</h2><RankBadge knowledge={bestTheme.knowledge} showKnowledge /><p>{bestTheme.rankedMatches} {bestTheme.rankedMatches === 1 ? 'partida Ranqueada' : 'partidas Ranqueadas'}</p></>}</article>
       </div>
       <section className="settings-card"><div><h2>Aparência</h2><p>A preferência acompanha este dispositivo.</p></div><div className="segmented" role="radiogroup" aria-label="Aparência">{(['light', 'dark', 'system'] as ThemeMode[]).map((value) => <button aria-checked={mode === value} className={mode === value ? 'segmented__active' : ''} key={value} onClick={() => setMode(value)} role="radio" type="button">{{ light: 'Claro', dark: 'Escuro', system: 'Sistema' }[value]}</button>)}</div></section>
       <section className="settings-card">

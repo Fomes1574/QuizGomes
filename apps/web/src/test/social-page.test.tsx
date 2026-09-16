@@ -223,7 +223,7 @@ describe('Social Foundation — interface web', () => {
     const cards = [...screen.getByRole('region', { name: 'Amigos' })
       .querySelectorAll('[data-friend-id]')].map((card) => card.getAttribute('data-friend-id'));
     expect(cards).toEqual(['#QGANA111', '#QGZOE111', '#QGCAIO11', '#QGBIA111', '#QGIVO111']);
-    expect(screen.getByText('3 disponíveis')).toBeInTheDocument();
+    expect(screen.getByText('2 disponíveis')).toBeInTheDocument();
     expect(screen.getByText('1 em partida')).toBeInTheDocument();
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'ana' } });
     await waitFor(() => expect(screen.getByRole('region', { name: 'Resultados da busca' }))

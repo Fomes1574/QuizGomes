@@ -4,7 +4,7 @@
 
 - sorteio uniforme entre todas as perguntas elegíveis;
 - nenhuma consulta aleatória sobre milhões de rows;
-- últimas 200 exatas por usuário+pool;
+- sem bloqueio por histórico entre partidas; sem repetição apenas dentro da própria partida;
 - descoberta histórica exata e compacta;
 - sharding sem alterar UI ou regras de domínio;
 - nenhuma resposta correta futura no cliente.
@@ -15,13 +15,13 @@ Um pool é `(theme_id, difficulty)` e guarda `active_count`. Toda pergunta ativa
 
 Seleção:
 
-1. montar conjunto bloqueado da união de recentes dos jogadores e slots já usados na partida;
+1. montar conjunto bloqueado somente dos slots já usados na própria partida;
 2. sortear inteiro uniforme em `[1,N]` com rejeição sem viés;
 3. rerrolar se bloqueado;
 4. buscar a row pela chave indexada `(pool_id, slot)`;
 5. repetir até a quantidade da dificuldade.
 
-Se `N - blockedEligible < needed`, retornar erro de pool insuficiente; nunca relaxar as últimas 200 silenciosamente.
+Se `N - blockedEligible < needed`, retornar erro de pool insuficiente; nunca repetir pergunta dentro da própria partida.
 
 O dataset interno `SYNTHETIC_SMOKE_TEST` possui 250 perguntas EASY mínimas e inequivocamente artificiais para suportar repetição de smoke sem mudar essa regra. A ampliação é uma migration restrita aos IDs e à flag reservados; temas editoriais continuam usando seus próprios pools e históricos normais.
 

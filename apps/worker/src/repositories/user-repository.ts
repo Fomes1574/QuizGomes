@@ -15,6 +15,13 @@ export interface UserProfileRecord {
   userId: string;
 }
 
+export interface BestThemeRecord {
+  knowledge: number;
+  name: string;
+  rankedMatches: number;
+  slug: string;
+}
+
 interface UserProfileRow {
   avatar_key: string;
   custom_avatar_version: number | null;
@@ -71,6 +78,29 @@ export class UserRepository {
         WHERE u.firebase_uid = ?1 AND u.disabled_at IS NULL`,
     ).bind(uid).first<UserProfileRow>();
     return row === null ? null : toProfile(row);
+  }
+
+  /** Melhor tema real do jogador: só rankings que já tiveram Ranqueada contam. */
+  async bestTheme(userId: string): Promise<BestThemeRecord | null> {
+    const row = await this.db.prepare(
+      `SELECT t.name, t.slug, r.knowledge, r.ranked_matches
+         FROM theme_rankings r
+         JOIN themes t ON t.id = r.theme_id
+        WHERE r.user_id = ?1 AND r.ranked_matches > 0
+        ORDER BY r.knowledge DESC, r.ranked_matches DESC, t.name COLLATE NOCASE
+        LIMIT 1`,
+    ).bind(userId).first<{
+      knowledge: number;
+      name: string;
+      ranked_matches: number;
+      slug: string;
+    }>();
+    return row === null ? null : {
+      knowledge: row.knowledge,
+      name: row.name,
+      rankedMatches: row.ranked_matches,
+      slug: row.slug,
+    };
   }
 
   /** Firebase UID de cada usuário, para reservas de presença e salas. */

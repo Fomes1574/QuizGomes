@@ -1,4 +1,5 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
+import { levelProgress } from '@quiz-gomes/domain';
 import { useAuth } from '../features/auth-context.js';
 import { useSocial } from '../features/social-context.js';
 import { Avatar } from './avatar.js';
@@ -19,6 +20,9 @@ export function AppShell() {
   const restoring = loading && profile === null && firebaseUser === null;
   const { onlineCount, pendingCount } = useSocial();
   const location = useLocation();
+  const level = profile === null ? null : levelProgress(
+    typeof profile.totalXp === 'number' ? profile.totalXp : 0,
+  ).level;
   return (
     <div className="app-shell">
       <header className="app-header">
@@ -34,7 +38,7 @@ export function AppShell() {
         </div>
         <NavLink className="header-profile" to="/perfil" aria-label="Abrir perfil">
           <span className="header-profile__copy">
-            <small>{profile ? `Nível ${1}` : firebaseUser ? 'Complete seu perfil' : restoring ? 'Restaurando sessão' : 'Visitante'}</small>
+            <small>{level === null ? (firebaseUser ? 'Complete seu perfil' : restoring ? 'Restaurando sessão' : 'Visitante') : `Nível ${level}`}</small>
             <strong>{profile?.displayName ?? firebaseUser?.displayName ?? (restoring ? '...' : 'Entrar')}</strong>
           </span>
           <AvatarFrame frameId={profile?.equippedFrameId}>
