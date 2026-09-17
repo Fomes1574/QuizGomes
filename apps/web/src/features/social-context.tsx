@@ -87,6 +87,10 @@ export function SocialProvider({ children }: { children: ReactNode }) {
       setPendingCount(summary.pendingCount);
       setPushConfigured(summary.pushConfigured);
       setRevision((current) => current + 1);
+      // Reload, foco e reconexão do canal social também precisam reabrir a lista
+      // de desafios: sem isso, um DIRECT que avançou enquanto a aba estava
+      // fechada/em segundo plano só reaparecia se o push CHALLENGE_STARTED chegasse.
+      setChallengeRevision((current) => current + 1);
     } catch {
       // Social opcional não deve impedir o shell ou o gameplay aprovado.
     }

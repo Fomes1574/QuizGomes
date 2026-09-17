@@ -24,6 +24,12 @@ export interface ChallengeView {
   id: string;
   kind: ChallengeKind;
   role: 'CHALLENGED' | 'CHALLENGER';
+  /**
+   * Sala DIRECT já reservada (PREPARING/ACTIVE), só para os dois participantes.
+   * É o que permite recuperar a partida depois de reload/reconexão sem depender
+   * só do push `CHALLENGE_STARTED`.
+   */
+  roomId: string | null;
   status: ChallengeStatus;
   theme: { name: string; slug: string };
 }

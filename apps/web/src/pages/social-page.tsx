@@ -321,7 +321,11 @@ function ChallengesSection({
 export function SocialPage() {
   const { getToken, profile, signIn } = useAuth();
   const { refresh, revision } = useSocial();
-  const { challenges, refreshChallenges } = useChallenges();
+  const { challenges, enterDirectRoom, refreshChallenges } = useChallenges();
+  // Trava síncrona: independente do ciclo de render do `busy`, um segundo clique
+  // (double tap, multiaba do mesmo dispositivo) no mesmo desafio nunca chega a
+  // montar uma segunda requisição.
+  const pendingActionsRef = useRef<Set<string>>(new Set());
   const navigate = useNavigate();
   const [snapshot, setSnapshot] = useState<SocialSnapshot>(EMPTY_SNAPSHOT);
   const [search, setSearch] = useState('');
@@ -348,6 +352,8 @@ export function SocialPage() {
   useEffect(() => { queueMicrotask(() => { void load(); }); }, [load, revision]);
 
   const challengeAction = useCallback((challenge: ChallengeView, action: 'accept' | 'cancel' | 'decline') => {
+    if (pendingActionsRef.current.has(challenge.id)) return;
+    pendingActionsRef.current.add(challenge.id);
     void (async () => {
       setBusy(challenge.id);
       setError(null);
@@ -357,7 +363,7 @@ export function SocialPage() {
           { getToken, method: 'POST' },
         );
         if (action === 'accept' && typeof response.roomId === 'string') {
-          void navigate(`/partida/${response.roomId}`);
+          enterDirectRoom(response.roomId, challenge.id);
           return;
         }
         if (action === 'accept' && response.half === 'SECOND') {
@@ -369,10 +375,11 @@ export function SocialPage() {
         setError(reason instanceof Error ? reason.message : 'Não foi possível concluir esta ação.');
         await refreshChallenges();
       } finally {
+        pendingActionsRef.current.delete(challenge.id);
         setBusy(null);
       }
     })();
-  }, [getToken, navigate, refreshChallenges]);
+  }, [enterDirectRoom, getToken, navigate, refreshChallenges]);
 
   useEffect(() => {
     const value = search.trim();

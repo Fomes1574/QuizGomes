@@ -3,6 +3,12 @@ import { createPortal } from 'react-dom';
 import { useChallenges } from '../features/challenge-context.js';
 import { Button } from './button.js';
 
+const ENDED_FEEDBACK_MS = 4_000;
+const ENDED_MESSAGE: Record<'EXPIRED' | 'UNAVAILABLE', string> = {
+  EXPIRED: 'O convite venceu antes de uma resposta.',
+  UNAVAILABLE: 'Este convite não está mais disponível.',
+};
+
 /**
  * Espera bloqueante do convite direto.
  *
@@ -10,11 +16,20 @@ import { Button } from './button.js';
  * navegasse livremente, o aceite do outro lado chegaria sem ninguém para entrar na
  * sala e a partida terminaria anulada. A contagem deriva do prazo autoritativo do
  * servidor; o cliente nunca declara a expiração.
+ *
+ * Quando o convite termina sem virar sala, a mesma janela mostra por alguns
+ * segundos o porquê em vez de simplesmente desaparecer em silêncio.
  */
 export function DirectChallengeWaiting() {
-  const { cancelPending, pendingDirect, secondsLeft } = useChallenges();
+  const { cancelPending, dismissEndedChallenge, endedChallenge, pendingDirect, secondsLeft } = useChallenges();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const active = pendingDirect !== null;
+
+  useEffect(() => {
+    if (endedChallenge === null) return undefined;
+    const timer = window.setTimeout(dismissEndedChallenge, ENDED_FEEDBACK_MS);
+    return () => window.clearTimeout(timer);
+  }, [dismissEndedChallenge, endedChallenge]);
 
   useEffect(() => {
     if (!active) return undefined;
@@ -51,7 +66,17 @@ export function DirectChallengeWaiting() {
     };
   }, [active]);
 
-  if (pendingDirect === null) return null;
+  if (pendingDirect === null) {
+    if (endedChallenge === null) return null;
+    // Sem sala para esperar: um aviso breve e não bloqueante, não um modal inerte.
+    return createPortal(
+      <div aria-live="polite" className="challenge-ended-toast" role="status">
+        <span>{ENDED_MESSAGE[endedChallenge.reason]}</span>
+        <button aria-label="Dispensar aviso" onClick={dismissEndedChallenge} type="button">×</button>
+      </div>,
+      document.body,
+    );
+  }
 
   return createPortal(
     <dialog
