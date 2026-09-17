@@ -1072,6 +1072,102 @@ rodada futura, retry no teto, entrega de MatchRoom/ChallengeRoom e upgrade
 `0010→0011`; a suite atualizada deve permanecer parte do gate completo. Nenhum
 smoke físico foi executado nem declarado.
 
+### 2026-09-17 — Corretiva: aceite DIRECT atômico/idempotente e ASYNC sem corrida no selo
+
+Corretiva pontual sobre o M9C+M10 (FROZEN), motivada por um bug físico observado:
+depois de aceitar um convite direto, um lado recebia "Este desafio não aguarda
+aceite" enquanto o outro ficava preso em "Aguardando". M8/M8.5/MatchRoom
+permanecem intocados; a mudança fica inteira em `acceptChallenge`,
+`DirectChallengeService`, `ChallengeRepository`, `ChallengeRoom` e no estado
+otimista do cliente.
+
+- **`roomId` nasce antes do CAS.** `PENDING_DIRECT → PREPARING` agora persiste
+  `match_id` na MESMA escrita: nunca mais existe uma janela com `PREPARING` e
+  sala nula, que antes deixava uma reconciliação `>7s` anular uma sala que já
+  estava viva.
+- **Aceite é idempotente.** Duplo aceite (double tap, outra aba) devolve a
+  MESMA sala em vez do erro genérico; `DirectChallengeService.start` recebe o
+  `roomId` já decidido (não gera mais o seu) e `ensureReserved` reconhece um
+  jogador já reservado nesta mesma sala, inclusive quando perde a corrida de
+  CAS do `PresenceHub` contra a própria tentativa vencedora — sem isso, duas
+  chamadas concorrentes para o mesmo desafio se anulavam uma à outra.
+  `deliverDirectRoom` só permite VOID por quem de fato tirou o desafio de
+  `PENDING_DIRECT` (CAS por revisão exata); uma chamada de recuperação nunca
+  encerra uma tentativa alheia nem cria uma segunda reserva.
+- **Reconciliação cobre a sala que nunca chegou a nascer.** Quando o `MatchRoom`
+  está `MISSING` e não existe linha em `matches` para converter (o processo
+  morreu entre o CAS e a chamada ao DO), a própria reserva do desafio se anula
+  após a graça de 7 s — antes disso a reconciliação nunca tocava uma reserva
+  sem `matches` row, deixando o desafio preso em `PREPARING` para sempre.
+- **`matches.kind` é sempre decidido pelo servidor.** `MatchRoom.initialize`
+  passa a exigir `kind: 'DIRECT_LIVE' | 'MATCHMAKING'` explícito nos dois pontos
+  de chamada (`DirectChallengeService`, `MatchmakingQueue`); antes a coluna
+  gravava sempre `'MATCHMAKING'`, inclusive para partidas nascidas de um
+  desafio.
+- **Recuperação sem depender só do push.** `GET /api/challenges` expõe `roomId`
+  para DIRECT em `PREPARING`/`ACTIVE`, restrito aos dois participantes; o
+  cliente entra na sala por essa lista tanto quanto pelo `CHALLENGE_STARTED`
+  em tempo real, pelo mesmo ponto único (`enterDirectRoom`), cobrindo reload,
+  reconexão e o desafiante perdendo o push.
+- **Estado otimista para de se autodestruir.** O efeito que limpa o convite
+  otimista comparava contra QUALQUER leitura autoritativa já concluída; se essa
+  leitura era anterior à criação do convite (a janela normal entre
+  `trackPendingDirect` e o `refreshChallenges` que o sucede), o convite recém-
+  criado era apagado e um aviso de "indisponível" aparecia por engano. Agora só
+  uma leitura que **começou depois** do otimista nascer conta como prova de que
+  ele terminou (sequência monotônica de fetches, não um booleano "já buscou
+  alguma vez"). Convite genuinamente encerrado sem virar sala mostra um toast
+  não bloqueante (`endedChallenge`) em vez de silêncio.
+- **ASYNC: `sealHalf`/`voidChallenge` retornam `APPLIED | ALREADY_APPLIED |
+  NOT_APPLICABLE`.** `ChallengeRoom.trySeal` só atualiza estado do DO, notifica
+  e anuncia terminal quando a persistência realmente confirmou; uma selagem que
+  perde a corrida contra um cancelamento/void concorrente é `NOT_APPLICABLE` e
+  tem a resposta residual explicitamente descartada — sem isso, o `INSERT` da
+  resposta sobrevivia mesmo com o `UPDATE` de status perdendo o CAS.
+- **FCM "sua vez de jogar" (ASYNC apenas).** Quando a primeira metade sela de
+  verdade, um push best-effort avisa o segundo jogador — nunca para DIRECT, que
+  já sincroniza ao vivo. Respeita mute e bloqueio, não duplica quando o canal
+  social do destinatário já está aberto (checado via `/online` no
+  `SocialRealtimeHub`) e ausência/falha de FCM nunca altera o desafio. Nenhum
+  service worker novo.
+- **Paginação por cursor em `forUser`.** Substituiu o `LIMIT 50` silencioso por
+  cursor opaco (`created_at, id`), usando os índices já existentes
+  (`idx_challenges_first_player`/`idx_challenges_second_player`, já compostos
+  por `status, created_at`); `reconcileChallengeLifecycle` converge as até 50
+  linhas vivas em paralelo (`Promise.all`) em vez de sequencialmente — mesma
+  contagem de chamadas ao DO, sem round-trips a mais.
+
+Sem migration nova: tudo reaproveita `challenges.match_id` e tabelas já
+existentes (`friendship_mutes`, `push_installations`, `user_blocks`).
+
+Regressões adicionadas (Worker): aceite duplo/multiaba convergindo para uma
+sala, falha do `PresenceHub` durante o `start()` sem modal preso e com locks
+liberados, reconciliação dentro e fora da graça de 7 s para uma reserva sem
+`matches` row, recuperação do `roomId` pela lista para os dois lados,
+persistência de `matches.kind = 'DIRECT_LIVE'`, corrida seal×cancelamento sem
+resposta/XP/evento duplicado, FCM nos cinco cenários (configurado, ausente,
+mutado, foreground, falha) e paginação de 55 desafios vivos por cursor.
+Regressões adicionadas (Web): o convite otimista sobrevive à janela entre sua
+própria criação e a atualização que a sucede, o aviso de "indisponível"
+aparece só quando essa atualização realmente confirma o fim, e o clique
+duplo no aceite trava sincronamente antes da resposta chegar.
+
+Duas das regressões acima capturaram bugs reais que não existiam antes desta
+corretiva ser escrita: a corrida perdida do `PresenceHub` entre duas
+chamadas concorrentes de `start()` para o mesmo desafio, e o apagamento
+prematuro do convite otimista antes da própria atualização confirmar. Ambos
+foram corrigidos como parte deste mesmo commit, não deixados como findings.
+
+Validação: `lint`, `typecheck`, 300 testes unitários/domínio (web incluído),
+115 testes Worker/WebSocket, `test:migrations` (banco vazio e upgrade completo
+`0003→…→0011`, incluindo rollback), `build` (domain + web + worker, um único
+service worker) e `npm audit --omit=dev` sem vulnerabilidades. Diff revisado
+por arquivo; nenhum segredo real no diff (só uma chave RSA sintética gerada em
+memória para assinar JWT de teste do FCM, mesmo padrão já usado em
+`social-foundation.worker.test.ts`). Nenhum smoke físico foi executado nem
+declarado — fica pendente a validação manual do proprietário nos cenários
+descritos no relatório de entrega.
+
 ## Critério de saída desta execução
 
 - Milestones 8 e 8.5 aprovados fisicamente e congelados;
