@@ -47,9 +47,31 @@ export interface ChallengeView {
   kind: ChallengeKind;
   /** Papel de quem consulta: quem desafiou ou quem foi desafiado. */
   role: 'CHALLENGED' | 'CHALLENGER';
+  /**
+   * Sala DIRECT já reservada (PREPARING/ACTIVE). Só aparece para os dois
+   * participantes — a mesma restrição de `forUser` — e é o que permite
+   * recuperar a partida depois de um reload/reconexão sem depender só do
+   * push `CHALLENGE_STARTED`.
+   */
+  roomId: string | null;
   status: ChallengeStatus;
   theme: { name: string; slug: string };
 }
+
+/** Página de desafios vivos, paginada por cursor opaco para nunca esconder o resto. */
+export interface ChallengeViewPage {
+  challenges: ChallengeView[];
+  nextCursor: string | null;
+}
+
+/**
+ * Resultado de uma escrita autoritativa com CAS: `APPLIED` é a transição que
+ * este chamado realizou; `ALREADY_APPLIED` é a mesma transição já persistida
+ * antes (retry/alarm idempotente); `NOT_APPLICABLE` é uma corrida perdida —
+ * outro desfecho (cancelamento, anulação, o outro jogador) já decidiu o
+ * desafio, e quem chamou nunca deve anunciar um terminal a partir disto.
+ */
+export type ChallengeWriteOutcome = 'ALREADY_APPLIED' | 'APPLIED' | 'NOT_APPLICABLE';
 
 interface ChallengeRow {
   difficulty: Difficulty;
@@ -107,7 +129,7 @@ function ruleError(error: unknown): never {
 }
 
 const VIEW_COLUMNS = `
-  c.id, c.difficulty, c.expires_at, c.first_player_user_id, c.kind, c.revision,
+  c.id, c.difficulty, c.expires_at, c.first_player_user_id, c.kind, c.match_id, c.revision,
   c.second_player_agreed, c.second_player_user_id, c.status, c.theme_id,
   t.name AS theme_name, t.slug AS theme_slug,
   p.user_id AS challenger_user_id, p.public_id AS challenger_public_id,
@@ -173,13 +195,13 @@ export class ChallengeRepository {
     return result.results.map(record);
   }
 
-  async byId(challengeId: string): Promise<ChallengeRecord | null> {
+  async byId(challengeId: string): Promise<(ChallengeRecord & { matchId: string | null }) | null> {
     const row = await this.db.prepare(
-      `SELECT id, difficulty, expires_at, first_player_user_id, kind, revision,
+      `SELECT id, difficulty, expires_at, first_player_user_id, kind, match_id, revision,
               second_player_agreed, second_player_user_id, status, theme_id
          FROM challenges WHERE id = ?1`,
     ).bind(challengeId).first<ChallengeRow>();
-    return row === null ? null : record(row);
+    return row === null ? null : { ...record(row), matchId: row.match_id };
   }
 
   /**
@@ -191,13 +213,17 @@ export class ChallengeRepository {
     matchId: string | null;
     updatedAtMs: number;
   }>> {
+    // Ordem ASC por updated_at: as linhas mais paradas (candidatas a órfã) são
+    // convergidas primeiro. Com mais de 50 desafios vivos — caso extremo dos 200
+    // amigos, dois desafios cada — o restante avança nas próximas chamadas em vez
+    // de nunca ser tocado, porque as mais recentes deixam de monopolizar o topo.
     const result = await this.db.prepare(
       `SELECT id, difficulty, expires_at, first_player_user_id, kind, match_id, revision,
               second_player_agreed, second_player_user_id, status, theme_id, updated_at
          FROM challenges
         WHERE (first_player_user_id = ?1 OR second_player_user_id = ?1)
           AND status IN (${LIVE_STATUS_LIST})
-        ORDER BY updated_at DESC LIMIT 50`,
+        ORDER BY updated_at ASC LIMIT 50`,
     ).bind(userId).all<ChallengeRow>();
     return result.results.map((row) => ({
       ...record(row),
@@ -467,6 +493,12 @@ export class ChallengeRepository {
    *
    * Idempotente: reexecutar não duplica respostas nem aplica XP duas vezes, porque
    * a inserção ignora conflito e a transição exige o estado de origem exato.
+   *
+   * Retorna o desfecho em vez de `void`: quem chama (a sala do DO) só pode
+   * anunciar um terminal para o jogador quando a resposta é `APPLIED` ou
+   * `ALREADY_APPLIED`. Em `NOT_APPLICABLE` — um cancelamento/anulação venceu a
+   * corrida entre a persistência e esta selagem — a inserção residual desta
+   * chamada é desfeita e nenhum resultado falso chega ao socket.
    */
   async sealHalf(input: {
     answers: readonly SealedRoundAnswer[];
@@ -475,7 +507,7 @@ export class ChallengeRepository {
     isSecondPlayer: boolean;
     opponentScore: number;
     userId: string;
-  }): Promise<void> {
+  }): Promise<ChallengeWriteOutcome> {
     const now = this.clock().toISOString();
     const score = input.answers.reduce((total, answer) => total + answer.score, 0);
     const statements: D1PreparedStatement[] = input.answers.map((answer, index) => this.db.prepare(
@@ -500,8 +532,12 @@ export class ChallengeRepository {
                 updated_at = ?1, revision = revision + 1
           WHERE id = ?2 AND status = 'FIRST_PLAYER_ACTIVE'`,
       ).bind(now, input.challengeId));
-      await this.db.batch(statements);
-      return;
+      const applied = await this.db.batch(statements);
+      if ((applied.at(-1)?.meta.changes ?? 0) === 1) return 'APPLIED';
+      const current = await this.byId(input.challengeId);
+      if (current?.status === 'WAITING_FOR_SECOND') return 'ALREADY_APPLIED';
+      await this.discardResidualHalf(input.challengeId, input.userId);
+      return 'NOT_APPLICABLE';
     }
 
     // Desafio entre amigos é sempre Casual: Conhecimento nunca muda, só XP de vitória.
@@ -512,8 +548,20 @@ export class ChallengeRepository {
         WHERE id = ?2 AND status = 'SECOND_PLAYER_ACTIVE'`,
     ).bind(now, input.challengeId));
     const applied = await this.db.batch(statements);
-    if ((applied.at(-1)?.meta.changes ?? 0) !== 1) return;
+    if ((applied.at(-1)?.meta.changes ?? 0) !== 1) {
+      const current = await this.byId(input.challengeId);
+      if (current?.status === 'COMPLETED') return 'ALREADY_APPLIED';
+      await this.discardResidualHalf(input.challengeId, input.userId);
+      return 'NOT_APPLICABLE';
+    }
     await this.awardChallengeXp(input.challengeId, input.difficulty, score, input.opponentScore, input.userId, xpDelta);
+    return 'APPLIED';
+  }
+
+  /** Desfaz a metade que esta chamada acabou de inserir quando a corrida foi perdida. */
+  private async discardResidualHalf(challengeId: string, userId: string): Promise<void> {
+    await this.db.prepare('DELETE FROM challenge_answers WHERE challenge_id = ?1 AND user_id = ?2')
+      .bind(challengeId, userId).run();
   }
 
   /**
@@ -557,13 +605,23 @@ export class ChallengeRepository {
     await this.cleanupPayload(challengeId);
   }
 
-  /** Marca a metade do segundo jogador como anulada, sem vencedor, XP ou Conhecimento. */
-  async voidChallenge(challengeId: string): Promise<void> {
-    await this.db.prepare(
+  /**
+   * Marca a metade do segundo jogador como anulada, sem vencedor, XP ou Conhecimento.
+   * Retorna o desfecho: `NOT_APPLICABLE` quando o desafio já tinha um resultado
+   * diferente (por exemplo COMPLETED venceu a corrida) — nesse caso a sala do DO
+   * não deve anunciar VOID por cima de um resultado real já persistido.
+   */
+  async voidChallenge(challengeId: string): Promise<ChallengeWriteOutcome> {
+    const applied = await this.db.prepare(
       `UPDATE challenges SET status = 'VOID', updated_at = ?1, revision = revision + 1
         WHERE id = ?2 AND status IN (${LIVE_STATUS_LIST})`,
     ).bind(this.clock().toISOString(), challengeId).run();
-    await this.cleanupPayload(challengeId);
+    if ((applied.meta.changes ?? 0) === 1) {
+      await this.cleanupPayload(challengeId);
+      return 'APPLIED';
+    }
+    const current = await this.byId(challengeId);
+    return current?.status === 'VOID' ? 'ALREADY_APPLIED' : 'NOT_APPLICABLE';
   }
 
   /** Nenhum payload competitivo sobrevive a um desafio encerrado sem resultado. */
@@ -632,22 +690,46 @@ export class ChallengeRepository {
     return expired;
   }
 
-  /** Desafios que o usuário precisa ver no Social, dos dois lados. */
-  async forUser(userId: string, nowMs = this.clock().getTime()): Promise<ChallengeView[]> {
-    const result = await this.db.prepare(
-      `SELECT ${VIEW_COLUMNS}
-         FROM challenges c
-         JOIN themes t ON t.id = c.theme_id
-         JOIN user_profiles p ON p.user_id = c.first_player_user_id
-         JOIN user_profiles q ON q.user_id = c.second_player_user_id
-         LEFT JOIN user_custom_avatars a ON a.user_id = c.first_player_user_id
-         LEFT JOIN user_custom_avatars b ON b.user_id = c.second_player_user_id
-        WHERE (c.first_player_user_id = ?1 OR c.second_player_user_id = ?1)
-          AND c.status IN (${LIVE_STATUS_LIST})
-        ORDER BY c.created_at DESC
-        LIMIT 50`,
-    ).bind(userId).all<ChallengeViewRow>();
-    return result.results.flatMap((row) => {
+  /**
+   * Desafios que o usuário precisa ver no Social, dos dois lados, paginados por
+   * cursor opaco (created_at + id). Nunca trunca em 50 sem dizer: quem tem mais
+   * de 200 amigos e um ASYNC+DIRECT vivo com cada um pode ultrapassar isso, e
+   * `nextCursor` é como o cliente pede o resto em vez de perdê-lo em silêncio.
+   */
+  async forUser(userId: string, nowMs = this.clock().getTime(), cursor: string | null = null): Promise<ChallengeViewPage> {
+    const decoded = cursor === null ? null : decodeChallengeCursor(cursor);
+    const pageSize = 50;
+    const result = decoded === null
+      ? await this.db.prepare(
+        `SELECT ${VIEW_COLUMNS}, c.created_at
+           FROM challenges c
+           JOIN themes t ON t.id = c.theme_id
+           JOIN user_profiles p ON p.user_id = c.first_player_user_id
+           JOIN user_profiles q ON q.user_id = c.second_player_user_id
+           LEFT JOIN user_custom_avatars a ON a.user_id = c.first_player_user_id
+           LEFT JOIN user_custom_avatars b ON b.user_id = c.second_player_user_id
+          WHERE (c.first_player_user_id = ?1 OR c.second_player_user_id = ?1)
+            AND c.status IN (${LIVE_STATUS_LIST})
+          ORDER BY c.created_at DESC, c.id DESC
+          LIMIT ?2`,
+      ).bind(userId, pageSize + 1).all<ChallengeViewRow & { created_at: string }>()
+      : await this.db.prepare(
+        `SELECT ${VIEW_COLUMNS}, c.created_at
+           FROM challenges c
+           JOIN themes t ON t.id = c.theme_id
+           JOIN user_profiles p ON p.user_id = c.first_player_user_id
+           JOIN user_profiles q ON q.user_id = c.second_player_user_id
+           LEFT JOIN user_custom_avatars a ON a.user_id = c.first_player_user_id
+           LEFT JOIN user_custom_avatars b ON b.user_id = c.second_player_user_id
+          WHERE (c.first_player_user_id = ?1 OR c.second_player_user_id = ?1)
+            AND c.status IN (${LIVE_STATUS_LIST})
+            AND (c.created_at < ?2 OR (c.created_at = ?2 AND c.id < ?3))
+          ORDER BY c.created_at DESC, c.id DESC
+          LIMIT ?4`,
+      ).bind(userId, decoded.createdAt, decoded.id, pageSize + 1).all<ChallengeViewRow & { created_at: string }>();
+
+    const rows = result.results.slice(0, pageSize);
+    const challenges = rows.flatMap((row) => {
       const expiresAtMs = row.expires_at === null ? null : Date.parse(row.expires_at);
       // Um convite vencido nunca aparece como pendente, mesmo antes da varredura.
       if (row.status === 'PENDING_DIRECT' && expiresAtMs !== null && nowMs >= expiresAtMs) return [];
@@ -673,9 +755,30 @@ export class ChallengeRepository {
         id: row.id,
         kind: row.kind,
         role: row.first_player_user_id === userId ? 'CHALLENGER' as const : 'CHALLENGED' as const,
+        // Só desafios DIRECT já reservados carregam sala: ASYNC nunca tem match_id.
+        roomId: row.kind === 'DIRECT' && (row.status === 'PREPARING' || row.status === 'ACTIVE') ? row.match_id : null,
         status: row.status,
         theme: { name: row.theme_name, slug: row.theme_slug },
       }];
     });
+    const last = rows.at(-1);
+    const nextCursor = result.results.length > pageSize && last !== undefined
+      ? encodeChallengeCursor(last.created_at, last.id)
+      : null;
+    return { challenges, nextCursor };
+  }
+}
+
+function encodeChallengeCursor(createdAt: string, id: string): string {
+  return btoa(JSON.stringify([createdAt, id]));
+}
+
+function decodeChallengeCursor(cursor: string): { createdAt: string; id: string } | null {
+  try {
+    const [createdAt, id] = JSON.parse(atob(cursor)) as [string, string];
+    if (typeof createdAt !== 'string' || typeof id !== 'string') return null;
+    return { createdAt, id };
+  } catch {
+    return null;
   }
 }

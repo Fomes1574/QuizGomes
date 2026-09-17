@@ -28,6 +28,8 @@ interface RoomAttachment {
 interface InitializeRoomInput {
   createdAtMs: number;
   firebaseUids: [string, string];
+  /** Origem decidida pelo servidor que chamou `/initialize` — nunca pelo cliente. */
+  kind: 'DIRECT_LIVE' | 'MATCHMAKING';
   matchId: string;
   resource: string;
 }
@@ -219,6 +221,7 @@ export class MatchRoom {
     if (!Array.isArray(input.firebaseUids) || input.firebaseUids.length !== 2 ||
       input.firebaseUids.some((uid) => typeof uid !== 'string' || uid.length === 0 || uid.length > 128) ||
       typeof input.matchId !== 'string' || typeof input.resource !== 'string' ||
+      (input.kind !== 'DIRECT_LIVE' && input.kind !== 'MATCHMAKING') ||
       !Number.isFinite(input.createdAtMs)) {
       return Response.json({ error: 'invalid_initialization' }, { status: 400 });
     }

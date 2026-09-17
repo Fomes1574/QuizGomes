@@ -156,6 +156,8 @@ export class LiveMatchRepository {
   async initialize(input: {
     createdAtMs: number;
     firebaseUids: readonly [string, string];
+    /** Origem decidida pelo servidor — o cliente nunca escolhe o tipo da partida. */
+    kind: 'DIRECT_LIVE' | 'MATCHMAKING';
     matchId: string;
     resource: string;
   }): Promise<LiveMatchState> {
@@ -228,8 +230,8 @@ export class LiveMatchRepository {
       this.coreDb.prepare(
         `INSERT INTO matches
           (id, theme_id, difficulty, mode, kind, status, question_shard_id, room_key, pool_id, pool_version)
-         VALUES (?1, ?2, ?3, ?4, 'MATCHMAKING', 'PREPARING', ?5, ?1, ?6, ?7)`,
-      ).bind(input.matchId, parsed.themeId, parsed.difficulty, parsed.mode, configuration.question_shard_id, selected.poolId, selected.poolVersion),
+         VALUES (?1, ?2, ?3, ?4, ?5, 'PREPARING', ?6, ?1, ?7, ?8)`,
+      ).bind(input.matchId, parsed.themeId, parsed.difficulty, parsed.mode, input.kind, configuration.question_shard_id, selected.poolId, selected.poolVersion),
     ];
     for (const player of state.players) {
       statements.push(

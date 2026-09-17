@@ -40,6 +40,14 @@ export interface DirectChallengeStart {
  * Nenhum motor novo é criado. A partir daqui valem M8 e M8.5 sem alteração: mesmo
  * scoring, mesmo timer, mesma reconexão de 7 s e mesmo resultado transacional. O
  * lock `active_match_players` continua sendo a barreira final contra duas partidas.
+ *
+ * `roomId` é decidido por quem chama, ANTES de qualquer escrita — normalmente já
+ * persistido em `challenges.match_id` na mesma transação que tirou o desafio de
+ * PENDING_DIRECT. Isso é o que torna `start` idempotente: MatchRoom já recusa uma
+ * segunda inicialização por instância de DO, e a reserva de presença abaixo
+ * reconhece um jogador que já está `preparing`/`playing` nesta mesma sala, em vez
+ * de tratar isso como conflito. Retry de rede, duplo aceite ou uma reconexão que
+ * repete a chamada convergem para a mesma sala, sem criar nada a mais.
  */
 export class DirectChallengeService {
   constructor(private readonly env: Env) {}
@@ -60,12 +68,43 @@ export class DirectChallengeService {
     return response.ok;
   }
 
+  private async presenceState(uid: string): Promise<{ activity: string; resource: string | null }> {
+    const response = await this.env.PRESENCE_HUB.get(this.env.PRESENCE_HUB.idFromName(uid))
+      .fetch('https://presence.internal/state');
+    return response.json<{ activity: string; resource: string | null }>();
+  }
+
+  /**
+   * Reserva idempotente: se este jogador já está `preparing`/`playing` NESTA
+   * sala (a própria chamada anterior já reservou, ou esta é uma repetição), não
+   * tenta transicionar de novo — `idle/invite -> preparing` falharia porque o
+   * estado atual não está mais em `idle`/`invite`, e isso NÃO é ocupação real.
+   *
+   * Duas chamadas concorrentes para o MESMO desafio (double tap, outra aba, a
+   * recuperação de uma corrida perdida) competem pela mesma transição: uma
+   * vence o CAS, a outra recebe 409. Perder essa corrida não é ocupação real
+   * quando o resultado é o que a própria chamada queria — por isso, ao falhar,
+   * relê o estado antes de desistir.
+   */
+  private async ensureReserved(uid: string, roomId: string): Promise<boolean> {
+    const current = await this.presenceState(uid);
+    if ((current.activity === 'preparing' || current.activity === 'playing') && current.resource === roomId) {
+      return true;
+    }
+    if (await this.transition(uid, ['idle', 'invite'], 'preparing', roomId)) return true;
+    const after = await this.presenceState(uid);
+    return (after.activity === 'preparing' || after.activity === 'playing') && after.resource === roomId;
+  }
+
   private async release(uid: string, roomId: string): Promise<void> {
     await this.transition(uid, ['preparing'], 'idle', null, roomId);
   }
 
-  async start(challenge: ChallengeRecord, firebaseUids: readonly [string, string]): Promise<DirectChallengeStart> {
-    const roomId = crypto.randomUUID();
+  async start(
+    challenge: ChallengeRecord,
+    firebaseUids: readonly [string, string],
+    roomId: string,
+  ): Promise<DirectChallengeStart> {
     const resource = `${challenge.themeId}:${challenge.difficulty}:${CHALLENGE_MODE}`;
     const room = this.env.MATCH_ROOM.get(this.env.MATCH_ROOM.idFromName(roomId));
 
@@ -76,6 +115,7 @@ export class DirectChallengeService {
         body: JSON.stringify({
           createdAtMs: Date.now(),
           firebaseUids: [firebaseUids[0], firebaseUids[1]],
+          kind: 'DIRECT_LIVE',
           matchId: roomId,
           resource,
         }),
@@ -99,9 +139,7 @@ export class DirectChallengeService {
     }
 
     // Reserva depois da inicialização, como na fila: a sala já existe e pode ser desfeita.
-    const reservations = await Promise.all(firebaseUids.map(
-      (uid) => this.transition(uid, ['idle', 'invite'], 'preparing', roomId),
-    ));
+    const reservations = await Promise.all(firebaseUids.map((uid) => this.ensureReserved(uid, roomId)));
     if (!reservations.every(Boolean)) {
       try {
         await room.fetch('https://room.internal/system-failure', { method: 'POST' });

@@ -86,6 +86,7 @@ export class MatchmakingQueue {
           body: JSON.stringify({
             createdAtMs: Date.now(),
             firebaseUids: [opponent.value.uid, uid],
+            kind: 'MATCHMAKING',
             matchId: roomId,
             resource,
           }),

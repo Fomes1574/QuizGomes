@@ -720,7 +720,9 @@ export async function reconcileChallengeLifecycle(
     });
   }
 
-  for (const challenge of await challenges.liveLifecycleForUser(userId)) {
+  // Cada desafio é independente: convergir em paralelo, bounded pelo próprio
+  // LIMIT 50, evita até 50 idas e vindas sequenciais ao DO numa única chamada.
+  await Promise.all((await challenges.liveLifecycleForUser(userId)).map(async (challenge) => {
     let changed = false;
     if (challenge.kind === 'DIRECT') {
       if (challenge.matchId === null) {
@@ -748,11 +750,18 @@ export async function reconcileChallengeLifecycle(
           );
           if (orphan.voided) {
             await Promise.all(orphan.firebaseUids.map((uid) => releaseTerminalPresence(env, matches, uid)));
+          } else if (await env.CORE_DB.prepare('SELECT 1 FROM matches WHERE id = ?1')
+            .bind(challenge.matchId).first() === null) {
+            // A sala nunca chegou a nascer: o processo que reservou o roomId
+            // morreu antes de sequer chamar o MatchRoom, então não existe
+            // linha em `matches` para converter — a própria reserva do
+            // desafio é a única prova viva, e é ela quem se anula.
+            changed = await challenges.voidOrphanedLive(challenge, nowMs - CHALLENGE_INITIAL_GRACE_MS);
           }
         }
         // O MatchRoom terminal (ou a limpeza de reserva órfã acima) é quem
         // grava FINISHED/VOID. Só então D1 converte o desafio e limpa payload.
-        changed = await challenges.reconcileDirectMatch(challenge);
+        if (!changed) changed = await challenges.reconcileDirectMatch(challenge);
       }
     } else if (challenge.status === 'FIRST_PLAYER_ACTIVE' || challenge.status === 'SECOND_PLAYER_ACTIVE') {
       const seat = challenge.status === 'FIRST_PLAYER_ACTIVE' ? 'FIRST' : 'SECOND';
@@ -779,7 +788,7 @@ export async function reconcileChallengeLifecycle(
         type: 'CHALLENGE_UPDATED',
       });
     }
-  }
+  }));
 }
 
 async function challengeRoute(request: Request, env: Env, url: URL, context: ExecutionContext): Promise<Response> {
@@ -791,7 +800,9 @@ async function challengeRoute(request: Request, env: Env, url: URL, context: Exe
 
   if (url.pathname === '/api/challenges' && request.method === 'GET') {
     await reconcileChallengeLifecycle(env, context, challenges, profile.userId);
-    return json({ challenges: await challenges.forUser(profile.userId) });
+    const cursor = url.searchParams.get('cursor');
+    const page = await challenges.forUser(profile.userId, Date.now(), cursor);
+    return json({ challenges: page.challenges, nextCursor: page.nextCursor });
   }
 
   if (url.pathname === '/api/challenges' && request.method === 'POST') {
@@ -907,7 +918,80 @@ async function acceptAsyncChallenge(
  * Aceite do desafio simultâneo: revalida tudo server-side no instante do aceite e
  * entrega a sala do MatchRoom existente. O cliente nunca decide elegibilidade.
  */
-async function acceptChallenge(
+const TERMINAL_DIRECT_STATUSES = new Set<string>(['CANCELLED', 'COMPLETED', 'DECLINED', 'EXPIRED', 'VOID']);
+
+/**
+ * Entrega a sala DIRECT já reservada (`roomId`) ao aceitante e, quando esta
+ * chamada é quem abriu a tentativa (`isOriginatingAttempt`), decide o desfecho
+ * dela: some CAS por revisão exata garante que só quem tirou o desafio de
+ * PENDING_DIRECT pode voltar a VOID em caso de falha — uma chamada de
+ * recuperação (double tap, outra aba, reconexão) nunca encerra uma tentativa
+ * que não é dela, e nunca cria uma segunda sala ou reserva de presença: o
+ * `DirectChallengeService.start` é idempotente para o mesmo `roomId`.
+ */
+async function deliverDirectRoom(
+  env: Env,
+  context: ExecutionContext,
+  challenges: ChallengeRepository,
+  users: UserRepository,
+  challenge: ChallengeRecord,
+  roomId: string,
+  revisionBeforeStart: number,
+  isOriginatingAttempt: boolean,
+): Promise<Response> {
+  const uids = await users.firebaseUidsFor([challenge.firstPlayerUserId, challenge.secondPlayerUserId]);
+  const challengerUid = uids.get(challenge.firstPlayerUserId);
+  const challengedUid = uids.get(challenge.secondPlayerUserId);
+  if (challengerUid === undefined || challengedUid === undefined) {
+    throw new ApiError(409, 'PROFILE_REQUIRED', 'Um dos jogadores precisa concluir o perfil.');
+  }
+
+  let started;
+  try {
+    started = await new DirectChallengeService(env).start(challenge, [challengerUid, challengedUid], roomId);
+  } catch (error) {
+    if (isOriginatingAttempt) {
+      const voided = await env.CORE_DB.prepare(
+        `UPDATE challenges SET status = 'VOID', updated_at = ?1, revision = revision + 1
+          WHERE id = ?2 AND revision = ?3 AND status = 'PREPARING'`,
+      ).bind(new Date().toISOString(), challenge.id, revisionBeforeStart).run();
+      if ((voided.meta.changes ?? 0) === 1) {
+        await challenges.cleanupPayload(challenge.id);
+        notifySocial(env, context, [challenge.firstPlayerUserId, challenge.secondPlayerUserId], {
+          challengeId: challenge.id,
+          type: 'CHALLENGE_UPDATED',
+        });
+      }
+    }
+    throw error;
+  }
+
+  // Qualquer chamada que confirmou a sala pode fechar PREPARING -> ACTIVE: o CAS
+  // pela revisão lida garante que só a primeira a chegar aqui de fato aplica e
+  // dispara o aviso ao desafiante — um retry ou recuperação vira no-op seguro.
+  const activated = await env.CORE_DB.prepare(
+    `UPDATE challenges SET status = 'ACTIVE', updated_at = ?1, revision = revision + 1
+      WHERE id = ?2 AND revision = ?3 AND status = 'PREPARING'`,
+  ).bind(new Date().toISOString(), challenge.id, revisionBeforeStart).run();
+  if ((activated.meta.changes ?? 0) === 1) {
+    notifySocial(env, context, [challenge.firstPlayerUserId], {
+      challengeId: challenge.id,
+      opponent: started.presentations.get(challengerUid)?.opponent,
+      preload: started.presentations.get(challengerUid)?.preload,
+      roomId,
+      type: 'CHALLENGE_STARTED',
+    });
+  }
+
+  return json({
+    challengeId: challenge.id,
+    opponent: started.presentations.get(challengedUid)?.opponent,
+    preload: started.presentations.get(challengedUid)?.preload,
+    roomId,
+  });
+}
+
+export async function acceptChallenge(
   env: Env,
   context: ExecutionContext,
   challenges: ChallengeRepository,
@@ -921,6 +1005,16 @@ async function acceptChallenge(
     throw new ApiError(403, 'NOT_CHALLENGED', 'Só quem foi desafiado pode aceitar.');
   }
   if (challenge.kind === 'ASYNC') return await acceptAsyncChallenge(env, context, challenges, challenge, actorUserId);
+
+  // Aceite idempotente: a sala já está reservada (este mesmo aceite repetido,
+  // outra aba, ou uma reconexão que tenta de novo) — devolve a mesma sala em
+  // vez do erro genérico "não aguarda aceite", e não cria nada a mais.
+  if ((challenge.status === 'PREPARING' || challenge.status === 'ACTIVE') && challenge.matchId !== null) {
+    return await deliverDirectRoom(env, context, challenges, users, challenge, challenge.matchId, challenge.revision, false);
+  }
+  if (TERMINAL_DIRECT_STATUSES.has(challenge.status)) {
+    throw new ApiError(409, 'CHALLENGE_ALREADY_SETTLED', 'Este desafio já foi encerrado.');
+  }
   if (challenge.status !== 'PENDING_DIRECT') {
     throw new ApiError(409, 'CHALLENGE_NOT_PENDING', 'Este desafio não aguarda aceite.');
   }
@@ -944,56 +1038,26 @@ async function acceptChallenge(
   ).bind(challenge.firstPlayerUserId, challenge.secondPlayerUserId).first();
   if (stillFriends === null) throw new ApiError(404, 'USER_UNAVAILABLE', 'Este usuário não está disponível.');
 
-  const uids = await users.firebaseUidsFor([challenge.firstPlayerUserId, challenge.secondPlayerUserId]);
-  const challengerUid = uids.get(challenge.firstPlayerUserId);
-  const challengedUid = uids.get(challenge.secondPlayerUserId);
-  if (challengerUid === undefined || challengedUid === undefined) {
-    throw new ApiError(409, 'PROFILE_REQUIRED', 'Um dos jogadores precisa concluir o perfil.');
-  }
-
-  // CAS: só um aceite atravessa, mesmo com múltiplas abas ou retries.
+  // roomId nasce ANTES do CAS e é persistido na MESMA escrita que sai de
+  // PENDING_DIRECT: nunca existe uma janela com PREPARING e match_id nulo, que
+  // era o que fazia a reconciliação anular uma sala que já estava viva.
+  const roomId = crypto.randomUUID();
   const claimed = await env.CORE_DB.prepare(
-    `UPDATE challenges SET status = 'PREPARING', updated_at = ?1, revision = revision + 1
-      WHERE id = ?2 AND revision = ?3 AND status = 'PENDING_DIRECT'`,
-  ).bind(new Date().toISOString(), challenge.id, challenge.revision).run();
+    `UPDATE challenges SET status = 'PREPARING', match_id = ?1, updated_at = ?2, revision = revision + 1
+      WHERE id = ?3 AND revision = ?4 AND status = 'PENDING_DIRECT'`,
+  ).bind(roomId, new Date().toISOString(), challenge.id, challenge.revision).run();
   if ((claimed.meta.changes ?? 0) !== 1) {
+    // Corrida perdida — outra chamada (double tap, outra aba) já avançou. Se foi
+    // este mesmo aceitante, a recuperação abaixo devolve a mesma sala dele.
+    const fresh = await challenges.byId(challenge.id);
+    if (fresh !== null && fresh.secondPlayerUserId === actorUserId &&
+      (fresh.status === 'PREPARING' || fresh.status === 'ACTIVE') && fresh.matchId !== null) {
+      return await deliverDirectRoom(env, context, challenges, users, fresh, fresh.matchId, fresh.revision, false);
+    }
     throw new ApiError(409, 'CHALLENGE_CONFLICT', 'Este desafio mudou de estado. Atualize a tela.');
   }
 
-  let started;
-  try {
-    started = await new DirectChallengeService(env).start(challenge, [challengerUid, challengedUid]);
-  } catch (error) {
-    await env.CORE_DB.prepare(
-      `UPDATE challenges SET status = 'VOID', updated_at = ?1, revision = revision + 1
-        WHERE id = ?2 AND status = 'PREPARING'`,
-    ).bind(new Date().toISOString(), challenge.id).run();
-    await challenges.cleanupPayload(challenge.id);
-    notifySocial(env, context, [challenge.firstPlayerUserId, challenge.secondPlayerUserId], {
-      challengeId: challenge.id,
-      type: 'CHALLENGE_UPDATED',
-    });
-    throw error;
-  }
-
-  await env.CORE_DB.prepare(
-    `UPDATE challenges SET status = 'ACTIVE', match_id = ?1, updated_at = ?2, revision = revision + 1
-      WHERE id = ?3 AND status = 'PREPARING'`,
-  ).bind(started.roomId, new Date().toISOString(), challenge.id).run();
-
-  notifySocial(env, context, [challenge.firstPlayerUserId], {
-    challengeId: challenge.id,
-    opponent: started.presentations.get(challengerUid)?.opponent,
-    preload: started.presentations.get(challengerUid)?.preload,
-    roomId: started.roomId,
-    type: 'CHALLENGE_STARTED',
-  });
-  return json({
-    challengeId: challenge.id,
-    opponent: started.presentations.get(challengedUid)?.opponent,
-    preload: started.presentations.get(challengedUid)?.preload,
-    roomId: started.roomId,
-  });
+  return await deliverDirectRoom(env, context, challenges, users, challenge, roomId, challenge.revision + 1, true);
 }
 
 async function socialRoute(request: Request, env: Env, url: URL, context: ExecutionContext): Promise<Response> {
