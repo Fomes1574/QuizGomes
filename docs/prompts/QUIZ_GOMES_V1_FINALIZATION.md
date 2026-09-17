@@ -43,18 +43,16 @@ históricos explicam decisões passadas, mas não restabelecem regras antigas.
 
 ## Escopo autorizado restante
 
-### 1. Reports de perguntas
+### 1. Reports de perguntas — entregue; preservar
 
-Durante a partida, ação discreta; modal não pausa timer. Após a partida, permitir
-reportar qualquer pergunta realmente vista. Motivos: incorreta, ambígua,
-desatualizada, texto, fonte/evidência, imagem, outro + nota curta opcional.
-
-No Worker: autenticação, validar no banco que o usuário recebeu aquela rodada
-naquele match/challenge; nunca confiar em `questionId`/contexto do cliente;
-idempotência, rate limit e uma denúncia OPEN/IN_REVIEW equivalente por
-usuário/contexto. Não recalcular score/XP/Conhecimento. Admin: OPEN/IN_REVIEW/
-RESOLVED/DISMISSED, filtros/paginação, contexto/fonte/stats/motivo, nota de
-resolução, ações seguras e audit log.
+Modal discreto sem pausar timer, revisão pós-partida, motivos fechados, rate
+limit, idempotência e fila ADMIN paginada já existem. A autorização depende de
+`question_report_views` (Core `0011`): recibo por contexto/usuário/rodada
+registrado somente na projeção de uma pergunta; nunca voltar a inferir
+visualização apenas de `match_questions`/`challenge_questions`, pois o conjunto
+é selado antecipadamente. A fila mostra snapshot, contexto, fontes HTTP(S)
+seguras e stats existentes. O CRUD de editar/desativar fica no M11, sem ação
+fantasma no painel de reports. Não recalcular score/XP/Conhecimento.
 
 ### 2. Conteúdo/admin (M11)
 
@@ -105,7 +103,7 @@ desktop. Sem polling ou writes periódicos.
 ## Migrations e validação
 
 - Migrations aplicadas são imutáveis; toda mudança nova é forward-only a partir de
-  Core `0010` e Questions `0004`. Validar banco vazio, upgrade `0009→latest` e
+  Core `0011` e Questions `0004`. Validar banco vazio, upgrade `0009→latest` e
   rollback. Questions antes de Core quando necessário.
 - Antes do push final: lint, typecheck, unit/domain, Worker/DO/WebSocket,
   migrations, build, audit de produção, secrets, diff, E2E disponível,

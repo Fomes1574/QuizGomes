@@ -21,11 +21,11 @@ e de smokes; quando divergirem, não voltam a ser regra.
 - M11 e M12 estão **autorizados e em andamento**, mas não concluídos. O checkpoint
   `43d5f44` corrigiu nível real, melhor tema real, disponibilidade DIRECT apenas
   ONLINE, limpeza de mutes e intenção pós-login de consumo único.
-- Reports de perguntas implementados por inteiro: denúncia discreta durante a
-  partida e revisão pós-partida, validação servidor contra o snapshot selado
-  (`match_questions`/`challenge_questions`), idempotência, rate limit técnico e
-  moderação ADMIN com paginação por cursor. Migration Core `0010`, forward-only
-  a partir da `0009`.
+- Reports de perguntas implementados e auditados: denúncia discreta durante a
+  partida e revisão pós-partida, prova servidor de entrega por usuário/rodada
+  (não apenas o conjunto selado), idempotência, rate limit técnico e moderação
+  ADMIN paginada com contexto, fontes HTTP(S) seguras e estatísticas existentes.
+  Core `0010` (denúncias) + `0011` (recibos de entrega), ambos forward-only.
 - Próximo escopo: missões/streak, estatísticas idempotentes, pipeline
   editorial/admin (propor tema/OWNER, CRUD de pergunta com versionamento),
   paginação segura restante e hardening/E2E. Não declarar V1 finalizada nem
@@ -1019,7 +1019,7 @@ Regressões adicionadas: MatchRoom ausente versus ativo, reserva DIRECT órfã
 convergindo o desafio e atualização PWA adiada durante gameplay. O gate completo,
 migrations, build, audit e diff review seguem obrigatórios antes do push.
 
-### 2026-09-17 — Reports de perguntas implementados por inteiro
+### 2026-09-17 — Reports de perguntas implementados e correção de auditoria
 
 Primeiro item do escopo restante autorizado pelo prompt de finalização. M8, M8.5,
 M9A.1, M9B e M9C+M10 permanecem FROZEN e não foram tocados; o único ponto de
@@ -1027,24 +1027,26 @@ integração mínima foi um botão discreto novo sobreposto ao `MatchScreen` (fo
 componente FROZEN) e uma seção nova e opcional no `MatchResultScreen`, ambos sem
 alterar o motor de rodadas, o timer ou o payload competitivo.
 
-- **Validação sem confiar no cliente.** A denúncia carrega `contextKind`
-  (`MATCH`/`CHALLENGE`), `contextId`, `roundNumber` e `questionId`, mas o Worker
-  só aceita quando esse par exato existe em `match_questions`/`challenge_questions`
-  **e** o denunciante é participante daquele contexto (`match_players` ou
-  `challenges.first_player_user_id`/`second_player_user_id`). Como o cliente só
-  recebe o conteúdo de uma rodada quando o servidor a projeta ao vivo, provar essa
-  combinação é provar que a pergunta foi realmente vista — sem precisar consultar
-  o DO do `MatchRoom`/`ChallengeRoom` nem mudar o protocolo WebSocket FROZEN.
+- **Auditoria corretiva de autorização.** O conjunto de perguntas é selado antes
+  da partida, portanto participação + `match_questions`/`challenge_questions`
+  não provava que a rodada já havia sido recebida. A migration Core **`0011`**
+  adiciona o recibo idempotente `question_report_views` por
+  contexto/usuário/rodada. `MatchRoom` registra somente os sockets presentes
+  antes de projetar `ROUND_QUESTION`; `ChallengeRoom` registra o socket que
+  recebe CONNECTED/QUESTION_AVAILABLE/RESUMED. A criação de denúncia agora aceita
+  exclusivamente esse recibo e o `questionId` exato. Falha de telemetria não
+  altera timer, score, reconnect ou resultado; ela apenas não autoriza uma
+  denúncia que não possa ser comprovada.
 - **Migration `0010`**, forward-only a partir da `0009` intocada: tabela
   `question_reports` em CORE_DB (motivo, nota ≤280, status, nota de resolução,
   quem resolveu), índice único parcial `(reporter, contexto, rodada) WHERE status
   IN ('OPEN','IN_REVIEW')` para idempotência real (reabre depois de
   resolvida/dispensada), índice de paginação por status+data e índice de teto de
   criação por usuário.
-- **Idempotência e rate limit técnico** (`REPORT_RATE_LIMIT = 20` por 10 min,
-  mesmo padrão de `assertCreationRate` dos desafios): reenviar a mesma denúncia
-  aberta devolve o registro existente em vez de duplicar; o teto é técnico, nunca
-  uma punição social visível.
+- **Idempotência e rate limit técnico** (`REPORT_RATE_LIMIT = 20` por 10 min):
+  reenviar a mesma denúncia aberta devolve o registro existente inclusive após
+  atingir o teto; a inserção condicionada fecha a corrida básica entre abas e o
+  índice parcial continua a arbitrar duplicatas concorrentes.
 - **Web — durante a partida:** um ícone discreto no canto (`.report-trigger`,
   `position: fixed`, fora do `.match-screen`) abre o diálogo sem enviar nenhum
   comando ao socket da sala; o timer e a rodada não sabem que ele existe. **Pós-
@@ -1054,17 +1056,20 @@ alterar o motor de rodadas, o timer ou o payload competitivo.
   denunciar qualquer uma delas.
 - **Moderação ADMIN** em "Criar": fila por status (OPEN/IN_REVIEW/RESOLVED/
   DISMISSED) com paginação por cursor opaco (nunca `OFFSET`), snapshot selado da
-  pergunta com a alternativa correta marcada, nota de quem denunciou, transição
-  de status com CAS otimista sobre o status lido e nota de resolução opcional, e
-  `audit_logs` (`RESOLVE_REPORT`) para cada decisão.
+  pergunta com a alternativa correta marcada, tema/dificuldade, fontes HTTP(S)
+  seguras e estatísticas já existentes quando disponíveis. Mantém nota de quem
+  denunciou, CAS otimista sobre o status lido, nota de resolução opcional e
+  `audit_logs` (`RESOLVE_REPORT`) para cada decisão. Editar/desativar pergunta
+  permanece no CRUD editorial do M11, sem botão de ação fantasma nesta fila.
 - Sem R2, sem DO novo, sem WebSocket novo, sem polling e sem escrita periódica:
   só rotas HTTP request/response de costume (`POST /api/reports`,
   `GET /api/admin/reports`, `POST /api/admin/reports/:id/resolve`).
 
-Verificação: `lint`, `typecheck`, 297 testes unitários e de domínio, 97 testes de
-Worker/WebSocket, `test:migrations` (banco vazio, upgrade até `0010`, invariantes
-de denúncia — idempotência, CHECK de motivo/nota, reabertura após resolução — e
-rollback) e `build` verdes. `npm audit --omit=dev`: 0 vulnerabilidades. Nenhum
+Verificação inicial do item: `lint`, `typecheck`, 297 testes unitários e de
+domínio, 97 testes Worker/WebSocket, `test:migrations` até `0010`, `build` e
+`npm audit --omit=dev` sem vulnerabilidades. A auditoria acrescentou testes de
+rodada futura, retry no teto, entrega de MatchRoom/ChallengeRoom e upgrade
+`0010→0011`; a suite atualizada deve permanecer parte do gate completo. Nenhum
 smoke físico foi executado nem declarado.
 
 ## Critério de saída desta execução
