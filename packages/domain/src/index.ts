@@ -10,5 +10,6 @@ export * from './progression/ranking.js';
 export * from './progression/xp.js';
 export * from './questions/pool-state.js';
 export * from './questions/uniform-random.js';
+export * from './reports/report.js';
 export * from './theme-artwork.js';
 export * from './types.js';
