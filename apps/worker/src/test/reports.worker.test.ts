@@ -26,7 +26,24 @@ async function matchContext(themeId: string, first: FixtureUser, second: Fixture
       JSON.stringify({ id: `match-question-${matchId}-${roundNumber}`, imageUrl: null, options: ['A', 'B', 'C', 'D'], prompt: `Pergunta ${roundNumber}?` }),
     )),
   ]);
+  // Só a primeira rodada foi entregue ao primeiro jogador. O conjunto selado
+  // também contém a rodada 2, mas ela não pode ser denunciada antecipadamente.
+  await markDelivered('MATCH', matchId, first.id, 1, `match-question-${matchId}-1`);
   return matchId;
+}
+
+async function markDelivered(
+  contextKind: 'CHALLENGE' | 'MATCH',
+  contextId: string,
+  userId: string,
+  roundNumber: number,
+  questionId: string,
+): Promise<void> {
+  await env.CORE_DB.prepare(
+    `INSERT INTO question_report_views
+      (context_kind, context_id, user_id, round_number, question_id)
+     VALUES (?1, ?2, ?3, ?4, ?5)`,
+  ).bind(contextKind, contextId, userId, roundNumber, questionId).run();
 }
 
 async function challengeContext(themeId: string, first: FixtureUser, second: FixtureUser): Promise<string> {
@@ -99,6 +116,22 @@ describe('Denúncias de pergunta — validação de contexto e idempotência', (
     })).rejects.toMatchObject({ code: 'REPORT_CONTEXT_MISMATCH' });
   });
 
+  it('recusa pergunta futura mesmo para participante do contexto', async () => {
+    const { themeSlug, users } = await fixture(2);
+    const themeId = await themeIdOf(themeSlug);
+    const first = userAt(users, 0);
+    const second = userAt(users, 1);
+    const matchId = await matchContext(themeId, first, second);
+    const repository = new ReportRepository(env.CORE_DB);
+
+    // A pergunta existe no snapshot selado, mas ROUND_QUESTION ainda não foi
+    // entregue para este usuário — participação não é prova de visualização.
+    await expect(repository.create({
+      contextId: matchId, contextKind: 'MATCH', note: null,
+      questionId: `match-question-${matchId}-2`, reason: 'INCORRECT', reporterUserId: first.id, roundNumber: 2,
+    })).rejects.toMatchObject({ code: 'REPORT_CONTEXT_MISMATCH', status: 403 });
+  });
+
   it('funciona igual no contexto CHALLENGE, restrito aos dois participantes', async () => {
     const { themeSlug, users } = await fixture(3);
     const themeId = await themeIdOf(themeSlug);
@@ -107,6 +140,8 @@ describe('Denúncias de pergunta — validação de contexto e idempotência', (
     const outsider = userAt(users, 2);
     const challengeId = await challengeContext(themeId, first, second);
     const repository = new ReportRepository(env.CORE_DB);
+
+    await markDelivered('CHALLENGE', challengeId, second.id, 1, `challenge-question-${challengeId}-1`);
 
     await expect(repository.create({
       contextId: challengeId, contextKind: 'CHALLENGE', note: null,
@@ -188,15 +223,23 @@ describe('Denúncias de pergunta — validação de contexto e idempotência', (
     const second = userAt(users, 1);
     let now = Date.parse('2026-09-17T12:00:00.000Z');
     const repository = new ReportRepository(env.CORE_DB, () => new Date(now));
+    let firstReport: { contextId: string; questionId: string } | null = null;
 
     // Cada denúncia usa um contexto MATCH próprio para não esbarrar na idempotência.
     for (let index = 0; index < REPORT_RATE_LIMIT; index += 1) {
       const otherMatchId = await matchContext(themeId, first, second);
+      const questionId = `match-question-${otherMatchId}-1`;
       await expect(repository.create({
         contextId: otherMatchId, contextKind: 'MATCH', note: null,
-        questionId: `match-question-${otherMatchId}-1`, reason: 'INCORRECT', reporterUserId: first.id, roundNumber: 1,
+        questionId, reason: 'INCORRECT', reporterUserId: first.id, roundNumber: 1,
       })).resolves.toMatchObject({ created: true });
+      if (index === 0) firstReport = { contextId: otherMatchId, questionId };
     }
+    if (firstReport === null) throw new Error('Denúncia inicial ausente.');
+    await expect(repository.create({
+      contextId: firstReport.contextId, contextKind: 'MATCH', note: null,
+      questionId: firstReport.questionId, reason: 'INCORRECT', reporterUserId: first.id, roundNumber: 1,
+    })).resolves.toMatchObject({ created: false });
     const blockedMatchId = await matchContext(themeId, first, second);
     await expect(repository.create({
       contextId: blockedMatchId, contextKind: 'MATCH', note: null,
@@ -295,6 +338,7 @@ describe('Denúncias de pergunta — validação de contexto e idempotência', (
 
     await befriend(first, second);
     const challengeId = await challengeContext(themeId, first, second);
+    await markDelivered('CHALLENGE', challengeId, second.id, 1, `challenge-question-${challengeId}-1`);
     const challengeReport = await repository.create({
       contextId: challengeId, contextKind: 'CHALLENGE', note: null,
       questionId: `challenge-question-${challengeId}-1`, reason: 'IMAGE', reporterUserId: second.id, roundNumber: 1,

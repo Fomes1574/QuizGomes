@@ -60,6 +60,22 @@ export interface AdminQuestionReport {
 }
 
 export interface AdminQuestionReportEntry {
+  questionMetadata: {
+    difficulty: 'EASY' | 'MEDIUM' | 'HARD';
+    sources: Array<{ sourceKind: string; title: string | null; url: string }>;
+    statistics: {
+      answerCount: number;
+      correctCount: number;
+      optionACount: number;
+      optionBCount: number;
+      optionCCount: number;
+      optionDCount: number;
+      totalResponseMs: number;
+      useCount: number;
+      wrongCount: number;
+    } | null;
+    themeName: string;
+  } | null;
   questionSnapshot: {
     correctOption: number;
     imageUrl: string | null;

@@ -37,6 +37,12 @@ vi.mock('../features/auth-context.js', () => ({
 }));
 
 const reportEntry = {
+  questionMetadata: {
+    difficulty: 'EASY' as const,
+    sources: [{ sourceKind: 'PRIMARY', title: 'Fonte oficial', url: 'https://example.test/source' }],
+    statistics: { answerCount: 11, correctCount: 7, optionACount: 2, optionBCount: 7, optionCCount: 1, optionDCount: 1, totalResponseMs: 10_000, useCount: 12, wrongCount: 4 },
+    themeName: 'Geografia',
+  },
   questionSnapshot: { correctOption: 1, imageUrl: null, options: ['Errada', 'Certa', 'X', 'Y'], prompt: 'Qual é a capital?' },
   report: {
     contextId: 'match-1', contextKind: 'MATCH' as const, createdAt: '2026-09-17T10:00:00.000Z',
@@ -71,6 +77,8 @@ describe('painel administrativo de denúncias', () => {
     expect(await screen.findByText('Qual é a capital?')).toBeInTheDocument();
     expect(screen.getByText('Certa').closest('li')).toHaveClass('report-card__option--correct');
     expect(screen.getByText('Parece errada.', { exact: false })).toBeInTheDocument();
+    expect(screen.getByText('Geografia', { exact: false })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Fonte oficial' })).toHaveAttribute('href', 'https://example.test/source');
   });
 
   it('trocar a aba de status busca a fila correspondente', async () => {

@@ -14,6 +14,7 @@ import {
 } from '@quiz-gomes/domain';
 import type { Env } from '../env.js';
 import { ChallengeRepository } from '../repositories/challenge-repository.js';
+import { recordReportView } from '../repositories/report-view-repository.js';
 import { notifyChallengeUpdated } from '../services/challenge-notifier.js';
 
 /**
@@ -121,7 +122,7 @@ export class ChallengeRoom {
       return;
     }
     try {
-      await this.applyCommand(command, Date.now());
+      await this.applyCommand(command, Date.now(), socket);
     } catch (error) {
       if (error instanceof AsyncHalfCommandError) {
         this.sendError(socket, error.code, error.message);
@@ -303,6 +304,11 @@ export class ChallengeRoom {
     const transition = transitionAsyncHalf(current, command, nowMs);
     await this.ctx.storage.put(STATE_KEY, transition.state);
     await this.scheduleAlarm(transition.state);
+    // CONNECTED entrega a primeira ROUND_READY; QUESTION_AVAILABLE entrega a
+    // seguinte; RESUMED repete uma entrega já registrada de forma idempotente.
+    if (origin !== undefined && ['CONNECTED', 'QUESTION_AVAILABLE', 'RESUMED'].includes(transition.event.type)) {
+      await this.recordRoundDelivery(transition.state, origin);
+    }
     this.broadcast(transition.state, transition.event, nowMs, origin);
     if (transition.state.phase === 'CANCELLED') {
       await this.ctx.storage.delete(SEALED_KEY);
@@ -392,6 +398,23 @@ export class ChallengeRoom {
       ? Date.now() + FINALIZATION_RETRY_MS
       : state.phaseDeadlineMs;
     if (deadline !== null) await this.ctx.storage.setAlarm(deadline);
+  }
+
+  private async recordRoundDelivery(state: AsyncHalfState, socket: WebSocket): Promise<void> {
+    const attachment = readAttachment(socket);
+    const question = state.questions[state.roundIndex];
+    if (attachment === null || question === undefined) return;
+    try {
+      await recordReportView(this.env.CORE_DB, {
+        contextId: state.challengeId,
+        contextKind: 'CHALLENGE',
+        questionId: question.id,
+        roundNumber: state.roundIndex + 1,
+        userId: attachment.userId,
+      });
+    } catch {
+      console.error(JSON.stringify({ code: 'REPORT_VIEW_RECORD_FAILED', event: 'challenge_question_delivery', challengeId: state.challengeId }));
+    }
   }
 
   private broadcast(

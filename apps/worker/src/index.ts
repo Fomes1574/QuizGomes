@@ -501,9 +501,85 @@ async function reportsRoute(request: Request, env: Env): Promise<Response> {
   }
 }
 
-/** Enriquece cada denúncia com o snapshot selado — sem imagens completas, só o que o admin decide. */
-async function withSnapshots(reports: ReportRepository, records: ReportRecord[]) {
+interface ReportQuestionMetadata {
+  difficulty: 'EASY' | 'MEDIUM' | 'HARD';
+  sources: Array<{ sourceKind: string; title: string | null; url: string }>;
+  statistics: {
+    answerCount: number;
+    correctCount: number;
+    optionACount: number;
+    optionBCount: number;
+    optionCCount: number;
+    optionDCount: number;
+    totalResponseMs: number;
+    useCount: number;
+    wrongCount: number;
+  } | null;
+  themeName: string;
+}
+
+function safeQuestionSourceUrl(value: string): string | null {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:' ? parsed.href : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Metadados editoriais por leitura indexada; nunca alteram a pergunta ou o resultado competitivo. */
+async function reportQuestionMetadata(env: Env, report: ReportRecord): Promise<ReportQuestionMetadata | null> {
+  const context = report.contextKind === 'MATCH'
+    ? await env.CORE_DB.prepare(
+      `SELECT m.difficulty, t.name AS theme_name
+         FROM matches m JOIN themes t ON t.id = m.theme_id
+        WHERE m.id = ?1 LIMIT 1`,
+    ).bind(report.contextId).first<{ difficulty: 'EASY' | 'MEDIUM' | 'HARD'; theme_name: string }>()
+    : await env.CORE_DB.prepare(
+      `SELECT c.difficulty, t.name AS theme_name
+         FROM challenges c JOIN themes t ON t.id = c.theme_id
+        WHERE c.id = ?1 LIMIT 1`,
+    ).bind(report.contextId).first<{ difficulty: 'EASY' | 'MEDIUM' | 'HARD'; theme_name: string }>();
+  if (context === null) return null;
+  const [sources, statistics] = await Promise.all([
+    env.QUESTIONS_DB.prepare(
+      `SELECT source_kind, title, url FROM question_sources
+        WHERE question_id = ?1 ORDER BY created_at ASC LIMIT 5`,
+    ).bind(report.questionId).all<{ source_kind: string; title: string | null; url: string }>(),
+    env.QUESTIONS_DB.prepare(
+      `SELECT answer_count, correct_count, wrong_count, option_a_count, option_b_count,
+              option_c_count, option_d_count, total_response_ms, use_count
+         FROM question_statistics WHERE question_id = ?1 LIMIT 1`,
+    ).bind(report.questionId).first<{
+      answer_count: number; correct_count: number; option_a_count: number; option_b_count: number;
+      option_c_count: number; option_d_count: number; total_response_ms: number; use_count: number; wrong_count: number;
+    }>(),
+  ]);
+  return {
+    difficulty: context.difficulty,
+    sources: sources.results.flatMap((source) => {
+      const url = safeQuestionSourceUrl(source.url);
+      return url === null ? [] : [{ sourceKind: source.source_kind, title: source.title, url }];
+    }),
+    statistics: statistics === null ? null : {
+      answerCount: statistics.answer_count,
+      correctCount: statistics.correct_count,
+      optionACount: statistics.option_a_count,
+      optionBCount: statistics.option_b_count,
+      optionCCount: statistics.option_c_count,
+      optionDCount: statistics.option_d_count,
+      totalResponseMs: statistics.total_response_ms,
+      useCount: statistics.use_count,
+      wrongCount: statistics.wrong_count,
+    },
+    themeName: context.theme_name,
+  };
+}
+
+/** Enriquece a fila com snapshot e contexto editorial, sem imagens completas. */
+async function withSnapshots(env: Env, reports: ReportRepository, records: ReportRecord[]) {
   return Promise.all(records.map(async (report) => ({
+    questionMetadata: await reportQuestionMetadata(env, report),
     questionSnapshot: await reports.questionSnapshot(report),
     report,
   })));
@@ -520,7 +596,7 @@ async function adminReportsRoute(request: Request, env: Env, url: URL): Promise<
   const cursor = url.searchParams.get('cursor');
   const repository = new ReportRepository(env.CORE_DB);
   const page = await repository.listForAdmin(parsedStatus.data, limit, cursor);
-  return json({ nextCursor: page.nextCursor, reports: await withSnapshots(repository, page.reports) });
+  return json({ nextCursor: page.nextCursor, reports: await withSnapshots(env, repository, page.reports) });
 }
 
 async function adminReportResolveRoute(request: Request, env: Env, reportId: string): Promise<Response> {

@@ -340,6 +340,11 @@ h1, h2, h3, .brand-lockup__name, .hero-stat strong, .level-card > strong, .count
 .report-card__options li { padding: 7px 10px; border: 1px solid var(--border); border-radius: 10px; color: var(--text-secondary); font-size: .78rem; }
 .report-card__option--correct { border-color: var(--correct) !important; color: var(--correct) !important; font-weight: 700; }
 .report-card__note { margin: 0; color: var(--text-secondary); font-size: .8rem; line-height: 1.5; }
+.report-card__metadata { display: grid; gap: 5px; padding: 10px 12px; border-radius: 12px; color: var(--text-secondary); background: var(--surface); font-size: .76rem; line-height: 1.45; }
+.report-card__metadata p { margin: 0; }
+.report-card__sources { display: grid; gap: 3px; margin: 0; padding-left: 18px; }
+.report-card__sources a { color: var(--brand); overflow-wrap: anywhere; }
+.report-card__sources small { color: var(--text-secondary); }
 .report-card__actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .report-card__actions .button { flex: 1 1 auto; }
 .theme-artwork-editor { display: grid; gap: 16px; min-width: 0; padding: 18px; border: 1px solid var(--border); border-radius: 18px; }

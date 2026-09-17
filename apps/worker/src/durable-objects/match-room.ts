@@ -337,10 +337,14 @@ export class MatchRoom {
         if (!await this.tryFinalize(transition.state)) await this.deferTerminal(server, transition.state);
       } else if (transition.event.type === 'RESUMED') {
         await this.setPlayersActivity(transition.state.startedAtMs === null ? 'preparing' : 'playing');
+        await this.recordRoundDelivery(transition.state);
         this.broadcastState('RESUMED', transition.state);
       } else {
         if (transition.event.type === 'CONNECTED' && transition.state.phase === 'LOBBY') {
           await this.setPlayersActivity('preparing');
+        }
+        if (transition.event.type === 'CONNECTED' && ['ROUND_READY', 'ANSWERING', 'ROUND_RESULT'].includes(transition.state.phase)) {
+          await this.recordRoundDelivery(transition.state, [server]);
         }
         this.sendState(server, 'ROOM_STATE', transition.state);
         this.broadcastState('MATCH_STATE', transition.state, server);
@@ -396,6 +400,7 @@ export class MatchRoom {
     }
     if (event.type === 'QUESTION_AVAILABLE') {
       await this.setPlayersActivity('playing');
+      await this.recordRoundDelivery(state);
       this.broadcastState('ROUND_QUESTION', state, undefined, { transitionMs: LIVE_ROUND_TRANSITION_MS });
       return;
     }
@@ -426,6 +431,35 @@ export class MatchRoom {
   private async finalize(state: LiveMatchState): Promise<void> {
     const summary = await this.repository().finalize(state);
     await this.persistFinalized(state, summary, true);
+  }
+
+  /**
+   * Registra somente os sockets aos quais ROUND_QUESTION será projetado. A
+   * composição da sala não é prova de entrega: numa borda de desconexão um
+   * jogador pode já não ter recebido o payload. Falha desta telemetria nunca
+   * atrasa nem interrompe a partida.
+   */
+  private async recordRoundDelivery(state: LiveMatchState, sockets = this.ctx.getWebSockets()): Promise<void> {
+    const question = state.questions[state.roundIndex];
+    if (question === undefined) return;
+    const recipients = new Set(
+      sockets
+        .map(readAttachment)
+        .filter((attachment): attachment is RoomAttachment => attachment !== null)
+        .map((attachment) => attachment.userId),
+    );
+    if (recipients.size === 0) return;
+    try {
+      await this.env.CORE_DB.batch([...recipients].map((userId) => this.env.CORE_DB.prepare(
+        `INSERT OR IGNORE INTO question_report_views
+          (context_kind, context_id, user_id, round_number, question_id)
+         VALUES ('MATCH', ?1, ?2, ?3, ?4)`,
+      ).bind(state.matchId, userId, state.roundIndex + 1, question.id)));
+    } catch {
+      // A partida continua: uma falha no recurso não competitivo de denúncia
+      // não pode afetar deadline, score, reconexão ou resultado.
+      console.error(JSON.stringify({ code: 'REPORT_VIEW_RECORD_FAILED', event: 'match_question_delivery', matchId: state.matchId }));
+    }
   }
 
   private async tryFinalize(state: LiveMatchState): Promise<boolean> {

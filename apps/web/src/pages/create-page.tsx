@@ -5,6 +5,7 @@ import { ThemeArtwork as ThemeArtworkPreview } from '../components/theme-artwork
 import { useAuth } from '../features/auth-context.js';
 import { apiRequest, apiUpload } from '../lib/api.js';
 import type { AdminQuestionReportEntry, AdminThemeSummary, Category, ThemeSummary } from '../lib/models.js';
+import { DIFFICULTY_LABEL } from '../lib/challenges.js';
 import { REPORT_REASON_LABEL } from '../lib/reports.js';
 import type { ThemeArtworkDraft } from '../components/theme-artwork-editor.js';
 
@@ -273,7 +274,7 @@ function ReportCard({
   getToken: (forceRefresh?: boolean) => Promise<string | null>;
   onResolved: (report: AdminQuestionReportEntry['report']) => void;
 }) {
-  const { questionSnapshot, report } = entry;
+  const { questionMetadata, questionSnapshot, report } = entry;
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState<ReportStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -314,6 +315,27 @@ function ReportCard({
             ))}
           </ol>
         </>
+      )}
+      {questionMetadata !== null && (
+        <div className="report-card__metadata">
+          <p><strong>{questionMetadata.themeName}</strong> · {DIFFICULTY_LABEL[questionMetadata.difficulty]}</p>
+          {questionMetadata.statistics === null ? (
+            <p>Sem estatísticas registradas para esta pergunta.</p>
+          ) : (
+            <p>
+              {questionMetadata.statistics.useCount} usos · {questionMetadata.statistics.answerCount} respostas ·
+              {' '}{questionMetadata.statistics.correctCount} acertos · {questionMetadata.statistics.wrongCount} erros ·
+              {' '}A/B/C/D: {questionMetadata.statistics.optionACount}/{questionMetadata.statistics.optionBCount}/{questionMetadata.statistics.optionCCount}/{questionMetadata.statistics.optionDCount}
+            </p>
+          )}
+          {questionMetadata.sources.length === 0 ? <p>Sem fonte vinculada no registro atual.</p> : (
+            <ul className="report-card__sources" aria-label="Fontes da pergunta">
+              {questionMetadata.sources.map((source) => (
+                <li key={source.url}><a href={source.url} rel="noreferrer" target="_blank">{source.title ?? source.url}</a> <small>({source.sourceKind})</small></li>
+              ))}
+            </ul>
+          )}
+        </div>
       )}
       {report.note !== null && <p className="report-card__note"><strong>Nota de quem denunciou:</strong> {report.note}</p>}
       {report.resolutionNote !== null && <p className="report-card__note"><strong>Resolução:</strong> {report.resolutionNote}</p>}

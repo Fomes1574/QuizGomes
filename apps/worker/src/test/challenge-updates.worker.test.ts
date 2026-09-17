@@ -134,6 +134,30 @@ async function finalizeHalf(stub: DurableObjectStub, scores: number[]): Promise<
 }
 
 describe('M9C+M10 — Social converge por evento, sem polling', () => {
+  it('registra a entrega da rodada inicial da metade assíncrona para denúncia', async () => {
+    const { themeSlug, users } = await fixture(2);
+    const first = userAt(users, 0);
+    const second = userAt(users, 1);
+    await befriend(first, second);
+    const { challengeId, repository } = await asyncChallenge(first, second, themeSlug);
+    const stub = await openRoom(challengeId, 'FIRST');
+
+    const response = await stub.fetch(new Request('https://challenge.internal/socket', {
+      headers: { Upgrade: 'websocket', 'X-QG-Authenticated-User-Id': first.id },
+    }));
+    expect(response.status).toBe(101);
+    response.webSocket?.accept();
+
+    const firstQuestion = await repository.questionSet(challengeId).then((questions) => questions[0]);
+    if (firstQuestion === undefined) throw new Error('Pergunta inicial ausente.');
+    expect(await env.CORE_DB.prepare(
+      `SELECT question_id, round_number, user_id FROM question_report_views
+        WHERE context_kind = 'CHALLENGE' AND context_id = ?1`,
+    ).bind(challengeId).all()).toMatchObject({
+      results: [{ question_id: firstQuestion.id, round_number: 1, user_id: first.id }],
+    });
+  });
+
   it('entrega CHALLENGE_UPDATED só a quem participa do desafio', async () => {
     const { users } = await fixture(2);
     const participant = userAt(users, 0);

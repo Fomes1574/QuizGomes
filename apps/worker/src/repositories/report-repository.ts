@@ -103,10 +103,10 @@ function parseSnapshot(json: string): { imageUrl: string | null; options: readon
  * Denúncias de pergunta.
  *
  * Nunca confia no `questionId`/`roundNumber` enviado pelo cliente: a criação só
- * aceita a denúncia se o snapshot selado da rodada (`match_questions` ou
- * `challenge_questions`) provar que o denunciante realmente recebeu aquela
- * pergunta naquele contexto — e o cliente só pôde aprender esse par porque o
- * servidor o entregou ao vivo, uma rodada de cada vez.
+ * aceita a denúncia se o recibo autoritativo de entrega da rodada provar que o
+ * denunciante realmente recebeu aquela pergunta naquele contexto. Os conjuntos
+ * selados de match/challenge sozinhos não bastam: eles contêm também rodadas
+ * futuras que ainda não foram projetadas para o cliente.
  */
 export class ReportRepository {
   constructor(
@@ -114,22 +114,22 @@ export class ReportRepository {
     private readonly now: () => Date = () => new Date(),
   ) {}
 
-  private async assertRate(reporterUserId: string): Promise<void> {
-    const since = new Date(this.now().getTime() - REPORT_RATE_WINDOW_MS).toISOString();
-    const row = await this.db.prepare(
-      `SELECT COUNT(*) AS total FROM question_reports
-        WHERE reporter_user_id = ?1 AND created_at >= ?2`,
-    ).bind(reporterUserId, since).first<{ total: number }>();
-    if ((row?.total ?? 0) >= REPORT_RATE_LIMIT) {
-      throw new ApiError(429, 'REPORT_RATE_LIMITED', 'Muitas denúncias em pouco tempo. Tente de novo em instantes.');
-    }
+  private async existingOpen(input: Pick<CreateReportInput,
+    'contextId' | 'contextKind' | 'reporterUserId' | 'roundNumber'>,
+  ): Promise<ReportRecord | null> {
+    const existing = await this.db.prepare(
+      `SELECT ${SELECT_COLUMNS} FROM question_reports
+        WHERE reporter_user_id = ?1 AND context_kind = ?2 AND context_id = ?3 AND round_number = ?4
+          AND status IN ('OPEN', 'IN_REVIEW')
+        LIMIT 1`,
+    ).bind(input.reporterUserId, input.contextKind, input.contextId, input.roundNumber).first<ReportRow>();
+    return existing === null ? null : toRecord(existing);
   }
 
   /**
-   * Prova que `reporterUserId` de fato participou de `contextId` e que a rodada
-   * informada corresponde exatamente à pergunta informada. Uma combinação que
-   * não bate — contexto errado, rodada errada ou usuário fora do contexto —
-   * nunca revela qual parte falhou.
+   * Prova que a projeção pública desta rodada foi entregue ao usuário. Uma
+   * combinação que não bate — contexto errado, rodada futura, pergunta errada
+   * ou usuário fora do contexto — nunca revela qual parte falhou.
    */
   private async assertSeen(input: {
     contextId: string;
@@ -138,22 +138,18 @@ export class ReportRepository {
     reporterUserId: string;
     roundNumber: number;
   }): Promise<void> {
-    const proof = input.contextKind === 'MATCH'
-      ? await this.db.prepare(
-        `SELECT 1
-           FROM match_players mp
-           JOIN match_questions mq ON mq.match_id = mp.match_id AND mq.round_number = ?1
-          WHERE mp.match_id = ?2 AND mp.user_id = ?3 AND mq.question_id = ?4
-          LIMIT 1`,
-      ).bind(input.roundNumber, input.contextId, input.reporterUserId, input.questionId).first()
-      : await this.db.prepare(
-        `SELECT 1
-           FROM challenges c
-           JOIN challenge_questions cq ON cq.challenge_id = c.id AND cq.round_number = ?1
-          WHERE c.id = ?2 AND cq.question_id = ?3
-            AND (c.first_player_user_id = ?4 OR c.second_player_user_id = ?4)
-          LIMIT 1`,
-      ).bind(input.roundNumber, input.contextId, input.questionId, input.reporterUserId).first();
+    const proof = await this.db.prepare(
+      `SELECT 1 FROM question_report_views
+        WHERE context_kind = ?1 AND context_id = ?2 AND user_id = ?3
+          AND round_number = ?4 AND question_id = ?5
+        LIMIT 1`,
+    ).bind(
+      input.contextKind,
+      input.contextId,
+      input.reporterUserId,
+      input.roundNumber,
+      input.questionId,
+    ).first();
     if (proof === null) {
       throw new ApiError(403, 'REPORT_CONTEXT_MISMATCH', 'Não foi possível confirmar que você viu esta pergunta.');
     }
@@ -167,27 +163,33 @@ export class ReportRepository {
   async create(input: CreateReportInput): Promise<{ created: boolean; report: ReportRecord }> {
     const note = normalizeReportNote(input.note);
     assertReportNoteLength(note);
-    await this.assertRate(input.reporterUserId);
     await this.assertSeen(input);
+    // Retry idempotente sempre vence o rate limit: um duplo toque não pode virar
+    // 429 só porque o usuário atingiu o teto depois do primeiro envio.
+    const known = await this.existingOpen(input);
+    if (known !== null) return { created: false, report: known };
     const id = crypto.randomUUID();
+    const since = new Date(this.now().getTime() - REPORT_RATE_WINDOW_MS).toISOString();
     try {
-      await this.db.prepare(
+      const inserted = await this.db.prepare(
         `INSERT INTO question_reports
           (id, reporter_user_id, question_id, context_kind, context_id, round_number, reason, note, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)`,
+         SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9
+          WHERE (SELECT COUNT(*) FROM question_reports
+                  WHERE reporter_user_id = ?2 AND created_at >= ?10) < ?11`,
       ).bind(
         id, input.reporterUserId, input.questionId, input.contextKind,
-        input.contextId, input.roundNumber, input.reason, note, this.now().toISOString(),
+        input.contextId, input.roundNumber, input.reason, note, this.now().toISOString(), since, REPORT_RATE_LIMIT,
       ).run();
+      if ((inserted.meta.changes ?? 0) === 0) {
+        const raced = await this.existingOpen(input);
+        if (raced !== null) return { created: false, report: raced };
+        throw new ApiError(429, 'REPORT_RATE_LIMITED', 'Muitas denúncias em pouco tempo. Tente de novo em instantes.');
+      }
     } catch (error) {
       if (error instanceof Error && /UNIQUE constraint failed/i.test(error.message)) {
-        const existing = await this.db.prepare(
-          `SELECT ${SELECT_COLUMNS} FROM question_reports
-            WHERE reporter_user_id = ?1 AND context_kind = ?2 AND context_id = ?3 AND round_number = ?4
-              AND status IN ('OPEN', 'IN_REVIEW')
-            LIMIT 1`,
-        ).bind(input.reporterUserId, input.contextKind, input.contextId, input.roundNumber).first<ReportRow>();
-        if (existing !== null) return { created: false, report: toRecord(existing) };
+        const raced = await this.existingOpen(input);
+        if (raced !== null) return { created: false, report: raced };
       }
       throw error;
     }

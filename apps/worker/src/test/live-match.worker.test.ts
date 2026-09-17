@@ -335,6 +335,42 @@ beforeAll(async () => {
 });
 
 describe('Milestone 8 no runtime Workers simulado', () => {
+  it('registra de modo idempotente a entrega pública da rodada para autorização de denúncia', async () => {
+    const fixture = await seedMatchFixture('report-view', 500, 'CASUAL');
+    const { roomId, stub } = await initializeRoom(fixture);
+    const { questionId } = await startRoomAtAnswering(stub, fixture.uids);
+
+    const views = await env.CORE_DB.prepare(
+      `SELECT user_id, round_number, question_id FROM question_report_views
+        WHERE context_kind = 'MATCH' AND context_id = ?1 ORDER BY user_id`,
+    ).bind(roomId).all<{ question_id: string; round_number: number; user_id: string }>();
+    expect(views.results).toEqual([
+      { question_id: questionId, round_number: 1, user_id: fixture.userIds[0] },
+      { question_id: questionId, round_number: 1, user_id: fixture.userIds[1] },
+    ]);
+  });
+
+  it('registra somente quem recebe a projeção atual ao reconectar em rodada já aberta', async () => {
+    const fixture = await seedMatchFixture('report-view-reconnect', 500, 'CASUAL');
+    const { roomId, stub } = await initializeRoom(fixture);
+    const { questionId } = await startRoomAtAnswering(stub, fixture.uids);
+    // Simula uma sala criada antes da feature: o reconnect recebe a pergunta
+    // atual, mas o outro socket não pode ganhar um recibo por tabela.
+    await env.CORE_DB.prepare(
+      `DELETE FROM question_report_views WHERE context_kind = 'MATCH' AND context_id = ?1`,
+    ).bind(roomId).run();
+
+    const reconnected = await openRoom(stub, fixture.uids[0]);
+    await expect(reconnected.waitFor('ROOM_STATE')).resolves.toMatchObject({
+      match: { question: { id: questionId }, phase: 'ANSWERING' },
+    });
+    const views = await env.CORE_DB.prepare(
+      `SELECT user_id FROM question_report_views
+        WHERE context_kind = 'MATCH' AND context_id = ?1 ORDER BY user_id`,
+    ).bind(roomId).all<{ user_id: string }>();
+    expect(views.results).toEqual([{ user_id: fixture.userIds[0] }]);
+  });
+
   it('identifica cancelamento antes da partida por nome/assento sem UID, placar competitivo ou penalidade', async () => {
     const fixture = await seedMatchFixture('precancel', 500, 'RANKED');
     const { roomId, stub } = await initializeRoom(fixture);
