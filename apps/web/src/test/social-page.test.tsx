@@ -328,6 +328,32 @@ describe('Social Foundation — interface web', () => {
     }
   });
 
+  it('clique duplo (double tap) no aceite trava síncrona: só uma requisição sai', async () => {
+    let resolveAccept: (() => void) | undefined;
+    const acceptPath = `/api/challenges/${asyncWaitingChallenge.id}/accept`;
+    mocks.apiRequest.mockImplementation((path: string, options?: { method?: string }) => {
+      if (path === '/api/social') return Promise.resolve({ friends: [friendUser], incoming: [], outgoing: [] });
+      if (path === '/api/challenges') return Promise.resolve({ challenges: [asyncWaitingChallenge] });
+      if (path === acceptPath && options?.method === 'POST') {
+        return new Promise((resolve) => { resolveAccept = () => resolve({ half: 'SECOND' }); });
+      }
+      return Promise.resolve({ ok: true });
+    });
+    render(socialPage());
+    const button = await screen.findByRole('button', { name: 'Jogar' });
+    // Double tap / clique repetido antes da resposta chegar.
+    fireEvent.click(button);
+    fireEvent.click(button);
+    fireEvent.click(button);
+
+    expect(mocks.apiRequest.mock.calls.filter((call) => call[0] === acceptPath)).toHaveLength(1);
+
+    resolveAccept?.();
+    await waitFor(() => {
+      expect(mocks.apiRequest.mock.calls.filter((call) => call[0] === acceptPath)).toHaveLength(1);
+    });
+  });
+
   it('mantém card de desafio compacto, presença real e ações abaixo em 360/390/412px e desktop', async () => {
     mocks.presence = new Map([[friendUser.publicId, {
       presence: 'RECONNECTING', publicId: friendUser.publicId, revision: 11,

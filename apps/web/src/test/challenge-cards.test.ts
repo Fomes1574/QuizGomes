@@ -25,6 +25,7 @@ function view(overrides: Partial<ChallengeView> = {}): ChallengeView {
     id: 'challenge-1',
     kind: 'ASYNC',
     role: 'CHALLENGER',
+    roomId: null,
     status: 'FIRST_PLAYER_ACTIVE',
     theme: { name: 'Elden Ring', slug: 'elden-ring' },
     ...overrides,

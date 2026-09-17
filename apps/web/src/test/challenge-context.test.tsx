@@ -75,6 +75,22 @@ function Probe() {
   return <p data-testid="count">{challenges.length}</p>;
 }
 
+/** Espelha use-friend-challenge.ts: marca o otimista e, na sequência, atualiza a lista. */
+function CreateProbe() {
+  const { refreshChallenges, trackPendingDirect } = useChallenges();
+  return (
+    <button
+      onClick={() => {
+        trackPendingDirect({ challengeId: 'challenge-direct-1', displayName: 'Ana', expiresAtMs: Date.now() + 30_000 });
+        void refreshChallenges();
+      }}
+      type="button"
+    >
+      Desafiar
+    </button>
+  );
+}
+
 function Location() {
   const location = useLocation();
   return <p data-testid="rota">{location.pathname}</p>;
@@ -165,6 +181,44 @@ describe('estado global dos desafios', () => {
     const shell = document.querySelector('.app-shell');
     expect(shell).not.toHaveAttribute('inert');
     expect(shell).not.toHaveAttribute('aria-hidden');
+  });
+
+  it('mantém o convite otimista visível até a atualização causada pela própria criação confirmar', async () => {
+    mocks.apiRequest.mockResolvedValueOnce({ challenges: [] });
+    render(app(<><CreateProbe /><DirectChallengeWaiting /></>));
+    await waitFor(() => { expect(mocks.apiRequest).toHaveBeenCalledTimes(1); });
+
+    // A lista ainda não sabe do convite recém-criado: é exatamente a janela
+    // real entre trackPendingDirect() e o refreshChallenges() que o sucede.
+    let resolveFollowUp: ((value: { challenges: unknown[] }) => void) | undefined;
+    mocks.apiRequest.mockImplementationOnce(() => new Promise((resolve) => { resolveFollowUp = resolve; }));
+    fireEvent.click(screen.getByRole('button', { name: 'Desafiar' }));
+
+    await screen.findByText('Aguardando Ana');
+    // Passar o tempo sem a resposta chegar não pode apagar o convite: nada
+    // provou ainda que ele terminou, só que a lista antiga não o conhecia.
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 50)); });
+    expect(screen.getByText('Aguardando Ana')).toBeInTheDocument();
+
+    resolveFollowUp?.({ challenges: [pendingDirectChallenge(new Date(Date.now() + 30_000).toISOString())] });
+    await waitFor(() => { expect(mocks.apiRequest).toHaveBeenCalledTimes(2); });
+    expect(screen.getByText('Aguardando Ana')).toBeInTheDocument();
+  });
+
+  it('convite otimista some com aviso quando a atualização causada por ele confirma que terminou', async () => {
+    mocks.apiRequest.mockResolvedValueOnce({ challenges: [] });
+    render(app(<><CreateProbe /><DirectChallengeWaiting /></>));
+    await waitFor(() => { expect(mocks.apiRequest).toHaveBeenCalledTimes(1); });
+
+    let resolveFollowUp: ((value: { challenges: unknown[] }) => void) | undefined;
+    mocks.apiRequest.mockImplementationOnce(() => new Promise((resolve) => { resolveFollowUp = resolve; }));
+    fireEvent.click(screen.getByRole('button', { name: 'Desafiar' }));
+    await screen.findByText('Aguardando Ana');
+
+    // Só agora a lista realmente reflete o pós-criação: o convite nunca chegou a existir vivo.
+    resolveFollowUp?.({ challenges: [] });
+    await waitFor(() => { expect(screen.queryByText('Aguardando Ana')).not.toBeInTheDocument(); });
+    expect(await screen.findByText('Este convite não está mais disponível.')).toBeInTheDocument();
   });
 
   it('o aceite remoto leva o desafiante à sala mesmo fora da tela do tema', async () => {
