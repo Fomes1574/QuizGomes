@@ -1,4 +1,4 @@
-import type { ThemeArtwork } from '@quiz-gomes/domain';
+import type { ReportContextKind, ReportReason, ReportStatus, ThemeArtwork } from '@quiz-gomes/domain';
 
 export interface Category {
   id: string;
@@ -42,4 +42,29 @@ export interface ThemeDetailResponse {
   questionCounts: { EASY: number; HARD: number; MEDIUM: number };
   theme: ThemeSummary;
   topFive: LeaderboardEntry[];
+}
+
+export interface AdminQuestionReport {
+  contextId: string;
+  contextKind: ReportContextKind;
+  createdAt: string;
+  id: string;
+  note: string | null;
+  questionId: string;
+  reason: ReportReason;
+  resolutionNote: string | null;
+  resolvedAt: string | null;
+  resolvedByUserId: string | null;
+  roundNumber: number;
+  status: ReportStatus;
+}
+
+export interface AdminQuestionReportEntry {
+  questionSnapshot: {
+    correctOption: number;
+    imageUrl: string | null;
+    options: readonly [string, string, string, string];
+    prompt: string;
+  } | null;
+  report: AdminQuestionReport;
 }

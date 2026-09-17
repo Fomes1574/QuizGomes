@@ -1,6 +1,6 @@
 import type { ReactNode, SVGProps } from 'react';
 
-export type IconName = 'add' | 'back' | 'bolt' | 'check' | 'close' | 'create' | 'moon' | 'profile' | 'search' | 'social' | 'sun' | 'themes';
+export type IconName = 'add' | 'back' | 'bolt' | 'check' | 'close' | 'create' | 'flag' | 'moon' | 'profile' | 'search' | 'social' | 'sun' | 'themes';
 
 const paths: Record<IconName, ReactNode> = {
   add: <path d="M12 5v14M5 12h14" />,
@@ -9,6 +9,7 @@ const paths: Record<IconName, ReactNode> = {
   check: <path d="m5 12 4 4L19 6" />,
   close: <path d="m6 6 12 12M18 6 6 18" />,
   create: <><path d="M4 20h4l10.5-10.5a2.8 2.8 0 0 0-4-4L4 16v4Z" /><path d="m13.5 6.5 4 4" /></>,
+  flag: <><path d="M5 21V4" /><path d="M5 4h13l-3 4 3 4H5" /></>,
   moon: <path d="M21 12.8A8.5 8.5 0 1 1 11.2 3 6.5 6.5 0 0 0 21 12.8Z" />,
   profile: <><circle cx="12" cy="8" r="4" /><path d="M4.5 21a7.5 7.5 0 0 1 15 0" /></>,
   search: <><circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" /></>,

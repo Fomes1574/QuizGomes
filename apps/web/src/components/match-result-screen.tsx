@@ -1,8 +1,10 @@
 import { rankForKnowledge, type MatchResult } from '@quiz-gomes/domain';
 import type { CSSProperties } from 'react';
+import type { SeenQuestion } from '../lib/reports.js';
 import { Avatar } from './avatar.js';
 import { AvatarFrame } from './avatar-frame.js';
 import { Button } from './button.js';
+import { Icon } from './icons.js';
 import { Logo } from './logo.js';
 
 interface ResultParticipant {
@@ -60,7 +62,9 @@ export function MatchResultScreen({
   knowledgeAfter,
   knowledgeDelta,
   onBack,
+  onReport,
   opponent,
+  questions,
   viewer,
   voidReason,
   xpDelta,
@@ -69,7 +73,10 @@ export function MatchResultScreen({
   knowledgeAfter: number;
   knowledgeDelta: number;
   onBack: () => void;
+  /** Ausente quando não há como denunciar (tela reaberta sem o histórico local da sessão). */
+  onReport?: ((question: SeenQuestion) => void) | undefined;
   opponent: ResultParticipant;
+  questions?: readonly SeenQuestion[] | undefined;
   viewer: ResultParticipant;
   voidReason?: string | undefined;
   xpDelta: number;
@@ -126,6 +133,24 @@ export function MatchResultScreen({
             </article>
           </section>
         )}
+      {onReport !== undefined && questions !== undefined && questions.length > 0 && (
+        <section aria-label="Perguntas desta partida" className="match-result-questions">
+          <h2>Perguntas desta partida</h2>
+          <p>Viu algo errado? Reporte agora enquanto está fresco na memória.</p>
+          <ul>
+            {questions.map((question) => (
+              <li key={question.roundNumber}>
+                <span>{question.prompt}</span>
+                <button
+                  aria-label={`Reportar a pergunta da rodada ${question.roundNumber}`}
+                  onClick={() => onReport(question)}
+                  type="button"
+                ><Icon name="flag" /></button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       <div className="match-result-actions">
         <Button onClick={onBack}>{cancelledBeforeStart ? 'Voltar ao tema' : 'Voltar aos temas'}</Button>
       </div>

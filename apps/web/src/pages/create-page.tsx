@@ -1,10 +1,11 @@
 import { lazy, Suspense, useEffect, useState, type FormEvent } from 'react';
-import type { ThemeArtwork } from '@quiz-gomes/domain';
+import type { ReportStatus, ThemeArtwork } from '@quiz-gomes/domain';
 import { Button } from '../components/button.js';
 import { ThemeArtwork as ThemeArtworkPreview } from '../components/theme-artwork.js';
 import { useAuth } from '../features/auth-context.js';
 import { apiRequest, apiUpload } from '../lib/api.js';
-import type { AdminThemeSummary, Category, ThemeSummary } from '../lib/models.js';
+import type { AdminQuestionReportEntry, AdminThemeSummary, Category, ThemeSummary } from '../lib/models.js';
+import { REPORT_REASON_LABEL } from '../lib/reports.js';
 import type { ThemeArtworkDraft } from '../components/theme-artwork-editor.js';
 
 const ThemeArtworkEditor = lazy(() => import('../components/theme-artwork-editor.js'));
@@ -144,6 +145,7 @@ export function CreatePage() {
         </form>
       )}
       {role === 'ADMIN' ? <AdminThemeArtworkManager getToken={getToken} refreshKey={adminRefreshKey} /> : null}
+      {role === 'ADMIN' ? <AdminReportsPanel getToken={getToken} /> : null}
     </section>
   );
 }
@@ -251,6 +253,159 @@ function AdminThemeArtworkManager({
           <Button disabled={loading || saving || selected === null} onClick={() => void save()} type="button">{saving ? 'Salvando…' : 'Salvar arte'}</Button>
         </>
       ) : null}
+    </section>
+  );
+}
+
+const REPORT_STATUS_LABEL: Record<ReportStatus, string> = {
+  DISMISSED: 'Dispensadas',
+  IN_REVIEW: 'Em revisão',
+  OPEN: 'Abertas',
+  RESOLVED: 'Resolvidas',
+};
+
+function ReportCard({
+  entry,
+  getToken,
+  onResolved,
+}: {
+  entry: AdminQuestionReportEntry;
+  getToken: (forceRefresh?: boolean) => Promise<string | null>;
+  onResolved: (report: AdminQuestionReportEntry['report']) => void;
+}) {
+  const { questionSnapshot, report } = entry;
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState<ReportStatus | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const canAct = report.status === 'OPEN' || report.status === 'IN_REVIEW';
+
+  async function resolve(status: ReportStatus) {
+    setBusy(status);
+    setError(null);
+    try {
+      const token = await getToken();
+      if (token === null) throw new Error('Sua sessão expirou. Entre novamente.');
+      const result = await apiRequest<{ report: AdminQuestionReportEntry['report'] }>(
+        `/api/admin/reports/${encodeURIComponent(report.id)}/resolve`,
+        { body: { resolutionNote: note.trim() === '' ? undefined : note.trim(), status }, getToken, method: 'POST', token },
+      );
+      onResolved(result.report);
+    } catch (resolveError) {
+      setError(resolveError instanceof Error ? resolveError.message : 'Não foi possível atualizar a denúncia.');
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <article className="report-card">
+      <header>
+        <strong>{REPORT_REASON_LABEL[report.reason]}</strong>
+        <small>{report.contextKind === 'MATCH' ? 'Partida' : 'Desafio'} · rodada {report.roundNumber} · {new Date(report.createdAt).toLocaleString('pt-BR')}</small>
+      </header>
+      {questionSnapshot === null ? (
+        <p className="inline-notice">A rodada original não está mais disponível para revisão.</p>
+      ) : (
+        <>
+          <p className="report-card__prompt">{questionSnapshot.prompt}</p>
+          <ol className="report-card__options">
+            {questionSnapshot.options.map((option, index) => (
+              <li className={index === questionSnapshot.correctOption ? 'report-card__option--correct' : ''} key={option}>{option}</li>
+            ))}
+          </ol>
+        </>
+      )}
+      {report.note !== null && <p className="report-card__note"><strong>Nota de quem denunciou:</strong> {report.note}</p>}
+      {report.resolutionNote !== null && <p className="report-card__note"><strong>Resolução:</strong> {report.resolutionNote}</p>}
+      {canAct && (
+        <>
+          <label className="field"><span>Nota de resolução (opcional)</span><textarea maxLength={280} onChange={(event) => setNote(event.target.value)} rows={2} value={note} /></label>
+          {error !== null && <p className="form-error" role="alert">{error}</p>}
+          <div className="report-card__actions">
+            {report.status === 'OPEN' && (
+              <Button disabled={busy !== null} onClick={() => void resolve('IN_REVIEW')} type="button" variant="ghost">
+                {busy === 'IN_REVIEW' ? 'Marcando...' : 'Marcar em revisão'}
+              </Button>
+            )}
+            <Button disabled={busy !== null} onClick={() => void resolve('DISMISSED')} type="button" variant="ghost">
+              {busy === 'DISMISSED' ? 'Dispensando...' : 'Dispensar'}
+            </Button>
+            <Button disabled={busy !== null} onClick={() => void resolve('RESOLVED')} type="button">
+              {busy === 'RESOLVED' ? 'Resolvendo...' : 'Resolver'}
+            </Button>
+          </div>
+        </>
+      )}
+    </article>
+  );
+}
+
+function AdminReportsPanel({ getToken }: { getToken: (forceRefresh?: boolean) => Promise<string | null> }) {
+  const [status, setStatus] = useState<ReportStatus>('OPEN');
+  const [reports, setReports] = useState<AdminQuestionReportEntry[]>([]);
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [message, setMessage] = useState<string | null>(null);
+
+  async function load(status_: ReportStatus, after: string | null, replace: boolean) {
+    setLoading(true);
+    setMessage(null);
+    try {
+      const token = await getToken();
+      if (token === null) throw new Error('Sua sessão expirou. Entre novamente.');
+      const params = new URLSearchParams({ status: status_ });
+      if (after !== null) params.set('cursor', after);
+      const result = await apiRequest<{ nextCursor: string | null; reports: AdminQuestionReportEntry[] }>(
+        `/api/admin/reports?${params}`, { getToken, token },
+      );
+      setReports((current) => replace ? result.reports : [...current, ...result.reports]);
+      setCursor(result.nextCursor);
+    } catch (loadError) {
+      setMessage(loadError instanceof Error ? loadError.message : 'Não foi possível abrir as denúncias.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    // Microtask para não chamar setState de forma síncrona no corpo do efeito.
+    queueMicrotask(() => { void load(status, null, true); });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- load é recriada a cada render; só o status decide a busca.
+  }, [status]);
+
+  return (
+    <section className="admin-reports" aria-labelledby="admin-reports-title">
+      <div className="section-heading"><div><span className="eyebrow">Administração</span><h2 id="admin-reports-title">Denúncias de perguntas</h2></div></div>
+      <div className="segmented" role="tablist" aria-label="Status da denúncia">
+        {(['OPEN', 'IN_REVIEW', 'RESOLVED', 'DISMISSED'] as ReportStatus[]).map((value) => (
+          <button
+            aria-selected={status === value}
+            className={status === value ? 'segmented__active' : ''}
+            key={value}
+            onClick={() => setStatus(value)}
+            role="tab"
+            type="button"
+          >{REPORT_STATUS_LABEL[value]}</button>
+        ))}
+      </div>
+      {message !== null && <p className="form-message form-message--error" role="status">{message}</p>}
+      {loading && reports.length === 0 ? <p className="inline-notice">Carregando denúncias…</p> : null}
+      {!loading && reports.length === 0 && message === null ? <p className="inline-notice">Nenhuma denúncia {REPORT_STATUS_LABEL[status].toLowerCase()}.</p> : null}
+      <div className="report-list">
+        {reports.map((entry) => (
+          <ReportCard
+            entry={entry}
+            getToken={getToken}
+            key={entry.report.id}
+            onResolved={() => setReports((current) => current.filter((candidate) => candidate.report.id !== entry.report.id))}
+          />
+        ))}
+      </div>
+      {cursor !== null && (
+        <Button disabled={loading} onClick={() => void load(status, cursor, false)} type="button" variant="ghost">
+          {loading ? 'Carregando…' : 'Carregar mais'}
+        </Button>
+      )}
     </section>
   );
 }

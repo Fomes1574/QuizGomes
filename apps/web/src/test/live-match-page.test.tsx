@@ -375,7 +375,9 @@ describe('página da partida em tempo real', () => {
 
     expect(screen.getByRole('heading', { name: 'Partida anulada' })).toBeInTheDocument();
     expect(screen.getByText('A partida foi anulada por perda de conexão.')).toBeInTheDocument();
-    expect(screen.queryByText('Pergunta que não pode congelar?')).not.toBeInTheDocument();
+    // A pergunta jogável some — só a revisão pós-partida, sem timer nem alternativas, pode repetir o texto.
+    expect(screen.queryByRole('button', { name: 'A: A' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('timer')).not.toBeInTheDocument();
   });
 
   it('oculta a questão quando PONG para de responder mesmo com navigator online', async () => {
@@ -452,7 +454,8 @@ describe('página da partida em tempo real', () => {
 
     expect(screen.getByText('Pergunta que não pode congelar?')).toBeInTheDocument();
     expect(screen.getByRole('timer')).toHaveAccessibleName('6 segundos restantes');
-    expect(screen.getAllByRole('button')).toHaveLength(4);
+    // Quatro alternativas — o gatilho discreto de denúncia é um botão à parte, fora da rodada.
+    expect(screen.getAllByRole('button', { name: /^[A-D]: /u })).toHaveLength(4);
   });
 
   it('não transforma sete segundos locais em decisão terminal se a sala ainda está ANSWERING', async () => {
@@ -610,5 +613,65 @@ describe('página da partida em tempo real', () => {
     }));
     expect(screen.getByRole('heading', { name: 'Confirmando encerramento da partida...' })).toBeInTheDocument();
     expect(screen.queryByText('Pergunta que não pode congelar?')).not.toBeInTheDocument();
+  });
+
+  it('o gatilho de denúncia abre o diálogo sem enviar comando à sala nem mexer no timer', async () => {
+    render(
+      <MemoryRouter initialEntries={['/partida/room-report']}>
+        <Routes>
+          <Route element={<LiveMatchPage />} path="/partida/:roomId" />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const socket = FakeWebSocket.instances[0];
+    act(() => socket?.emitMessage({ match: activeMatch, type: 'ROUND_STARTED' }));
+    expect(screen.getByRole('timer')).toHaveAccessibleName('9 segundos restantes');
+    const sendCallsBefore = socket?.send.mock.calls.length;
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reportar esta pergunta' }));
+
+    expect(screen.getByRole('heading', { name: 'Reportar pergunta' })).toBeInTheDocument();
+    // Abrir o diálogo é puramente local: nada novo foi enviado ao socket da sala.
+    expect(socket?.send.mock.calls.length).toBe(sendCallsBefore);
+    expect(screen.getByRole('timer')).toHaveAccessibleName('9 segundos restantes');
+  });
+
+  it('a tela de resultado lista as perguntas vistas nesta sessão para denúncia', async () => {
+    render(
+      <MemoryRouter initialEntries={['/partida/room-report-result']}>
+        <Routes>
+          <Route element={<LiveMatchPage />} path="/partida/:roomId" />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const socket = FakeWebSocket.instances[0];
+    act(() => socket?.emitMessage({ match: activeMatch, type: 'ROUND_STARTED' }));
+    expect(screen.getByText('Pergunta que não pode congelar?')).toBeInTheDocument();
+
+    act(() => socket?.emitMessage({
+      match: { ...activeMatch, phase: 'FINISHED', question: undefined },
+      result: {
+        opponent: { result: 'LOSS', score: 12 },
+        viewer: { knowledgeAfter: 520, knowledgeBefore: 500, knowledgeDelta: 20, result: 'WIN', score: 20, xpDelta: 10 },
+      },
+      type: 'MATCH_FINISHED',
+    }));
+
+    expect(screen.getByRole('heading', { name: 'Vitória' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Perguntas desta partida' })).toBeInTheDocument();
+    expect(screen.getByText('Pergunta que não pode congelar?')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reportar a pergunta da rodada 1' }));
+    expect(screen.getByRole('heading', { name: 'Reportar pergunta' })).toBeInTheDocument();
   });
 });

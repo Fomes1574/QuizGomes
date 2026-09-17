@@ -2,6 +2,7 @@ import { RECONNECT_GRACE_MS, type LiveMatchProjection, type MatchResult } from '
 import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { Button } from '../components/button.js';
+import { Icon } from '../components/icons.js';
 import { Logo } from '../components/logo.js';
 import {
   MatchConnectionScreen,
@@ -15,10 +16,12 @@ import {
   roundPresentationDelay,
 } from '../components/match-round-transition.js';
 import { MatchScreen } from '../components/match-screen.js';
+import { ReportQuestionDialog } from '../components/report-question-dialog.js';
 import { useAuth } from '../features/auth-context.js';
 import { apiRequest, websocketUrl } from '../lib/api.js';
 import { clearDuelHandoff } from '../lib/match-handoff.js';
 import { takePreparedMatchRoom } from '../lib/preloaded-match-room.js';
+import type { SeenQuestion } from '../lib/reports.js';
 
 interface TerminalResult {
   opponent: { result: MatchResult; score: number };
@@ -84,6 +87,10 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
   const [localConnectionState, setLocalConnectionState] = useState<LocalConnectionState>('CONNECTED');
   const [pauseVisual, setPauseVisual] = useState<PauseVisualState | null>(null);
   const [cancelling, setCancelling] = useState(false);
+  // Denúncia de pergunta: só o cliente lembra o que já viu nesta sessão. O
+  // servidor nunca confia nesta lista — revalida contra o snapshot selado.
+  const [seenQuestions, setSeenQuestions] = useState<SeenQuestion[]>([]);
+  const [reportTarget, setReportTarget] = useState<SeenQuestion | null>(null);
 
   useEffect(() => {
     let disposed = false;
@@ -226,6 +233,21 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
     const applyProjection = (match: LiveMatchProjection) => {
       setProjection(match);
       updateCountdown(match);
+      if (match.question !== undefined && match.round !== undefined) {
+        const question = match.question;
+        const roundNumber = match.round.number;
+        setSeenQuestions((current) => (
+          current.some((seen) => seen.roundNumber === roundNumber)
+            ? current
+            : [...current, {
+              contextId: sessionId,
+              contextKind: isChallenge ? 'CHALLENGE' : 'MATCH',
+              prompt: question.prompt,
+              questionId: question.id,
+              roundNumber,
+            }]
+        ));
+      }
       if (match.phase === 'ANSWERING' && match.remainingMs !== undefined) {
         setDeadlineMs(Date.now() + match.remainingMs);
         setRoundIntro(null);
@@ -511,11 +533,13 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
   if (terminal !== null) {
     const { viewer, opponent } = terminal.result;
     return (
+      <>
       <MatchResultScreen
         cancelledBy={terminal.cancelledBy}
         knowledgeAfter={viewer.knowledgeAfter}
         knowledgeDelta={viewer.knowledgeDelta}
         onBack={backToTheme}
+        onReport={(question) => setReportTarget(question)}
         opponent={{
           customAvatarUrl: projection?.opponent.customAvatarUrl ?? null,
           frameId: projection?.opponent.frameId ?? null,
@@ -524,6 +548,7 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
           result: opponent.result,
           score: opponent.score,
         }}
+        questions={seenQuestions}
         viewer={{
           customAvatarUrl: projection?.viewer.customAvatarUrl ?? null,
           frameId: projection?.viewer.frameId ?? null,
@@ -535,6 +560,16 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
         voidReason={terminal.voidReason}
         xpDelta={viewer.xpDelta}
       />
+      {reportTarget !== null && (
+        <ReportQuestionDialog
+          contextId={reportTarget.contextId}
+          contextKind={reportTarget.contextKind}
+          onClose={() => setReportTarget(null)}
+          questionId={reportTarget.questionId}
+          roundNumber={reportTarget.roundNumber}
+        />
+      )}
+      </>
     );
   }
 
@@ -565,6 +600,7 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
   if (activeQuestion !== undefined && projection?.round !== undefined &&
     (preparingQuestion || projection.phase === 'ANSWERING' || projection.phase === 'ROUND_RESULT') &&
     (preparingQuestion || deadlineMs !== null)) {
+    const activeRound = projection.round;
     return (
       <>
         <MatchScreen
@@ -614,6 +650,33 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
             durationMs={roundIntro.durationMs}
             number={roundIntro.number}
             total={roundIntro.total}
+          />
+        )}
+        {/*
+          Discreto de propósito: só um ícone, sem rótulo grande competindo com a pergunta.
+          Abrir o diálogo não envia nenhum comando à sala — o timer não sabe que ele existe.
+        */}
+        {!preparingQuestion && roundIntro === null && (
+          <button
+            aria-label="Reportar esta pergunta"
+            className="report-trigger"
+            onClick={() => setReportTarget({
+              contextId: sessionId,
+              contextKind: isChallenge ? 'CHALLENGE' : 'MATCH',
+              prompt: activeQuestion.prompt,
+              questionId: activeQuestion.id,
+              roundNumber: activeRound.number,
+            })}
+            type="button"
+          ><Icon name="flag" /></button>
+        )}
+        {reportTarget !== null && (
+          <ReportQuestionDialog
+            contextId={reportTarget.contextId}
+            contextKind={reportTarget.contextKind}
+            onClose={() => setReportTarget(null)}
+            questionId={reportTarget.questionId}
+            roundNumber={reportTarget.roundNumber}
           />
         )}
       </>
