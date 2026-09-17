@@ -1,9 +1,37 @@
 import { env, runInDurableObject } from 'cloudflare:test';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AsyncHalfState } from '@quiz-gomes/domain';
 import { ChallengeRepository } from '../repositories/challenge-repository.js';
-import { notifyChallengeUpdated } from '../services/challenge-notifier.js';
+import { notifyChallengeReadyForSecond, notifyChallengeUpdated } from '../services/challenge-notifier.js';
+import { SocialRepository } from '../repositories/social-repository.js';
+import { resetSocialPushCacheForTests, SocialPushService } from '../services/social-push-service.js';
 import { befriend, fixture, themeIdOf, userAt, type FixtureUser } from './challenge-fixture.worker.js';
+
+/** Chave RSA sintética só para assinar o JWT do OAuth do FCM em teste. */
+async function syntheticPrivateKeyPem(): Promise<string> {
+  const generated = await crypto.subtle.generateKey({
+    hash: 'SHA-256',
+    modulusLength: 2048,
+    name: 'RSASSA-PKCS1-v1_5',
+    publicExponent: new Uint8Array([1, 0, 1]),
+  }, true, ['sign', 'verify']);
+  const exported = new Uint8Array(await crypto.subtle.exportKey('pkcs8', generated.privateKey));
+  let binary = '';
+  for (const byte of exported) binary += String.fromCharCode(byte);
+  const body = btoa(binary).match(/.{1,64}/g)?.join('\n') ?? '';
+  return [`-----BEGIN ${'PRIVATE KEY'}-----`, body, `-----END ${'PRIVATE KEY'}-----`].join('\n');
+}
+
+function withFcmConfigured(fixtureKey: string): typeof env {
+  return {
+    ...env,
+    FCM_SERVICE_ACCOUNT_JSON: JSON.stringify({
+      client_email: 'synthetic-service@example.test',
+      private_key: fixtureKey,
+      project_id: env.FIREBASE_PROJECT_ID,
+    }),
+  };
+}
 
 interface RealtimeEvent {
   challengeId?: string;
@@ -269,6 +297,68 @@ describe('M9C+M10 — Social converge por evento, sem polling', () => {
     ).bind(first.id, second.id).first<{ total: number }>()).toEqual({ total: 0 });
   });
 
+  it('corrida entre selar a metade e um cancelamento concorrente não duplica resposta, XP ou evento', async () => {
+    const { themeSlug, users } = await fixture(2);
+    const first = userAt(users, 0);
+    const second = userAt(users, 1);
+    await befriend(first, second);
+    const { challengeId, repository } = await asyncChallenge(first, second, themeSlug);
+    const stub = await openRoom(challengeId, 'FIRST');
+
+    // Leva a sala até FINALIZING (pronta para selar no próximo alarme), sem
+    // disparar o alarme ainda — reproduz a janela em que ele já está agendado.
+    await runInDurableObject(stub, async (_instance, state) => {
+      const stored = await state.storage.get<AsyncHalfState>('half');
+      if (stored === undefined) throw new Error('Metade não inicializada.');
+      stored.answers = stored.answers.map((_answer, index) => {
+        const score = [20, 18, 0, 15, 11][index] ?? 0;
+        return {
+          answeredAtMs: Date.now(), correct: score > 0,
+          remainingMs: score > 0 ? (score - 10) * 1_000 : 0, score, selectedOption: 0, submitted: true,
+        };
+      });
+      stored.score = stored.answers.reduce((total, answer) => total + (answer?.score ?? 0), 0);
+      stored.roundIndex = stored.questions.length - 1;
+      stored.phase = 'FINALIZING';
+      stored.phaseDeadlineMs = null;
+      stored.connected = true;
+      await state.storage.put('half', stored);
+    });
+
+    // Corrida: o desafio é cancelado por fora exatamente nessa janela, sem
+    // passar pelo endpoint /abort — a sala não sabe do cancelamento concorrente.
+    const record = await repository.byId(challengeId);
+    if (record === null) throw new Error('Desafio ausente.');
+    expect(await repository.applyAction(record, { actorUserId: first.id, type: 'CANCEL' })).toBe(true);
+
+    const firstSide = await listenSocial(first.id);
+    const secondSide = await listenSocial(second.id);
+    // O alarme roda mesmo assim: a selagem perde a corrida contra o cancelamento.
+    await runInDurableObject(stub, async (instance) => {
+      await (instance as unknown as { alarm: () => Promise<void> }).alarm();
+    });
+
+    expect(await repository.byId(challengeId)).toMatchObject({ status: 'CANCELLED' });
+    // Nenhuma resposta residual: a tentativa perdedora é explicitamente desfeita.
+    expect(await env.CORE_DB.prepare(
+      'SELECT COUNT(*) AS total FROM challenge_answers WHERE challenge_id = ?1',
+    ).bind(challengeId).first()).toEqual({ total: 0 });
+    expect(await env.CORE_DB.prepare(
+      'SELECT SUM(total_xp) AS total FROM user_profiles WHERE user_id IN (?1, ?2)',
+    ).bind(first.id, second.id).first<{ total: number }>()).toEqual({ total: 0 });
+    // A selagem perdedora é silenciosa: não gera um segundo CHALLENGE_UPDATED.
+    expect(firstSide.messages.some((message) => message.type === 'CHALLENGE_UPDATED')).toBe(false);
+    expect(secondSide.messages.some((message) => message.type === 'CHALLENGE_UPDATED')).toBe(false);
+
+    // Selar de novo (retry do alarme) continua sem efeito colateral.
+    await runInDurableObject(stub, async (instance) => {
+      await (instance as unknown as { alarm: () => Promise<void> }).alarm();
+    });
+    expect(await env.CORE_DB.prepare(
+      'SELECT COUNT(*) AS total FROM challenge_answers WHERE challenge_id = ?1',
+    ).bind(challengeId).first()).toEqual({ total: 0 });
+  });
+
   it('metade inicializada sem socket expira pela graça e não deixa FIRST_PLAYER_ACTIVE órfão', async () => {
     const { themeSlug, users } = await fixture(2);
     const first = userAt(users, 0);
@@ -392,5 +482,121 @@ describe('M9C+M10 — limite por dupla é por tipo de desafio', () => {
     ).bind(
       crypto.randomUUID(), stored.pair_low_id, stored.pair_high_id, first.id, second.id, themeId,
     ).run()).resolves.toBeDefined();
+  });
+});
+
+describe('M9C+M10 — FCM ASYNC "sua vez de jogar" é best-effort e nunca altera o desafio', () => {
+  beforeEach(() => resetSocialPushCacheForTests());
+
+  it('sem FCM configurado, a selagem da primeira metade não tenta rede nem quebra', async () => {
+    const { themeSlug, users } = await fixture(2);
+    const first = userAt(users, 0);
+    const second = userAt(users, 1);
+    await befriend(first, second);
+    const { challengeId, repository } = await asyncChallenge(first, second, themeSlug);
+    await new SocialRepository(env.CORE_DB).registerInstallation(second.id, 'syntheticFID_absent_1');
+    // env.FCM_SERVICE_ACCOUNT_JSON não está configurado neste ambiente de teste.
+    await finalizeHalf(await openRoom(challengeId, 'FIRST'), [20, 18, 0, 15, 11]);
+    expect(await repository.byId(challengeId)).toMatchObject({ status: 'WAITING_FOR_SECOND' });
+  });
+
+  it('destinatário que silenciou o desafiante não recebe push nenhum', async () => {
+    const { users } = await fixture(2);
+    const first = userAt(users, 0);
+    const second = userAt(users, 1);
+    await befriend(first, second);
+    const social = new SocialRepository(env.CORE_DB);
+    await social.registerInstallation(second.id, 'syntheticFID_muted_1');
+    await social.muteFriend(second.id, first.publicId);
+    const fetcher = vi.fn<typeof fetch>(() => { throw new Error('silenciado não deveria tentar FCM'); });
+    const push = new SocialPushService(withFcmConfigured(await syntheticPrivateKeyPem()), social, fetcher);
+    expect(push.configured).toBe(true);
+    await push.sendChallengeReady({
+      challengeId: 'challenge-muted', challengerDisplayName: 'Quem desafiou',
+      challengerUserId: first.id, origin: 'https://quiz.test', targetUserId: second.id,
+    });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it('com FCM configurado, entrega CHALLENGE_READY por FID sem PII e marca sucesso', async () => {
+    const { users } = await fixture(2);
+    const first = userAt(users, 0);
+    const second = userAt(users, 1);
+    await befriend(first, second);
+    const social = new SocialRepository(env.CORE_DB);
+    const fid = 'syntheticFID_ready_1';
+    await social.registerInstallation(second.id, fid);
+    const deliveries: Array<{ message: { data: Record<string, string>; fid: string } }> = [];
+    const fetcher = vi.fn<typeof fetch>((input, initialization) => {
+      const address = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (address === 'https://oauth2.googleapis.com/token') {
+        return Promise.resolve(Response.json({ access_token: 'synthetic-oauth-access-token', expires_in: 3_600 }));
+      }
+      if (typeof initialization?.body !== 'string') throw new Error('Payload FCM sintético ausente.');
+      deliveries.push(JSON.parse(initialization.body) as (typeof deliveries)[number]);
+      return Promise.resolve(Response.json({ name: 'projects/synthetic/messages/1' }));
+    });
+    const push = new SocialPushService(withFcmConfigured(await syntheticPrivateKeyPem()), social, fetcher);
+    await push.sendChallengeReady({
+      challengeId: 'challenge-ready', challengerDisplayName: 'Primeiro Jogador',
+      challengerUserId: first.id, origin: 'https://quiz.test', targetUserId: second.id,
+    });
+
+    expect(deliveries).toHaveLength(1);
+    const delivered = deliveries[0];
+    if (delivered === undefined) throw new Error('Entrega ausente.');
+    expect(delivered.message.fid).toBe(fid);
+    expect(delivered.message.data).toMatchObject({
+      body: 'Primeiro Jogador está esperando você jogar',
+      title: 'Sua vez de jogar',
+      type: 'CHALLENGE_READY',
+    });
+    expect(JSON.stringify(delivered.message.data)).not.toContain(first.uid);
+    expect(JSON.stringify(delivered.message.data)).not.toContain('@');
+    expect(await env.CORE_DB.prepare(
+      'SELECT last_success_at IS NOT NULL AS delivered FROM push_installations WHERE installation_id = ?1',
+    ).bind(fid).first()).toEqual({ delivered: 1 });
+  });
+
+  it('canal social já aberto (foreground) não duplica em push FCM, mesmo configurado', async () => {
+    const { themeSlug, users } = await fixture(2);
+    const first = userAt(users, 0);
+    const second = userAt(users, 1);
+    await befriend(first, second);
+    const { challengeId } = await asyncChallenge(first, second, themeSlug);
+    await new SocialRepository(env.CORE_DB).registerInstallation(second.id, 'syntheticFID_fg_1');
+    const secondSide = await listenSocial(second.id);
+    // Só a chamada FCM/OAuth passa por `fetch` global; a checagem de presença
+    // usa o binding do DO diretamente e não é afetada por este espião.
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    try {
+      await notifyChallengeReadyForSecond(withFcmConfigured(await syntheticPrivateKeyPem()), {
+        challengeId, firstPlayerDisplayName: 'Primeiro Jogador',
+        firstPlayerUserId: first.id, secondPlayerUserId: second.id,
+      });
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+    expect(secondSide.messages.some((message) => message.type === 'CHALLENGE_READY')).toBe(false);
+  });
+
+  it('falha de entrega do FCM é best-effort: não propaga erro nem altera o desafio', async () => {
+    const { themeSlug, users } = await fixture(2);
+    const first = userAt(users, 0);
+    const second = userAt(users, 1);
+    await befriend(first, second);
+    const { challengeId, repository } = await asyncChallenge(first, second, themeSlug);
+    await new SocialRepository(env.CORE_DB).registerInstallation(second.id, 'syntheticFID_fail_1');
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('rede fora do ar'));
+    try {
+      await expect(notifyChallengeReadyForSecond(withFcmConfigured(await syntheticPrivateKeyPem()), {
+        challengeId, firstPlayerDisplayName: 'Primeiro Jogador',
+        firstPlayerUserId: first.id, secondPlayerUserId: second.id,
+      })).resolves.toBeUndefined();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+    expect(await repository.byId(challengeId)).toMatchObject({ status: 'FIRST_PLAYER_ACTIVE' });
   });
 });

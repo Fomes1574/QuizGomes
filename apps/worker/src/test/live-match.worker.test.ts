@@ -320,6 +320,7 @@ async function requestInitialization(
     body: JSON.stringify({
       createdAtMs: Date.now(),
       firebaseUids: fixture.uids,
+      kind: 'MATCHMAKING',
       matchId: roomId,
       resource,
     }),
@@ -581,6 +582,13 @@ describe('Milestone 8 no runtime Workers simulado', () => {
     expect((await second.waitFor('PONG')).type).toBe('PONG');
   });
 
+  it('sala aberta pela fila de matchmaking persiste matches.kind = MATCHMAKING', async () => {
+    const fixture = await seedMatchFixture('kindmm', 500, 'CASUAL');
+    const { roomId } = await initializeRoom(fixture);
+    expect(await env.CORE_DB.prepare('SELECT kind FROM matches WHERE id = ?1').bind(roomId).first())
+      .toEqual({ kind: 'MATCHMAKING' });
+  });
+
   it('executa WebSocket, persiste/reconecta e aplica resultado idempotente no D1', async () => {
     const fixture = await seedMatchFixture('complete');
     const { roomId, stub } = await initializeRoom(fixture);
@@ -595,7 +603,7 @@ describe('Milestone 8 no runtime Workers simulado', () => {
 
     const duplicateRepository = new LiveMatchRepository(env.CORE_DB, env.QUESTIONS_DB);
     await expect(duplicateRepository.initialize({
-      createdAtMs: Date.now(), firebaseUids: fixture.uids, matchId: crypto.randomUUID(), resource: fixture.resource,
+      createdAtMs: Date.now(), firebaseUids: fixture.uids, kind: 'MATCHMAKING', matchId: crypto.randomUUID(), resource: fixture.resource,
     })).rejects.toMatchObject({ code: 'PLAYER_BUSY' });
 
     const first = await openRoom(stub, fixture.uids[0]);
@@ -1059,7 +1067,7 @@ describe('Milestone 8 no runtime Workers simulado', () => {
     const repository = new LiveMatchRepository(env.CORE_DB, env.QUESTIONS_DB);
     const matchId = crypto.randomUUID();
     const initial = await repository.initialize({
-      createdAtMs: Date.now(), firebaseUids: fixture.uids, matchId, resource: fixture.resource,
+      createdAtMs: Date.now(), firebaseUids: fixture.uids, kind: 'MATCHMAKING', matchId, resource: fixture.resource,
     });
     const finalizing = finishStoredEasyMatch(initial, null);
     await repository.markStarted(matchId);
@@ -1096,7 +1104,7 @@ describe('Milestone 8 no runtime Workers simulado', () => {
     const repository = new LiveMatchRepository(env.CORE_DB, env.QUESTIONS_DB);
     const matchId = crypto.randomUUID();
     const initial = await repository.initialize({
-      createdAtMs: Date.now(), firebaseUids: fixture.uids, matchId, resource: fixture.resource,
+      createdAtMs: Date.now(), firebaseUids: fixture.uids, kind: 'MATCHMAKING', matchId, resource: fixture.resource,
     });
     const finalizing = finishStoredEasyMatch(initial, 1);
     await repository.markStarted(matchId);
@@ -1117,7 +1125,7 @@ describe('Milestone 8 no runtime Workers simulado', () => {
     const repository = new LiveMatchRepository(env.CORE_DB, env.QUESTIONS_DB);
     const matchId = crypto.randomUUID();
     const initial = await repository.initialize({
-      createdAtMs: Date.now(), firebaseUids: fixture.uids, matchId, resource: fixture.resource,
+      createdAtMs: Date.now(), firebaseUids: fixture.uids, kind: 'MATCHMAKING', matchId, resource: fixture.resource,
     });
     let finalizing = startStoredMatch(initial);
     await repository.markStarted(matchId);

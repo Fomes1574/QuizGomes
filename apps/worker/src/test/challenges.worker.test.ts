@@ -5,10 +5,21 @@ import {
   CHALLENGE_RATE_WINDOW_MS,
   ChallengeRepository,
 } from '../repositories/challenge-repository.js';
-import { reconcileChallengeLifecycle } from '../index.js';
+import { acceptChallenge, reconcileChallengeLifecycle } from '../index.js';
 import { SocialRepository } from '../repositories/social-repository.js';
+import { UserRepository } from '../repositories/user-repository.js';
 import { DirectChallengeService } from '../services/direct-challenge-service.js';
 import { befriend, fixture, themeIdOf, userAt } from './challenge-fixture.worker.js';
+
+function fakeContext(): ExecutionContext {
+  return { waitUntil(promise: Promise<unknown>) { void promise; } } as unknown as ExecutionContext;
+}
+
+async function presenceOf(uid: string): Promise<{ activity: string; resource: string | null }> {
+  const response = await env.PRESENCE_HUB.get(env.PRESENCE_HUB.idFromName(uid))
+    .fetch('https://presence.internal/state');
+  return response.json();
+}
 
 describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
   it('exige amizade e recusa alvo bloqueado ou desconhecido', async () => {
@@ -171,14 +182,14 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
       themeId,
     });
 
-    expect(await repository.forUser(friend.id, now)).toHaveLength(1);
+    expect((await repository.forUser(friend.id, now)).challenges).toHaveLength(1);
     now += 29_999;
     expect(await repository.expireStaleDirect()).toEqual([]);
-    expect(await repository.forUser(friend.id, now)).toHaveLength(1);
+    expect((await repository.forUser(friend.id, now)).challenges).toHaveLength(1);
 
     now += 1;
     // Vencido some da lista mesmo antes da varredura.
-    expect(await repository.forUser(friend.id, now)).toEqual([]);
+    expect((await repository.forUser(friend.id, now)).challenges).toEqual([]);
     // A varredura por participante encerra e devolve os dois lados para notificação.
     expect(await repository.expireStaleDirect(friend.id)).toEqual([
       { id: created.challengeId, participants: [challenger.id, friend.id] },
@@ -227,7 +238,7 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
       expect(await repository.byId(created.challengeId)).toMatchObject({
         status: matchStatus === 'FINISHED' ? 'COMPLETED' : 'VOID',
       });
-      expect(await repository.forUser(first.id)).toEqual([]);
+      expect((await repository.forUser(first.id)).challenges).toEqual([]);
       await expect(repository.create({
         actorUserId: first.id, difficulty: 'EASY', kind: 'DIRECT',
         targetPresence: 'ONLINE', targetUserId: second.id, themeId,
@@ -296,7 +307,7 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
     });
     const pending = await challenges.byId(created.challengeId);
     if (pending === null) throw new Error('Convite DIRECT ausente.');
-    const started = await new DirectChallengeService(env).start(pending, [first.uid, second.uid]);
+    const started = await new DirectChallengeService(env).start(pending, [first.uid, second.uid], crypto.randomUUID());
     await env.CORE_DB.prepare(
       "UPDATE challenges SET status = 'ACTIVE', match_id = ?1 WHERE id = ?2",
     ).bind(started.roomId, created.challengeId).run();
@@ -556,6 +567,215 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
     expect(await env.CORE_DB.prepare(
       'SELECT SUM(total_xp) AS total FROM user_profiles WHERE user_id IN (?1, ?2)',
     ).bind(first.id, second.id).first<{ total: number }>()).toEqual({ total: 0 });
+  });
+
+  it('aceite em duplicidade (double tap / outra aba) converge para a mesma sala DIRECT', async () => {
+    const { themeSlug, users } = await fixture(2);
+    const first = userAt(users, 0);
+    const second = userAt(users, 1);
+    await befriend(first, second);
+    const challenges = new ChallengeRepository(env.CORE_DB);
+    const userRepository = new UserRepository(env.CORE_DB);
+    const themeId = await themeIdOf(themeSlug);
+    const created = await challenges.create({
+      actorUserId: first.id, difficulty: 'EASY', kind: 'DIRECT',
+      targetPresence: 'ONLINE', targetUserId: second.id, themeId,
+    });
+    const context = fakeContext();
+
+    const [firstResponse, secondResponse] = await Promise.all([
+      acceptChallenge(env, context, challenges, userRepository, second.id, created.challengeId),
+      acceptChallenge(env, context, challenges, userRepository, second.id, created.challengeId),
+    ]);
+    const firstBody = await firstResponse.json<{ roomId: string }>();
+    const secondBody = await secondResponse.json<{ roomId: string }>();
+    // Os dois lados (double tap, outra aba) recebem exatamente a mesma sala.
+    expect(secondBody.roomId).toBe(firstBody.roomId);
+
+    expect(await env.CORE_DB.prepare('SELECT COUNT(*) AS total FROM matches WHERE id = ?1')
+      .bind(firstBody.roomId).first()).toEqual({ total: 1 });
+    expect(await challenges.byId(created.challengeId)).toMatchObject({ matchId: firstBody.roomId, status: 'ACTIVE' });
+    // Nenhuma reserva de presença extra: cada jogador está preparado numa única sala.
+    await expect(presenceOf(first.uid)).resolves.toMatchObject({ resource: firstBody.roomId });
+    await expect(presenceOf(second.uid)).resolves.toMatchObject({ resource: firstBody.roomId });
+  });
+
+  it('falha de PresenceHub durante o start() desfaz a reserva, sem deixar modal preso', async () => {
+    const { themeSlug, users } = await fixture(2);
+    const first = userAt(users, 0);
+    const second = userAt(users, 1);
+    await befriend(first, second);
+    const challenges = new ChallengeRepository(env.CORE_DB);
+    const userRepository = new UserRepository(env.CORE_DB);
+    const themeId = await themeIdOf(themeSlug);
+    const created = await challenges.create({
+      actorUserId: first.id, difficulty: 'EASY', kind: 'DIRECT',
+      targetPresence: 'ONLINE', targetUserId: second.id, themeId,
+    });
+
+    // O desafiante já está ocupado em outra sala quando o aceite chega —
+    // reproduz a corrida entre uma reserva concorrente e este aceite direto.
+    await env.PRESENCE_HUB.get(env.PRESENCE_HUB.idFromName(first.uid)).fetch(
+      'https://presence.internal/transition',
+      { body: JSON.stringify({ from: ['idle'], resource: 'outra-sala', to: 'playing' }), method: 'POST' },
+    );
+
+    await expect(acceptChallenge(env, fakeContext(), challenges, userRepository, second.id, created.challengeId))
+      .rejects.toMatchObject({ code: 'PLAYER_BUSY', status: 409 });
+
+    // Nenhum modal preso: a tentativa que abriu o CAS desfaz a própria reserva.
+    expect(await challenges.byId(created.challengeId)).toMatchObject({ status: 'VOID' });
+    // O convidado, que não estava ocupado, não fica preso em "preparing".
+    await expect(presenceOf(second.uid)).resolves.toMatchObject({ activity: 'idle' });
+    // A ocupação alheia do desafiante não é tocada pela falha.
+    await expect(presenceOf(first.uid)).resolves.toMatchObject({ activity: 'playing', resource: 'outra-sala' });
+
+    // Depois do VOID a dupla pode abrir um novo convite normalmente.
+    await expect(challenges.create({
+      actorUserId: first.id, difficulty: 'EASY', kind: 'DIRECT',
+      targetPresence: 'ONLINE', targetUserId: second.id, themeId,
+    })).resolves.toMatchObject({ created: true });
+  });
+
+  it('reconciliação não anula uma sala DIRECT recém-reservada ainda dentro da graça de 7 s', async () => {
+    const { themeSlug, users } = await fixture(2);
+    const first = userAt(users, 0);
+    const second = userAt(users, 1);
+    await befriend(first, second);
+    const challenges = new ChallengeRepository(env.CORE_DB);
+    const themeId = await themeIdOf(themeSlug);
+    const created = await challenges.create({
+      actorUserId: first.id, difficulty: 'EASY', kind: 'DIRECT',
+      targetPresence: 'ONLINE', targetUserId: second.id, themeId,
+    });
+    // roomId reservado agora mesmo (updated_at "agora"), mas o MatchRoom ainda
+    // não terminou de inicializar — a mesma janela de um `start()` lento.
+    const roomId = crypto.randomUUID();
+    await env.CORE_DB.prepare(
+      `UPDATE challenges SET status = 'PREPARING', match_id = ?1 WHERE id = ?2`,
+    ).bind(roomId, created.challengeId).run();
+
+    await reconcileChallengeLifecycle(env, fakeContext(), challenges, first.id);
+
+    // Dentro dos 7 s, mesmo com o MatchRoom "MISSING", a reserva sobrevive.
+    expect(await challenges.byId(created.challengeId)).toMatchObject({ matchId: roomId, status: 'PREPARING' });
+    expect(await env.CORE_DB.prepare('SELECT COUNT(*) AS total FROM matches WHERE id = ?1')
+      .bind(roomId).first()).toEqual({ total: 0 });
+  });
+
+  it('depois da graça, reconciliação anula a reserva DIRECT cujo MatchRoom nunca terminou de nascer', async () => {
+    const { themeSlug, users } = await fixture(2);
+    const first = userAt(users, 0);
+    const second = userAt(users, 1);
+    await befriend(first, second);
+    const challenges = new ChallengeRepository(env.CORE_DB);
+    const themeId = await themeIdOf(themeSlug);
+    const created = await challenges.create({
+      actorUserId: first.id, difficulty: 'EASY', kind: 'DIRECT',
+      targetPresence: 'ONLINE', targetUserId: second.id, themeId,
+    });
+    const roomId = crypto.randomUUID();
+    // Mesma reserva, agora "parada" há mais de 7 s: a inicialização do MatchRoom
+    // nunca chegou a completar (falha pós-criação da tentativa).
+    await env.CORE_DB.prepare(
+      `UPDATE challenges SET status = 'PREPARING', match_id = ?1, updated_at = '2000-01-01T00:00:00.000Z' WHERE id = ?2`,
+    ).bind(roomId, created.challengeId).run();
+
+    await reconcileChallengeLifecycle(env, fakeContext(), challenges, first.id);
+
+    expect(await challenges.byId(created.challengeId)).toMatchObject({ status: 'VOID' });
+    // A dupla volta a poder abrir um novo convite DIRECT.
+    await expect(challenges.create({
+      actorUserId: first.id, difficulty: 'EASY', kind: 'DIRECT',
+      targetPresence: 'ONLINE', targetUserId: second.id, themeId,
+    })).resolves.toMatchObject({ created: true });
+  });
+
+  it('expõe roomId de DIRECT em preparo/ativo para os dois participantes recuperarem sem depender do push', async () => {
+    const { themeSlug, users } = await fixture(2);
+    const first = userAt(users, 0);
+    const second = userAt(users, 1);
+    await befriend(first, second);
+    const challenges = new ChallengeRepository(env.CORE_DB);
+    const userRepository = new UserRepository(env.CORE_DB);
+    const themeId = await themeIdOf(themeSlug);
+    const created = await challenges.create({
+      actorUserId: first.id, difficulty: 'EASY', kind: 'DIRECT',
+      targetPresence: 'ONLINE', targetUserId: second.id, themeId,
+    });
+
+    // O desafiante (criador) nunca vê roomId antes do aceite.
+    const beforeAccept = (await challenges.forUser(first.id)).challenges.find((entry) => entry.id === created.challengeId);
+    expect(beforeAccept?.roomId).toBeNull();
+
+    // Aceite do convidado ativa a sala — simula o criador perdendo o push
+    // CHALLENGE_STARTED (rede instável, aba em segundo plano).
+    const response = await acceptChallenge(env, fakeContext(), challenges, userRepository, second.id, created.challengeId);
+    const { roomId } = await response.json<{ roomId: string }>();
+
+    // O criador recupera a MESMA sala relendo a lista autoritativa, sem realtime.
+    const afterAccept = (await challenges.forUser(first.id)).challenges.find((entry) => entry.id === created.challengeId);
+    expect(afterAccept).toMatchObject({ roomId, status: 'ACTIVE' });
+    // O convidado também a vê, pela mesma via.
+    const forSecond = (await challenges.forUser(second.id)).challenges.find((entry) => entry.id === created.challengeId);
+    expect(forSecond).toMatchObject({ roomId, status: 'ACTIVE' });
+  });
+
+  it('aceite DIRECT persiste matches.kind = DIRECT_LIVE, nunca escolhido pelo cliente', async () => {
+    const { themeSlug, users } = await fixture(2);
+    const first = userAt(users, 0);
+    const second = userAt(users, 1);
+    await befriend(first, second);
+    const challenges = new ChallengeRepository(env.CORE_DB);
+    const userRepository = new UserRepository(env.CORE_DB);
+    const themeId = await themeIdOf(themeSlug);
+    const created = await challenges.create({
+      actorUserId: first.id, difficulty: 'EASY', kind: 'DIRECT',
+      targetPresence: 'ONLINE', targetUserId: second.id, themeId,
+    });
+
+    const response = await acceptChallenge(env, fakeContext(), challenges, userRepository, second.id, created.challengeId);
+    const { roomId } = await response.json<{ roomId: string }>();
+
+    expect(await env.CORE_DB.prepare('SELECT kind FROM matches WHERE id = ?1').bind(roomId).first())
+      .toEqual({ kind: 'DIRECT_LIVE' });
+  });
+
+  it('pagina desafios vivos além de 50 por cursor, sem esconder nenhum silenciosamente', async () => {
+    const total = 55;
+    const { themeSlug, users } = await fixture(total + 1);
+    const owner = userAt(users, 0);
+    const friends = users.slice(1);
+    for (const friend of friends) await befriend(owner, friend);
+    const themeId = await themeIdOf(themeSlug);
+    const repository = new ChallengeRepository(env.CORE_DB);
+
+    const base = Date.parse('2026-01-01T00:00:00.000Z');
+    const ids = friends.map(() => crypto.randomUUID());
+    await env.CORE_DB.batch(friends.map((friend, index) => {
+      const createdAt = new Date(base + index * 1_000).toISOString();
+      const [low, high] = [owner.id, friend.id].sort();
+      return env.CORE_DB.prepare(
+        `INSERT INTO challenges
+          (id, pair_low_id, pair_high_id, first_player_user_id, second_player_user_id,
+           theme_id, difficulty, kind, status, revision, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'EASY', 'ASYNC', 'FIRST_PLAYER_ACTIVE', 1, ?7, ?7)`,
+      ).bind(ids[index], low, high, owner.id, friend.id, themeId, createdAt);
+    }));
+
+    const firstPage = await repository.forUser(owner.id);
+    expect(firstPage.challenges).toHaveLength(50);
+    expect(firstPage.nextCursor).not.toBeNull();
+    expect(new Set(firstPage.challenges.map((entry) => entry.id)).size).toBe(50);
+
+    const secondPage = await repository.forUser(owner.id, Date.now(), firstPage.nextCursor);
+    expect(secondPage.challenges).toHaveLength(total - 50);
+    expect(secondPage.nextCursor).toBeNull();
+
+    // As duas páginas juntas cobrem exatamente os 55 desafios, sem repetir nem sumir com nenhum.
+    const seen = new Set([...firstPage.challenges, ...secondPage.challenges].map((entry) => entry.id));
+    expect(seen.size).toBe(total);
+    expect([...seen].sort()).toEqual([...ids].sort());
   });
 
   it('todas as rotas de desafio exigem autenticação e não aceitam identidade arbitrária', async () => {
