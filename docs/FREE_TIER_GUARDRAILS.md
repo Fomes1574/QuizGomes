@@ -24,7 +24,7 @@ Fontes Cloudflare atuais:
 
 - Firebase Hosting, App Hosting, Firestore, Realtime Database, Storage e Functions;
 - plano Blaze;
-- R2 até autorização explícita;
+- R2 até autorização explícita; a preparação permitida limita-se a interfaces/adapters sem binding, bucket, upload ou permissões;
 - Workers Analytics Engine, Logpush ou analytics pagos;
 - KV para presença;
 - `ORDER BY RANDOM()` ou scans integrais de perguntas;
@@ -65,7 +65,7 @@ O administrador deve acompanhar semanalmente no começo e diariamente após cres
 - queries com `rows_read / rows_returned` alto;
 - crescimento médio de `user_pool_state.state_blob`;
 - número de matches incompletos e retries;
-- tamanho/quantidade de imagens quando R2 for aprovado.
+- tamanho/quantidade de imagens quando R2 for aprovado; até lá, nenhuma `image_key` pode apontar para arquivo que o backend atual não serve.
 - quantidade e bytes de `theme_artwork_blobs`; 100 temas no hard cap representam cerca de 6 MB e 1.000 representam cerca de 60 MB, antes do overhead do SQLite.
 - quantidade e bytes de `user_custom_avatars`; remoção limpa o BLOB e troca substitui a row, sem histórico de originais.
 

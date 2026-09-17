@@ -18,7 +18,7 @@ Estas regras valem para toda alteração neste repositório.
 - Frontend: React + TypeScript + Vite, SPA/PWA mobile-first.
 - Backend e hospedagem: Cloudflare Workers; dados em D1; realtime em Durable Objects/WebSockets.
 - Firebase é usado somente para Authentication com Google e Firebase Cloud Messaging gratuito/autorizado no Milestone 9A. Não usar Hosting, Firestore, Realtime Database, Storage, Functions ou Blaze.
-- Não provisionar R2 sem autorização explícita. A camada de imagens deve permanecer abstrata.
+- Não provisionar R2 sem autorização explícita. A camada de imagens deve permanecer abstrata, com contrato único de leitura/escrita, chaves opacas e validação de que toda `image_key` publicada é realmente servível pelo backend ativo. A futura adoção de R2 deve ser apenas um adapter/configuração, sem mudar contratos editoriais ou expor bucket/chaves ao cliente.
 - A meta operacional é R$ 0/mês. Não ativar billing, assinatura, cartão ou recurso sem free tier.
 - Não usar OpenAI API no aplicativo.
 

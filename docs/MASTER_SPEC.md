@@ -1,6 +1,6 @@
 # Especificação mestre — QUIZ GOMES V1
 
-Status: decisões vigentes em 10 de agosto de 2026. Este documento substitui propostas anteriores conflitantes.
+Status: consolidado em 17 de setembro de 2026. A seção **Estado vigente** do ExecPlan prevalece sobre qualquer trecho histórico deste documento.
 
 ## 1. Visão do produto
 
@@ -173,7 +173,7 @@ Entre rodadas aparece “PERGUNTA N / TOTAL” em fade curto; resultado fica cer
 
 ## 11. Conexão e autoridade
 
-Queda individual pausa 100% da partida por até 7 s, preservando `remainingMs`. Reconexão restaura o estado, sem renovar 10 s. Se não voltar, partida é anulada para quem ficou; desconectado perde apenas em Ranqueada o valor de derrota Média do elo: 20, 22, 24, 26, 28, 30, 32 ou 36.
+Queda individual pausa 100% da partida por até 7 s, preservando `remainingMs`. Reconexão abaixo de 7.000 ms restaura o estado, sem renovar 10 s; em 7.000 ms ou mais a partida inteira fica `VOID`, sem XP ou Conhecimento para qualquer jogador. Cliente nunca decide esse terminal.
 
 Queda de ambos ou falha sistêmica anula sem efeito. Readiness desigual também aguarda até 7 s. Durable Object diferencia, na medida tecnicamente possível, queda individual e falha da sala.
 
@@ -191,4 +191,4 @@ Conquistas, catálogo final de molduras/títulos e uploads ficam somente como fu
 
 Obrigatórios: erros/loading/empty states, mobile/desktop, claro/escuro, console limpo, acessibilidade, testes, typecheck, lint, build e documentação.
 
-Não implementar agora: monetização, anúncios, energia, moedas, loot boxes, chat/feed público, bots, IA no app, subtemas, sons, músicas, lojas nativas, serviços Firebase além de Auth ou R2 sem autorização.
+Não implementar agora: monetização, anúncios, energia, moedas, loot boxes, chat/feed público, bots, IA no app, subtemas, sons, músicas, lojas nativas ou serviços Firebase além de Auth/FCM autorizado. R2 não é parte da V1 atual: manter somente a abstração pronta para um adapter futuro, sem bucket, binding, upload ou custo até autorização explícita.

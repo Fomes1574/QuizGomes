@@ -4,7 +4,31 @@
 
 Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsiva, autenticação Firebase validada no Worker, modelo D1, motores de ranking/XP/perguntas/partida e bases seguras para realtime, social, assíncrono e administração.
 
-## Progresso
+## Estado vigente — ler antes do histórico
+
+Esta seção é a fonte operacional atual. Entradas abaixo são histórico de decisões
+e de smokes; quando divergirem, não voltam a ser regra.
+
+- M0–M7 concluídos; M8, M8.5, M9A.1, M9B e M9C+M10 estão **CONCLUÍDOS/FROZEN**.
+  O corrective #3 de DIRECT/ASYNC, recovery e PWA foi aprovado fisicamente pelo
+  proprietário. A regressão completa desses fluxos volta no smoke final M12.
+- Toda modalidade usa **EASY 5 / MEDIUM 8 / HARD 12**, 10 s por pergunta e
+  sorteio uniforme sem histórico entre partidas; não há repetição somente dentro
+  da própria partida. Descoberta histórica não influencia o sorteio.
+- Desafios entre amigos são sempre Casual. DIRECT dura 30 s; ASYNC não expira;
+  por dupla coexistem no máximo um ASYNC vivo e um DIRECT vivo. Reconexão abaixo
+  de 7 s retoma; em 7 s ou mais a partida fica `VOID`.
+- M11 e M12 estão **autorizados e em andamento**, mas não concluídos. O checkpoint
+  `43d5f44` corrigiu nível real, melhor tema real, disponibilidade DIRECT apenas
+  ONLINE, limpeza de mutes e intenção pós-login de consumo único.
+- Próximo escopo: reports, missões/streak, estatísticas idempotentes, pipeline
+  editorial/admin, paginação segura e hardening/E2E. Não declarar V1 finalizada
+  nem smoke físico sem execução do proprietário.
+- R2 continua sem provisionamento e sem custo. O código/documentação deve manter
+  somente `ImageStorage` intercambiável, chaves opacas e proibir imagens que não
+  possam ser realmente servidas pelo backend ativo.
+
+## Histórico de progresso
 
 - [x] 2026-08-10 — prompt mestre consolidado em documentação persistente.
 - [x] 2026-08-10 — repositório remoto identificado (`Fomes1574/QuizGomes`) e constatado vazio.
@@ -68,7 +92,7 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 - [x] 2026-09-11 — Milestone 9C+M10 — corrective #3 aplicado após persistir ghost DIRECT em produção: liveness agora vem do `MatchRoom` autoritativo (`/reconcile`), reserva `PREPARING` sem state após 7 s vira `VOID` e libera locks; o PWA ativa/recarrega bundles novos apenas fora de `/partida/*` e `/desafio/*`. Smoke físico continua reprovado/pendente.
 - [x] Milestone 9C+M10 — corrective #3 fisicamente aprovado pelo proprietário; DIRECT/ASYNC, recovery e PWA correspondente estão CONCLUÍDOS/FROZEN. A regressão integral retorna ao smoke final M12.
 - [ ] M11/M12 — checkpoint de finalização: corrigidos nível do shell, melhor tema real no perfil, disponibilidade DIRECT somente ONLINE, limpeza de mute em unfriend/block e retomada única de intenção pós-login. Próxima continuação: migrations forward-only de reports/missões/streak/stats e superfícies ADMIN ponta a ponta; V1 ainda não está finalizada.
-- [ ] Milestone 11 — criação/moderação/import/admin (não iniciar sem autorização).
+- [ ] Milestone 11 — criação/moderação/import/admin (autorizado; não concluído).
 - [ ] Milestone 12 — e2e, performance, acessibilidade, segurança e deploy.
 
 ## Decisões
@@ -76,10 +100,10 @@ Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsi
 1. **Monorepo npm simples.** Três workspaces evitam tooling excessivo e isolam domínio puro.
 2. **Validação Firebase sem Service Account.** `jose` valida RS256 e claims com certificados públicos rotativos, conforme a documentação Firebase para runtimes sem Admin SDK nativo.
 3. **Durable Objects SQLite + Hibernation.** É o backend disponível no plano gratuito e evita duração ociosa.
-4. **Estado usuário+pool binário.** Fila recente e bitmap histórico ficam em uma row compacta versionada.
+4. **Estado usuário+pool binário.** Bitmap de descoberta fica em uma row compacta versionada; formatos legados com fila recente são apenas compatibilidade e não influenciam o sorteio.
 5. **Slots densos.** Sorteio uniforme por inteiro e índice; nunca `ORDER BY RANDOM()`.
 6. **Categoria usa média ordinal fracionária.** Apenas temas com Ranqueada, cap em Desafiante I, sem efeito competitivo.
-7. **R2 adiado.** Adapter local existe; nenhum recurso pago será ativado.
+7. **R2 adiado, mas preparado.** `ImageStorage` permanece intercambiável com chaves opacas e sem upload fictício; nenhum binding, bucket, permissão ou custo será ativado sem nova autorização.
 8. **Repositório público autorizado.** A autorização explícita do proprietário em 2026-08-10 substitui a exigência anterior de repositório privado. Configuração Web Firebase pode ser pública; credenciais de servidor permanecem fora do Git.
 9. **Sala simultânea é autoridade única.** O Durable Object recebe somente READY, opção escolhida e comandos de conexão; deadline, `remainingMs`, correção, score, progressão e resultado são derivados no servidor e persistidos a cada transição.
 10. **Exclusividade e resultado no D1.** `active_match_players` impede duas partidas por usuário; `result_ledger`, `result_version` e um único `D1Database.batch()` tornam resultado, XP, Conhecimento, histórico e liberação do lock transacionais e idempotentes.
@@ -997,5 +1021,5 @@ migrations, build, audit e diff review seguem obrigatórios antes do push.
 - suíte unitária, runtime Workers/WebSocket, PWA, Worker, migrations, rollback, npm audit e secrets verdes;
 - push FCM opcional sem impedir amizades/bloqueios quando não configurado;
 - smoke físico do 9B APROVADO em 2026-09-11 e o milestone CONCLUÍDO/FROZEN; o smoke físico completo do 9A continua pendente até confirmação externa do proprietário;
-- Milestone 9C+M10 unificado (Desafios entre amigos) implementado por inteiro e validado localmente; smoke físico REPROVADO em 2026-09-11, passes corretivos dos oito defeitos e dos desafios fantasma aplicados e o milestone segue ABERTO até um novo smoke físico do proprietário;
-- Milestone 11 não iniciado; sem preview de branch, R2, billing ou produto pago.
+- Milestone 9C+M10 unificado (Desafios entre amigos) concluído e FROZEN após aprovação física do corrective #3; a regressão integral é obrigação do M12;
+- M11/M12 autorizados, ainda pendentes, sem preview de branch, sem R2 provisionado, billing ou produto pago.

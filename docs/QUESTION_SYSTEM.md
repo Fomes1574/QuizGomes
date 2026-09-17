@@ -23,7 +23,7 @@ Seleção:
 
 Se `N - blockedEligible < needed`, retornar erro de pool insuficiente; nunca repetir pergunta dentro da própria partida.
 
-O dataset interno `SYNTHETIC_SMOKE_TEST` possui 250 perguntas EASY mínimas e inequivocamente artificiais para suportar repetição de smoke sem mudar essa regra. A ampliação é uma migration restrita aos IDs e à flag reservados; temas editoriais continuam usando seus próprios pools e históricos normais.
+O dataset interno `SYNTHETIC_SMOKE_TEST` possui 250 perguntas EASY mínimas e inequivocamente artificiais para suportar repetição de smoke sem mudar essa regra. A ampliação é uma migration restrita aos IDs e à flag reservados; temas editoriais continuam usando seus próprios pools e descoberta histórica normal.
 
 Ao desativar slot S:
 
@@ -39,26 +39,21 @@ Na primeira V1, mudanças de slot que afetem descoberta exigem job de manutenç�
 
 Uma row guarda `state_blob`, `pool_version` e `revision`.
 
-Formato binário V1:
+Formato binário vigente:
 
 | Campo | Tamanho | Descrição |
 |---|---:|---|
-| versão | 1 byte | `0x01` |
-| quantidade recente | 2 bytes | unsigned big-endian, 0..200 |
-| fila recente | 4 × count | slots oldest→newest |
+| versão | 1 byte | versão do formato |
 | bitmap histórico | variável | bit `(slot-1)` indica descoberta |
 
-Com 1.000.000 de perguntas num único pool, o bitmap máximo é aproximadamente 125 KB por usuário daquele pool; normalmente perguntas estarão distribuídas entre muitos pools e o estado cresce sob demanda. A fila custa no máximo 803 bytes adicionais. Não existe uma row por usuário×pergunta.
+Com 1.000.000 de perguntas num único pool, o bitmap máximo é aproximadamente 125 KB por usuário daquele pool; normalmente perguntas estarão distribuídas entre muitos pools e o estado cresce sob demanda. Não existe uma row por usuário×pergunta. Leitores legados podem aceitar o formato que continha fila recente, mas a fila não participa mais da seleção nem deve voltar a ser gravada.
 
 Ao responder:
 
 - marcar bit histórico;
-- se slot já estiver na fila recente, removê-lo antes de recolocar no fim;
-- acrescentar slot;
-- se exceder 200, remover o mais antigo;
 - atualizar com `WHERE revision = ?`; conflito recarrega e tenta novamente.
 
-Descoberta é `popcount(bitmap intersect activeSlots) / active_count`. Como slots ativos são densos, na versão sem migração pendente basta contar bits de 1..N. O bloqueio recente nunca altera essa métrica.
+Descoberta é `popcount(bitmap intersect activeSlots) / active_count`. Como slots ativos são densos, na versão sem migração pendente basta contar bits de 1..N. Descoberta nunca altera elegibilidade de sorteio.
 
 ## Shards
 
@@ -78,6 +73,11 @@ Importadores aceitam JSON/CSV normalizado, validam:
 - tamanho textual e medição editorial;
 - metadata/licença de imagem;
 - imagem menor que 100 KB.
+
+`image_key` é uma referência opaca. Só pode ser aceita/publicada quando o
+`ImageStorage` ativo consegue servi-la; sem backend de imagens autorizado, a
+pergunta permanece sem imagem e o admin informa essa indisponibilidade. R2 fica
+preparado apenas como adapter futuro, sem bucket, binding ou upload fantasma na V1.
 
 Falhas retornam linhas/campos sem importação parcial. Fixtures usam namespace e seed separados.
 

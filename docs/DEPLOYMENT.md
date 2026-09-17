@@ -2,7 +2,7 @@
 
 Atualizado em 21 de agosto de 2026. O destino é um único Cloudflare Worker que serve API, PWA e Durable Objects em `workers.dev`, usando somente **Workers Free**. Firebase Cloud Messaging opcional permanece no plano gratuito.
 
-Se o painel solicitar cartão, billing, Workers Paid, upgrade ou qualquer produto pago, cancele e pare. Não use deploy temporário, não crie R2 e não habilite recursos ausentes deste documento.
+Se o painel solicitar cartão, billing, Workers Paid, upgrade ou qualquer produto pago, cancele e pare. Não use deploy temporário nem habilite recursos ausentes deste documento. R2 permanece deliberadamente não provisionado; a aplicação só deve manter compatibilidade arquitetural para um adapter futuro.
 
 ## 1. Firebase
 
@@ -187,7 +187,7 @@ Depois:
 
 Esses itens só contam como **testes reais Cloudflare** quando executados no hostname implantado. Até lá, permanecem pendentes no ExecPlan.
 
-As respostas corretas do dataset seguem o ciclo A/B/C/D pelo slot: 1=A, 2=B, 3=C, 4=D e então reinicia. Todas as 250 perguntas têm quatro opções mínimas, nenhuma imagem, fonte ou trivia real e a flag editorial exata `SYNTHETIC_SMOKE_TEST`. A ampliação é exclusiva deste dataset e não relaxa a regra global das últimas 200 perguntas.
+As respostas corretas do dataset seguem o ciclo A/B/C/D pelo slot: 1=A, 2=B, 3=C, 4=D e então reinicia. Todas as 250 perguntas têm quatro opções mínimas, nenhuma imagem, fonte ou trivia real e a flag editorial exata `SYNTHETIC_SMOKE_TEST`. A ampliação é exclusiva deste dataset e não altera a regra global de sorteio uniforme sem histórico entre partidas.
 
 A limpeza já está preparada em `apps/worker/maintenance/synthetic-smoke-test`, mas não faz parte do pipeline e não deve ser executada antes da autorização posterior do proprietário. Quando promovida a migrations novas, ela remove apenas o conteúdo marcado e preserva todo histórico de usuário/partida por meio de tombstones desativados quando houver referências.
 
@@ -201,7 +201,7 @@ A limpeza já está preparada em `apps/worker/maintenance/synthetic-smoke-test`,
 
 ## R2
 
-Não há binding, bucket, script ou permissão de R2 neste deployment. A camada de imagens continua abstrata e R2 só poderá ser considerado com autorização explícita futura.
+Não há binding, bucket, script ou permissão de R2 neste deployment. A camada de imagens tem contrato abstrato e chaves opacas; conteúdo só pode apontar para imagem que o backend ativo realmente consiga servir. Quando R2 for autorizado, adicionar um adapter e configuração runtime separados, com validação de tamanho/tipo/licença e URLs públicas seguras/versionadas. Não mudar contratos HTTP/editoriais, não expor credenciais e não criar upload fictício antes disso.
 
 ## Fontes oficiais consultadas
 
