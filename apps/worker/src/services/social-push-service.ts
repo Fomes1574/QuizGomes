@@ -153,6 +153,80 @@ export class SocialPushService {
     }));
   }
 
+  /**
+   * ASYNC "sua vez de jogar": só quando a primeira metade seла de verdade
+   * (chamado pela sala do desafio). Nunca para DIRECT — a graça de 30s do
+   * DIRECT não tem "sua vez" para avisar, e o convite já é sincronizado ao vivo.
+   */
+  async sendChallengeReady(input: {
+    challengeId: string;
+    challengerDisplayName: string;
+    challengerUserId: string;
+    origin: string;
+    targetUserId: string;
+  }): Promise<void> {
+    const account = accountFrom(this.env);
+    if (account === null || await this.repository.blocked(input.challengerUserId, input.targetUserId)) return;
+    const allowed = await this.repository.recipientsAllowingNotification(input.challengerUserId, [input.targetUserId]);
+    if (allowed.length === 0) return;
+    const installations = await this.repository.enabledInstallations(input.targetUserId);
+    if (installations.length === 0) return;
+    let accessToken: string;
+    try {
+      accessToken = await this.accessToken(account);
+    } catch {
+      console.warn(JSON.stringify({ challengeId: input.challengeId, code: 'FCM_AUTH_UNAVAILABLE' }));
+      return;
+    }
+    await Promise.allSettled(installations.map(async (installationId) => {
+      try {
+        const response = await this.fetcher(
+          `https://fcm.googleapis.com/v1/projects/${encodeURIComponent(this.env.FIREBASE_PROJECT_ID)}/messages:send`,
+          {
+            body: JSON.stringify({
+              message: {
+                data: {
+                  body: `${input.challengerDisplayName} está esperando você jogar`,
+                  challengeId: input.challengeId,
+                  title: 'Sua vez de jogar',
+                  type: 'CHALLENGE_READY',
+                  url: '/social',
+                },
+                fid: installationId,
+                webpush: {
+                  ...(input.origin === '' ? {} : { fcm_options: { link: `${input.origin}/social` } }),
+                  headers: { TTL: '86400', Urgency: 'normal' },
+                },
+              },
+            }),
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              'Content-Type': 'application/json',
+            },
+            method: 'POST',
+          },
+        );
+        if (response.ok) {
+          await this.repository.markInstallationSuccess(installationId);
+          return;
+        }
+        const result = await response.json<{ error?: { details?: Array<{ errorCode?: string }>; status?: string } }>()
+          .catch(() => null);
+        const detailCode = result?.error?.details?.find((detail) => detail.errorCode !== undefined)?.errorCode;
+        if (response.status === 404 || detailCode === 'UNREGISTERED') {
+          await this.repository.disableInstallation(installationId);
+        }
+        console.warn(JSON.stringify({
+          challengeId: input.challengeId,
+          code: detailCode ?? result?.error?.status ?? 'FCM_DELIVERY_FAILED',
+          status: response.status,
+        }));
+      } catch {
+        console.warn(JSON.stringify({ challengeId: input.challengeId, code: 'FCM_DELIVERY_UNAVAILABLE' }));
+      }
+    }));
+  }
+
   private async accessToken(account: ServiceAccount): Promise<string> {
     if (cachedAccessToken !== null
       && cachedAccessToken.projectId === this.env.FIREBASE_PROJECT_ID

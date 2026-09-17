@@ -102,6 +102,17 @@ export class SocialRealtimeHub {
     if (url.pathname === '/count' && request.method === 'GET') {
       return Response.json({ onlineCount: this.users().size });
     }
+    if (url.pathname === '/online' && request.method === 'POST') {
+      // Usado só para não duplicar um push quando o destinatário já está com o
+      // canal social aberto (foreground) — nunca para decidir presença de amigo.
+      const input = await request.json<SocialInvalidation>();
+      if (!Array.isArray(input.userIds) || input.userIds.length > 100 ||
+        input.userIds.some((userId) => typeof userId !== 'string')) {
+        return Response.json({ error: 'INVALID_PRESENCE' }, { status: 400 });
+      }
+      const online = input.userIds.filter((userId) => this.ctx.getWebSockets(`user:${userId}`).length > 0);
+      return Response.json({ online });
+    }
     if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
       return new Response('Upgrade necessário', { status: 426 });
     }

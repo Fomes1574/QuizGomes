@@ -13,9 +13,9 @@ import {
   isTerminalHalf,
 } from '@quiz-gomes/domain';
 import type { Env } from '../env.js';
-import { ChallengeRepository } from '../repositories/challenge-repository.js';
+import { ChallengeRepository, type ChallengeWriteOutcome } from '../repositories/challenge-repository.js';
 import { recordReportView } from '../repositories/report-view-repository.js';
-import { notifyChallengeUpdated } from '../services/challenge-notifier.js';
+import { notifyChallengeReadyForSecond, notifyChallengeUpdated } from '../services/challenge-notifier.js';
 
 /**
  * Sala de uma metade do desafio assíncrono.
@@ -448,14 +448,22 @@ export class ChallengeRoom {
    * Sela a metade no D1 e avança o desafio. Só depois de a persistência confirmar é
    * que o terminal é anunciado: nada de resultado que existe apenas na memória do DO.
    */
+  /**
+   * Sela a metade no D1 e avança o desafio — só depois de a persistência
+   * autoritativa confirmar é que o DO atualiza seu próprio estado, avisa o
+   * realtime e anuncia um terminal ao socket. `NOT_APPLICABLE` significa que um
+   * cancelamento/anulação concorrente já decidiu o desafio: nada aqui pode
+   * anunciar um resultado que o D1 não tem.
+   */
   private async trySeal(state: AsyncHalfState): Promise<void> {
     const challenges = this.repository();
     const challenge = await challenges.byId(state.challengeId);
     if (challenge === null) return;
 
     if (state.phase === 'VOID') {
-      await challenges.voidChallenge(state.challengeId);
+      const outcome = await challenges.voidChallenge(state.challengeId);
       await this.ctx.storage.delete(SEALED_KEY);
+      if (outcome === 'NOT_APPLICABLE') return;
       await notifyChallengeUpdated(this.env, state.challengeId, [
         challenge.firstPlayerUserId,
         challenge.secondPlayerUserId,
@@ -467,17 +475,23 @@ export class ChallengeRoom {
     const sealed = sealedAnswersOf(state);
     const opponentScore = (state.sealedOpponent ?? [])
       .reduce((total, answer) => total + answer.score, 0);
+    const isSecondPlayer = state.seat === 'SECOND';
+    let outcome: ChallengeWriteOutcome;
     try {
-      await challenges.sealHalf({
+      outcome = await challenges.sealHalf({
         answers: sealed,
         challengeId: state.challengeId,
         difficulty: state.difficulty,
-        isSecondPlayer: state.seat === 'SECOND',
+        isSecondPlayer,
         opponentScore,
-        userId: state.seat === 'FIRST' ? challenge.firstPlayerUserId : challenge.secondPlayerUserId,
+        userId: isSecondPlayer ? challenge.secondPlayerUserId : challenge.firstPlayerUserId,
       });
     } catch {
       await this.ctx.storage.setAlarm(Date.now() + FINALIZATION_RETRY_MS);
+      return;
+    }
+    if (outcome === 'NOT_APPLICABLE') {
+      await this.ctx.storage.delete(SEALED_KEY);
       return;
     }
     const finalized = state.phase === 'FINALIZING' ? markAsyncHalfFinalized(state) : state;
@@ -489,6 +503,18 @@ export class ChallengeRoom {
       challenge.secondPlayerUserId,
     ]);
     this.announceTerminal(finalized, 'MATCH_FINISHED', opponentScore);
+    // "Sua vez de jogar" só na primeira transição real para WAITING_FOR_SECOND,
+    // nunca em retry idempotente e nunca para DIRECT (isto é exclusivo do ASYNC).
+    if (!isSecondPlayer && outcome === 'APPLIED') {
+      const participants = await this.participants(challenge.firstPlayerUserId, challenge.secondPlayerUserId);
+      const firstPlayerDisplayName = participants.get(challenge.firstPlayerUserId)?.displayName ?? '';
+      await notifyChallengeReadyForSecond(this.env, {
+        challengeId: state.challengeId,
+        firstPlayerDisplayName,
+        firstPlayerUserId: challenge.firstPlayerUserId,
+        secondPlayerUserId: challenge.secondPlayerUserId,
+      });
+    }
   }
 
   private announceTerminal(
