@@ -164,7 +164,9 @@ function assertFinalSchema(scenario) {
        'idx_challenges_live_pair_async', 'idx_challenges_live_pair_direct',
        'idx_challenges_pair_kind_status', 'idx_challenges_second_player',
        'idx_challenges_first_player', 'idx_challenges_direct_expiry',
-       'idx_challenge_answers_user'
+       'idx_challenge_answers_user', 'question_reports',
+       'idx_question_reports_open_per_user_context', 'idx_question_reports_status_created',
+       'idx_question_reports_question', 'idx_question_reports_reporter_created'
      )
         OR type = 'trigger'
      ORDER BY type, name
@@ -184,6 +186,7 @@ function assertFinalSchema(scenario) {
   for (const tableName of [
     'friend_request_pair_state', 'user_blocks', 'push_installations',
     'friendship_mutes', 'challenges', 'challenge_questions', 'challenge_answers',
+    'question_reports',
   ]) {
     assert(
       schemaObjects.some(({ name, type }) => name === tableName && type === 'table'),
@@ -202,6 +205,10 @@ function assertFinalSchema(scenario) {
     'idx_challenges_first_player',
     'idx_challenges_direct_expiry',
     'idx_challenge_answers_user',
+    'idx_question_reports_open_per_user_context',
+    'idx_question_reports_status_created',
+    'idx_question_reports_question',
+    'idx_question_reports_reporter_created',
   ]) {
     assert(
       schemaObjects.some(({ name, type }) => name === indexName && type === 'index'),
@@ -242,8 +249,8 @@ function assertFinalSchema(scenario) {
 
   const appliedMigrations = query(scenario, 'SELECT name FROM d1_migrations ORDER BY id');
   assert(
-    appliedMigrations.at(-1)?.name === '0009_challenge_pair_limits_by_kind.sql',
-    `${scenario.name}: 0009 de limite por tipo não foi registrada como última migration`,
+    appliedMigrations.at(-1)?.name === '0010_question_reports.sql',
+    `${scenario.name}: 0010 de denúncias não foi registrada como última migration`,
   );
   const upgradedTheme = query(scenario, `
     SELECT artwork_kind, artwork_icon_key, artwork_version, active_question_count
@@ -383,6 +390,60 @@ function assertChallengeInvariants(scenario) {
                       'FIRST_PLAYER_ACTIVE', 'WAITING_FOR_SECOND', 'SECOND_PLAYER_ACTIVE')
   `);
   assert(liveDirect[0]?.total === 1, `${scenario.name}: índice permitiu dois DIRECT ativos na mesma dupla`);
+}
+
+/** @param {MigrationScenario} scenario */
+function assertReportInvariants(scenario) {
+  const reporter = `report-user-${scenario.name}`;
+  const moderator = `report-mod-${scenario.name}`;
+  executeSql(scenario, `
+    INSERT INTO users (id, firebase_uid) VALUES
+      ('${reporter}', 'firebase-${reporter}'),
+      ('${moderator}', 'firebase-${moderator}');
+    INSERT INTO question_reports
+      (id, reporter_user_id, question_id, context_kind, context_id, round_number, reason)
+    VALUES ('open-${scenario.name}', '${reporter}', 'question-x-${scenario.name}',
+            'MATCH', 'match-${scenario.name}', 1, 'INCORRECT');
+  `);
+  // Mesma pessoa, mesmo contexto e rodada: a denúncia OPEN é única (idempotência).
+  executeSql(scenario, `
+    INSERT INTO question_reports
+      (id, reporter_user_id, question_id, context_kind, context_id, round_number, reason)
+    VALUES ('open-dup-${scenario.name}', '${reporter}', 'question-x-${scenario.name}',
+            'MATCH', 'match-${scenario.name}', 1, 'OUTDATED')
+  `, true);
+  // Motivo fora do catálogo é barrado pelo CHECK.
+  executeSql(scenario, `
+    INSERT INTO question_reports
+      (id, reporter_user_id, question_id, context_kind, context_id, round_number, reason)
+    VALUES ('bad-reason-${scenario.name}', '${reporter}', 'question-y-${scenario.name}',
+            'MATCH', 'match-${scenario.name}', 2, 'SPAM')
+  `, true);
+  // Nota além do limite também é barrada pelo CHECK, não só pela validação do domínio.
+  executeSql(scenario, `
+    INSERT INTO question_reports
+      (id, reporter_user_id, question_id, context_kind, context_id, round_number, reason, note)
+    VALUES ('long-note-${scenario.name}', '${reporter}', 'question-z-${scenario.name}',
+            'MATCH', 'match-${scenario.name}', 3, 'OTHER', '${'x'.repeat(281)}')
+  `, true);
+  // Resolvida, a mesma pessoa pode denunciar de novo o mesmo contexto+rodada.
+  executeSql(scenario, `
+    UPDATE question_reports
+       SET status = 'DISMISSED', resolution_note = 'Verificado: correta.',
+           resolved_by_user_id = '${moderator}', resolved_at = CURRENT_TIMESTAMP
+     WHERE id = 'open-${scenario.name}';
+    INSERT INTO question_reports
+      (id, reporter_user_id, question_id, context_kind, context_id, round_number, reason)
+    VALUES ('reopened-${scenario.name}', '${reporter}', 'question-x-${scenario.name}',
+            'MATCH', 'match-${scenario.name}', 1, 'AMBIGUOUS');
+  `);
+  const openCount = query(scenario, `
+    SELECT COUNT(*) AS total FROM question_reports
+     WHERE reporter_user_id = '${reporter}' AND context_kind = 'MATCH'
+       AND context_id = 'match-${scenario.name}' AND round_number = 1
+       AND status IN ('OPEN', 'IN_REVIEW')
+  `);
+  assert(openCount[0]?.total === 1, `${scenario.name}: índice de denúncia permitiu duas abertas para o mesmo contexto`);
 }
 
 /** @param {MigrationScenario} scenario */
@@ -615,6 +676,7 @@ try {
     migrationNames.includes('0009_challenge_pair_limits_by_kind.sql'),
     'Migration Core 0009 de limite por tipo ausente',
   );
+  assert(migrationNames.includes('0010_question_reports.sql'), 'Migration Core 0010 de denúncias ausente');
   assert(questionMigrationNames.includes('0003_expand_synthetic_smoke_test.sql'), 'Migration Questions 0003 ausente');
 
   await assertRemoteParser(coreSourceMigrationsDirectory, migrationNames);
@@ -628,6 +690,7 @@ try {
   assertAvatarInvariants(emptyDatabase);
   assertSocialInvariants(emptyDatabase);
   assertChallengeInvariants(emptyDatabase);
+  assertReportInvariants(emptyDatabase);
 
   const upgradeDatabase = await createScenario(
     'upgrade-0003',
@@ -638,6 +701,7 @@ try {
       '0007_social_foundation.sql',
       '0008_challenges_and_mutes.sql',
       '0009_challenge_pair_limits_by_kind.sql',
+      '0010_question_reports.sql',
     ].includes(name)),
   );
   console.log('Validando upgrade D1 exato de 0003 para 0004...');
@@ -698,8 +762,19 @@ try {
     join(upgradeDatabase.migrationsDirectory, '0009_challenge_pair_limits_by_kind.sql'),
   );
   applyMigrations(upgradeDatabase);
-  assertFinalSchema(upgradeDatabase);
   assertChallengeInvariants(upgradeDatabase);
+  console.log('Validando upgrade D1 atual exato de 0009 para 0010 denúncias de pergunta...');
+  assert(
+    !query(upgradeDatabase, "SELECT name FROM sqlite_master WHERE name = 'question_reports'").length,
+    'upgrade-0003: tabela de denúncias já existia antes da 0010',
+  );
+  await copyFile(
+    join(coreSourceMigrationsDirectory, '0010_question_reports.sql'),
+    join(upgradeDatabase.migrationsDirectory, '0010_question_reports.sql'),
+  );
+  applyMigrations(upgradeDatabase);
+  assertFinalSchema(upgradeDatabase);
+  assertReportInvariants(upgradeDatabase);
   console.log('Validando rollback transacional de migration com erro...');
   await assertRollback(upgradeDatabase);
 
@@ -738,7 +813,7 @@ try {
   applyMigrations(upgradeQuestions);
   assertFinalQuestionDataset(upgradeQuestions);
 
-  console.log('Migrations D1 aprovadas: parser Wrangler, bancos vazios, upgrades Core 0003→0004→0005→0006→0007→0008→0009 e Questions 0002→0003, invariantes sociais e de desafio, rollback e schemas finais.');
+  console.log('Migrations D1 aprovadas: parser Wrangler, bancos vazios, upgrades Core 0003→0004→0005→0006→0007→0008→0009→0010 e Questions 0002→0003, invariantes sociais, de desafio e de denúncia, rollback e schemas finais.');
 } finally {
   await rm(temporaryRoot, { force: true, recursive: true });
 }

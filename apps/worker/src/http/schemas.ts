@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { isStandardThemeIconKey } from '@quiz-gomes/domain';
+import { isStandardThemeIconKey, REPORT_REASONS, REPORT_STATUSES } from '@quiz-gomes/domain';
 
 export const profileInputSchema = z.object({
   displayName: z.string().trim().min(2, 'Use pelo menos 2 caracteres.').max(32, 'Use no máximo 32 caracteres.'),
@@ -62,3 +62,17 @@ export const importBatchSchema = z.object({
 }).strict();
 
 export type ImportedQuestion = z.infer<typeof importedQuestionSchema>;
+
+export const reportCreationSchema = z.object({
+  contextId: z.string().trim().min(1).max(128),
+  contextKind: z.enum(['MATCH', 'CHALLENGE']),
+  note: z.string().trim().max(280).optional(),
+  questionId: z.string().trim().min(1).max(128),
+  reason: z.enum(REPORT_REASONS),
+  roundNumber: z.number().int().min(1).max(12),
+}).strict();
+
+export const reportResolutionSchema = z.object({
+  resolutionNote: z.string().trim().max(280).optional(),
+  status: z.enum(REPORT_STATUSES),
+}).strict();

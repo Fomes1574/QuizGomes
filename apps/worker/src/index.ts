@@ -21,11 +21,14 @@ import {
 import {
   importBatchSchema,
   profileInputSchema,
+  reportCreationSchema,
+  reportResolutionSchema,
   themeArtworkChoiceSchema,
   themeSubmissionSchema,
 } from './http/schemas.js';
 import { QuestionRepository } from './repositories/question-repository.js';
 import { PoolStateRepository } from './repositories/pool-state-repository.js';
+import { ReportRepository, type ReportRecord } from './repositories/report-repository.js';
 import { ThemeRepository } from './repositories/theme-repository.js';
 import { UserRepository } from './repositories/user-repository.js';
 import { LiveMatchRepository, parseMatchResource } from './repositories/live-match-repository.js';
@@ -464,6 +467,95 @@ async function adminThemeArtworkRoute(request: Request, env: Env, themeId: strin
   } catch (error) {
     artworkMutationError(error);
   }
+}
+
+function reportRuleErrorToApiError(error: unknown): never {
+  if (error instanceof ApiError) throw error;
+  if (error instanceof Error && error.name === 'ReportRuleError') {
+    const code = 'code' in error && typeof error.code === 'string' ? error.code : 'REPORT_INVALID';
+    throw new ApiError(400, code, error.message);
+  }
+  throw error;
+}
+
+async function reportsRoute(request: Request, env: Env): Promise<Response> {
+  if (request.method !== 'POST') throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Método não permitido.');
+  const identity = await requireUser(request, env);
+  const profile = await new UserRepository(env.CORE_DB).findByFirebaseUid(identity.uid);
+  if (profile === null) throw new ApiError(409, 'PROFILE_REQUIRED', 'Conclua seu perfil.');
+  const parsed = reportCreationSchema.safeParse(await readJson(request));
+  if (!parsed.success) throw validationError(parsed.error);
+  try {
+    const result = await new ReportRepository(env.CORE_DB).create({
+      contextId: parsed.data.contextId,
+      contextKind: parsed.data.contextKind,
+      note: parsed.data.note ?? null,
+      questionId: parsed.data.questionId,
+      reason: parsed.data.reason,
+      reporterUserId: profile.userId,
+      roundNumber: parsed.data.roundNumber,
+    });
+    return json({ report: result.report }, { status: result.created ? 201 : 200 });
+  } catch (error) {
+    reportRuleErrorToApiError(error);
+  }
+}
+
+/** Enriquece cada denúncia com o snapshot selado — sem imagens completas, só o que o admin decide. */
+async function withSnapshots(reports: ReportRepository, records: ReportRecord[]) {
+  return Promise.all(records.map(async (report) => ({
+    questionSnapshot: await reports.questionSnapshot(report),
+    report,
+  })));
+}
+
+async function adminReportsRoute(request: Request, env: Env, url: URL): Promise<Response> {
+  const identity = await requireUser(request, env);
+  await requireAdmin(identity, env);
+  if (request.method !== 'GET') throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Método não permitido.');
+  const statusParam = url.searchParams.get('status') ?? 'OPEN';
+  const parsedStatus = z.enum(['OPEN', 'IN_REVIEW', 'RESOLVED', 'DISMISSED']).safeParse(statusParam);
+  if (!parsedStatus.success) throw new ApiError(400, 'INVALID_REPORT_STATUS', 'Status de denúncia inválido.');
+  const limit = Math.min(50, Math.max(1, Number(url.searchParams.get('limit') ?? 20) || 20));
+  const cursor = url.searchParams.get('cursor');
+  const repository = new ReportRepository(env.CORE_DB);
+  const page = await repository.listForAdmin(parsedStatus.data, limit, cursor);
+  return json({ nextCursor: page.nextCursor, reports: await withSnapshots(repository, page.reports) });
+}
+
+async function adminReportResolveRoute(request: Request, env: Env, reportId: string): Promise<Response> {
+  const identity = await requireUser(request, env);
+  await requireAdmin(identity, env);
+  if (request.method !== 'POST') throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Método não permitido.');
+  const profile = await new UserRepository(env.CORE_DB).findByFirebaseUid(identity.uid);
+  if (profile === null) throw new ApiError(409, 'PROFILE_REQUIRED', 'Conclua seu perfil.');
+  const parsed = reportResolutionSchema.safeParse(await readJson(request));
+  if (!parsed.success) throw validationError(parsed.error);
+  const repository = new ReportRepository(env.CORE_DB);
+  const current = await repository.byId(reportId);
+  if (current === null) throw new ApiError(404, 'REPORT_NOT_FOUND', 'Denúncia não encontrada.');
+  let changed: boolean;
+  try {
+    changed = await repository.resolve({
+      fromStatus: current.status,
+      id: reportId,
+      resolutionNote: parsed.data.resolutionNote ?? null,
+      resolvedByUserId: profile.userId,
+      toStatus: parsed.data.status,
+    });
+  } catch (error) {
+    reportRuleErrorToApiError(error);
+  }
+  if (!changed) throw new ApiError(409, 'REPORT_NOT_OPEN', 'Esta denúncia já foi resolvida por outra sessão.');
+  await env.CORE_DB.prepare(
+    `INSERT INTO audit_logs (id, actor_user_id, action, entity_type, entity_id, metadata_json)
+     VALUES (?1, ?2, 'RESOLVE_REPORT', 'question_report', ?3, ?4)`,
+  ).bind(
+    crypto.randomUUID(), profile.userId, reportId,
+    JSON.stringify({ from: current.status, to: parsed.data.status }),
+  ).run();
+  const updated = await repository.byId(reportId);
+  return json({ report: updated });
 }
 
 async function themeArtworkRoute(
@@ -977,8 +1069,15 @@ async function apiRoute(request: Request, env: Env, url: URL, context: Execution
   }
   if (url.pathname === '/api/realtime/tickets' && request.method === 'POST') return createRealtimeTicket(request, env);
   if (url.pathname.startsWith('/api/realtime/') && request.headers.get('Upgrade') !== null) return realtimeRoute(request, env, url);
+  if (url.pathname === '/api/reports') return reportsRoute(request, env);
   if (url.pathname === '/api/admin/questions/import') return adminImportRoute(request, env);
   if (url.pathname === '/api/admin/themes') return adminThemesRoute(request, env, url);
+  if (url.pathname === '/api/admin/reports') return adminReportsRoute(request, env, url);
+
+  const adminReportResolveMatch = /^\/api\/admin\/reports\/([a-f0-9-]{36})\/resolve$/i.exec(url.pathname);
+  if (adminReportResolveMatch?.[1] !== undefined) {
+    return adminReportResolveRoute(request, env, adminReportResolveMatch[1]);
+  }
 
   const adminArtworkMatch = /^\/api\/admin\/themes\/([a-z0-9_-]{1,128})\/artwork$/i.exec(url.pathname);
   if (adminArtworkMatch?.[1] !== undefined) {
