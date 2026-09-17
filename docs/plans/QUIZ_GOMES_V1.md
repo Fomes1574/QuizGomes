@@ -1168,6 +1168,17 @@ memória para assinar JWT de teste do FCM, mesmo padrão já usado em
 declarado — fica pendente a validação manual do proprietário nos cenários
 descritos no relatório de entrega.
 
+### 2026-09-17 — Corrective follow-up: paginação de desafios no cliente
+
+- O Worker já retornava `nextCursor` para desafios vivos, mas o `ChallengeProvider`
+  consumia apenas a primeira página. Agora ele segue o cursor até o fim em uma
+  fotografia autoritativa única, com proteção contra cursor repetido e resposta
+  antiga sobrescrevendo uma atualização mais nova. Assim, desafios acima da
+  primeira página — inclusive DIRECT em recuperação — não somem do cliente.
+- Regressão web cobre duas páginas. Continua sem polling: as páginas seguintes
+  são buscadas apenas durante refresh disparado por montagem, evento social,
+  foco/reconexão ou ação real.
+
 ## Critério de saída desta execução
 
 - Milestones 8 e 8.5 aprovados fisicamente e congelados;

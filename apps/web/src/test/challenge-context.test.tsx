@@ -147,6 +147,28 @@ describe('estado global dos desafios', () => {
     expect(mocks.apiRequest.mock.calls.every((call) => call[0] === '/api/challenges')).toBe(true);
   });
 
+  it('consome todas as páginas de desafios vivos, inclusive para a recuperação global', async () => {
+    const secondPage = {
+      ...pendingDirectChallenge(new Date(Date.now() + 20_000).toISOString()),
+      id: 'challenge-direct-2',
+    };
+    mocks.apiRequest.mockImplementation((path: string) => {
+      if (path === '/api/challenges') return Promise.resolve({
+        challenges: [pendingDirectChallenge(new Date(Date.now() + 30_000).toISOString())],
+        nextCursor: 'cursor-next',
+      });
+      if (path === '/api/challenges?cursor=cursor-next') {
+        return Promise.resolve({ challenges: [secondPage], nextCursor: null });
+      }
+      return Promise.reject(new Error(`Rota inesperada: ${path}`));
+    });
+
+    render(app(<Probe />));
+
+    await waitFor(() => { expect(screen.getByTestId('count')).toHaveTextContent('2'); });
+    expect(mocks.apiRequest).toHaveBeenCalledWith('/api/challenges?cursor=cursor-next', expect.anything());
+  });
+
   it('recupera a espera do convite direto depois de um reload e trava o app', async () => {
     // Nada de estado otimista aqui: a espera vem só do que o servidor devolveu.
     mocks.apiRequest.mockResolvedValue({

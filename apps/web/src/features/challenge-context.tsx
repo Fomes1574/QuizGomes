@@ -33,6 +33,11 @@ export interface EndedDirectChallenge {
   reason: 'EXPIRED' | 'UNAVAILABLE';
 }
 
+interface ChallengePageResponse {
+  challenges?: ChallengeView[];
+  nextCursor?: string | null;
+}
+
 interface ChallengeContextValue {
   cancelPending: () => Promise<void>;
   challenges: ChallengeView[];
@@ -98,8 +103,24 @@ export function ChallengeProvider({ children }: { children: ReactNode }) {
     refreshSequenceRef.current += 1;
     const sequence = refreshSequenceRef.current;
     try {
-      const response = await apiRequest<{ challenges?: ChallengeView[] }>('/api/challenges', { getToken });
-      setChallenges(Array.isArray(response.challenges) ? response.challenges : []);
+      const allChallenges: ChallengeView[] = [];
+      const seenCursors = new Set<string>();
+      let cursor: string | null = null;
+      do {
+        const path: string = cursor === null ? '/api/challenges' : `/api/challenges?cursor=${encodeURIComponent(cursor)}`;
+        const response: ChallengePageResponse = await apiRequest<ChallengePageResponse>(path, { getToken });
+        // Uma atualização mais nova já começou: esta fotografia não pode
+        // sobrescrever o estado com páginas antigas ou incompletas.
+        if (sequence !== refreshSequenceRef.current) return;
+        if (Array.isArray(response.challenges)) allChallenges.push(...response.challenges);
+        cursor = typeof response.nextCursor === 'string' && response.nextCursor !== ''
+          ? response.nextCursor
+          : null;
+        if (cursor !== null && seenCursors.has(cursor)) throw new Error('Cursor de desafios repetido.');
+        if (cursor !== null) seenCursors.add(cursor);
+      } while (cursor !== null);
+      if (sequence !== refreshSequenceRef.current) return;
+      setChallenges(allChallenges);
       setSettledSequence(sequence);
     } catch {
       // Falha transitória não apaga a lista já exibida.
