@@ -5,6 +5,35 @@ export const profileInputSchema = z.object({
   displayName: z.string().trim().min(2, 'Use pelo menos 2 caracteres.').max(32, 'Use no máximo 32 caracteres.'),
 }).strict();
 
+export const categoryCreationSchema = z.object({
+  name: z.string().trim().min(2).max(60),
+  slug: z.string().trim().min(2).max(60).regex(/^[a-z0-9-]+$/, 'Use apenas letras minúsculas, números e hífen.'),
+  sortOrder: z.number().int().min(0).max(9_999).default(0),
+}).strict();
+
+export const categoryUpdateSchema = z.object({
+  expectedRevision: z.number().int().min(1),
+  name: z.string().trim().min(2).max(60),
+  sortOrder: z.number().int().min(0).max(9_999),
+  status: z.enum(['ACTIVE', 'DISABLED']),
+}).strict();
+
+export const themeRejectionSchema = z.object({
+  expectedRevision: z.number().int().min(1),
+  note: z.string().trim().max(280).optional(),
+}).strict();
+
+export const themeEditSchema = z.object({
+  categoryId: z.string().trim().min(1).max(128),
+  description: z.string().trim().min(12).max(240),
+  expectedRevision: z.number().int().min(1),
+  name: z.string().trim().min(2).max(60),
+}).strict();
+
+export const themeModerationCasSchema = z.object({
+  expectedRevision: z.number().int().min(1),
+}).strict();
+
 export const themeSubmissionSchema = z.object({
   categoryId: z.string().trim().min(1).max(128),
   description: z.string().trim().min(12).max(240),

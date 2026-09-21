@@ -19,11 +19,16 @@ import {
   withSecurityHeaders,
 } from './http/response.js';
 import {
+  categoryCreationSchema,
+  categoryUpdateSchema,
   importBatchSchema,
   profileInputSchema,
   reportCreationSchema,
   reportResolutionSchema,
   themeArtworkChoiceSchema,
+  themeEditSchema,
+  themeModerationCasSchema,
+  themeRejectionSchema,
   themeSubmissionSchema,
 } from './http/schemas.js';
 import { QuestionRepository } from './repositories/question-repository.js';
@@ -429,6 +434,109 @@ async function adminThemesRoute(request: Request, env: Env, url: URL): Promise<R
   if (request.method !== 'GET') throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Método não permitido.');
   const search = (url.searchParams.get('search') ?? '').trim().slice(0, 80);
   return json({ themes: await new ThemeRepository(env.CORE_DB).listThemesForAdmin(search) });
+}
+
+async function auditLog(
+  env: Env,
+  actorUserId: string,
+  action: string,
+  entityType: string,
+  entityId: string,
+  metadata: Record<string, unknown> = {},
+): Promise<void> {
+  await env.CORE_DB.prepare(
+    `INSERT INTO audit_logs (id, actor_user_id, action, entity_type, entity_id, metadata_json)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6)`,
+  ).bind(crypto.randomUUID(), actorUserId, action, entityType, entityId, JSON.stringify(metadata)).run();
+}
+
+async function adminCategoriesRoute(request: Request, env: Env): Promise<Response> {
+  const identity = await requireUser(request, env);
+  await requireAdmin(identity, env);
+  const profile = await new UserRepository(env.CORE_DB).findByFirebaseUid(identity.uid);
+  if (profile === null) throw new ApiError(409, 'PROFILE_REQUIRED', 'Conclua seu perfil.');
+  const themes = new ThemeRepository(env.CORE_DB);
+  if (request.method === 'GET') return json({ categories: await themes.listCategoriesForAdmin() });
+  if (request.method === 'POST') {
+    const parsed = categoryCreationSchema.safeParse(await readJson(request));
+    if (!parsed.success) throw validationError(parsed.error);
+    const category = await themes.createCategory(parsed.data);
+    await auditLog(env, profile.userId, 'CREATE_CATEGORY', 'category', category.id, { name: category.name });
+    return json({ category }, { status: 201 });
+  }
+  throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Método não permitido.');
+}
+
+async function adminCategoryUpdateRoute(request: Request, env: Env, categoryId: string): Promise<Response> {
+  if (request.method !== 'PATCH') throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Método não permitido.');
+  const identity = await requireUser(request, env);
+  await requireAdmin(identity, env);
+  const profile = await new UserRepository(env.CORE_DB).findByFirebaseUid(identity.uid);
+  if (profile === null) throw new ApiError(409, 'PROFILE_REQUIRED', 'Conclua seu perfil.');
+  const parsed = categoryUpdateSchema.safeParse(await readJson(request));
+  if (!parsed.success) throw validationError(parsed.error);
+  const category = await new ThemeRepository(env.CORE_DB).updateCategory({ id: categoryId, ...parsed.data });
+  await auditLog(env, profile.userId, 'UPDATE_CATEGORY', 'category', categoryId, { status: category.status });
+  return json({ category });
+}
+
+/**
+ * Moderação de tema: aprovar concede OWNER a quem propôs, rejeitar/editar/
+ * desativar seguem CAS por `revision`. Edição aceita ADMIN em qualquer tema
+ * ou o OWNER do próprio tema USER; nunca o dono de um tema OFFICIAL.
+ */
+async function adminThemeModerationRoute(
+  request: Request,
+  env: Env,
+  themeId: string,
+  action: 'approve' | 'deactivate' | 'edit' | 'reject',
+): Promise<Response> {
+  if (request.method !== 'POST' && !(action === 'edit' && request.method === 'PATCH')) {
+    throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Método não permitido.');
+  }
+  const identity = await requireUser(request, env);
+  const profile = await new UserRepository(env.CORE_DB).findByFirebaseUid(identity.uid);
+  if (profile === null) throw new ApiError(409, 'PROFILE_REQUIRED', 'Conclua seu perfil.');
+  const themes = new ThemeRepository(env.CORE_DB);
+  const isAdmin = await hasAdminAccess(identity, env);
+
+  if (action === 'edit') {
+    if (!isAdmin) {
+      const access = await themes.themeEditAccess(themeId, profile.userId);
+      if (access === null) throw new ApiError(404, 'THEME_NOT_FOUND', 'Tema não encontrado.');
+      if (access.origin !== 'USER' || !access.owned) {
+        throw new ApiError(403, 'THEME_EDIT_FORBIDDEN', 'Você não pode editar este tema.');
+      }
+    }
+    const parsed = themeEditSchema.safeParse(await readJson(request));
+    if (!parsed.success) throw validationError(parsed.error);
+    const theme = await themes.editTheme({ themeId, ...parsed.data });
+    await auditLog(env, profile.userId, 'EDIT_THEME', 'theme', themeId, { name: theme.name });
+    return json({ theme });
+  }
+
+  await requireAdmin(identity, env);
+  if (action === 'approve') {
+    const parsed = themeModerationCasSchema.safeParse(await readJson(request));
+    if (!parsed.success) throw validationError(parsed.error);
+    const theme = await themes.approveTheme({ expectedRevision: parsed.data.expectedRevision, themeId });
+    await auditLog(env, profile.userId, 'APPROVE_THEME', 'theme', themeId, {});
+    return json({ theme });
+  }
+  if (action === 'reject') {
+    const parsed = themeRejectionSchema.safeParse(await readJson(request));
+    if (!parsed.success) throw validationError(parsed.error);
+    const theme = await themes.rejectTheme({
+      expectedRevision: parsed.data.expectedRevision, note: parsed.data.note ?? null, themeId,
+    });
+    await auditLog(env, profile.userId, 'REJECT_THEME', 'theme', themeId, { note: parsed.data.note ?? null });
+    return json({ theme });
+  }
+  const parsed = themeModerationCasSchema.safeParse(await readJson(request));
+  if (!parsed.success) throw validationError(parsed.error);
+  const theme = await themes.deactivateTheme({ expectedRevision: parsed.data.expectedRevision, themeId });
+  await auditLog(env, profile.userId, 'DEACTIVATE_THEME', 'theme', themeId, {});
+  return json({ theme });
 }
 
 async function adminThemeArtworkRoute(request: Request, env: Env, themeId: string): Promise<Response> {
@@ -1213,15 +1321,34 @@ async function apiRoute(request: Request, env: Env, url: URL, context: Execution
   if (url.pathname === '/api/admin/questions/import') return adminImportRoute(request, env);
   if (url.pathname === '/api/admin/themes') return adminThemesRoute(request, env, url);
   if (url.pathname === '/api/admin/reports') return adminReportsRoute(request, env, url);
+  if (url.pathname === '/api/admin/categories') return adminCategoriesRoute(request, env);
 
   const adminReportResolveMatch = /^\/api\/admin\/reports\/([a-f0-9-]{36})\/resolve$/i.exec(url.pathname);
   if (adminReportResolveMatch?.[1] !== undefined) {
     return adminReportResolveRoute(request, env, adminReportResolveMatch[1]);
   }
 
+  const adminCategoryMatch = /^\/api\/admin\/categories\/([a-z0-9_-]{1,128})$/i.exec(url.pathname);
+  if (adminCategoryMatch?.[1] !== undefined) {
+    return adminCategoryUpdateRoute(request, env, decodeURIComponent(adminCategoryMatch[1]));
+  }
+
   const adminArtworkMatch = /^\/api\/admin\/themes\/([a-z0-9_-]{1,128})\/artwork$/i.exec(url.pathname);
   if (adminArtworkMatch?.[1] !== undefined) {
     return adminThemeArtworkRoute(request, env, decodeURIComponent(adminArtworkMatch[1]));
+  }
+
+  const adminThemeActionMatch = /^\/api\/admin\/themes\/([a-z0-9_-]{1,128})\/(approve|reject|deactivate)$/i.exec(url.pathname);
+  if (adminThemeActionMatch?.[1] !== undefined && adminThemeActionMatch[2] !== undefined) {
+    return adminThemeModerationRoute(
+      request, env, decodeURIComponent(adminThemeActionMatch[1]),
+      adminThemeActionMatch[2] as 'approve' | 'deactivate' | 'reject',
+    );
+  }
+
+  const adminThemeEditMatch = /^\/api\/admin\/themes\/([a-z0-9_-]{1,128})$/i.exec(url.pathname);
+  if (adminThemeEditMatch?.[1] !== undefined && request.method === 'PATCH') {
+    return adminThemeModerationRoute(request, env, decodeURIComponent(adminThemeEditMatch[1]), 'edit');
   }
 
   const themes = new ThemeRepository(env.CORE_DB);

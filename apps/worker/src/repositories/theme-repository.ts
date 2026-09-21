@@ -3,12 +3,19 @@ import {
   type StandardThemeIconKey,
   type ThemeArtwork,
 } from '@quiz-gomes/domain';
+import { ApiError } from '../http/api-error.js';
 import { customAvatarUrl } from '../storage/custom-avatar.js';
 
 export interface CategoryRecord {
   id: string;
   name: string;
   slug: string;
+}
+
+export interface CategoryAdminRecord extends CategoryRecord {
+  revision: number;
+  sortOrder: number;
+  status: 'ACTIVE' | 'DISABLED';
 }
 
 export interface ThemeSummaryRecord {
@@ -24,6 +31,10 @@ export interface ThemeSummaryRecord {
 }
 
 export interface AdminThemeSummaryRecord extends ThemeSummaryRecord {
+  createdByUserId: string | null;
+  origin: 'OFFICIAL' | 'USER';
+  rejectionNote: string | null;
+  revision: number;
   status: 'ACTIVE' | 'DISABLED' | 'PENDING' | 'REJECTED';
 }
 
@@ -37,6 +48,7 @@ export interface ThemeArtworkBlobRecord {
 }
 
 interface CategoryRow { id: string; name: string; slug: string }
+interface CategoryAdminRow extends CategoryRow { revision: number; sort_order: number; status: 'ACTIVE' | 'DISABLED' }
 interface ThemeRow {
   active_question_count: number;
   artwork_icon_key: string | null;
@@ -45,9 +57,13 @@ interface ThemeRow {
   category_id: string;
   category_name: string;
   cover_image_key: string | null;
+  created_by_user_id?: string | null;
   description: string;
   id: string;
   name: string;
+  origin?: 'OFFICIAL' | 'USER';
+  rejection_note?: string | null;
+  revision?: number;
   slug: string;
   status?: 'ACTIVE' | 'DISABLED' | 'PENDING' | 'REJECTED';
 }
@@ -55,6 +71,8 @@ interface ThemeRow {
 const THEME_COLUMNS = `t.id, t.slug, t.name, t.description, t.cover_image_key,
   t.artwork_kind, t.artwork_icon_key, t.artwork_version, t.active_question_count,
   c.id AS category_id, c.name AS category_name`;
+
+const ADMIN_THEME_COLUMNS = `${THEME_COLUMNS}, t.status, t.revision, t.origin, t.created_by_user_id, t.rejection_note`;
 
 function artworkUrl(themeId: string, version: number): string {
   return `/api/theme-artwork/${encodeURIComponent(themeId)}/v${version}.webp`;
@@ -85,8 +103,17 @@ function mapTheme(row: ThemeRow): ThemeSummaryRecord {
 }
 
 function mapAdminTheme(row: ThemeRow): AdminThemeSummaryRecord {
-  if (row.status === undefined) throw new Error('THEME_STATUS_MISSING');
-  return { ...mapTheme(row), status: row.status };
+  if (row.status === undefined || row.revision === undefined || row.origin === undefined) {
+    throw new Error('THEME_STATUS_MISSING');
+  }
+  return {
+    ...mapTheme(row),
+    createdByUserId: row.created_by_user_id ?? null,
+    origin: row.origin,
+    rejectionNote: row.rejection_note ?? null,
+    revision: row.revision,
+    status: row.status,
+  };
 }
 
 function escapedLike(search: string): string {
@@ -101,6 +128,64 @@ export class ThemeRepository {
       "SELECT id, slug, name FROM categories WHERE status = 'ACTIVE' ORDER BY sort_order, name LIMIT 100",
     ).all<CategoryRow>();
     return result.results;
+  }
+
+  async listCategoriesForAdmin(): Promise<CategoryAdminRecord[]> {
+    const result = await this.db.prepare(
+      'SELECT id, slug, name, sort_order, status, revision FROM categories ORDER BY sort_order, name LIMIT 200',
+    ).all<CategoryAdminRow>();
+    return result.results.map((row) => ({
+      id: row.id, name: row.name, revision: row.revision, slug: row.slug,
+      sortOrder: row.sort_order, status: row.status,
+    }));
+  }
+
+  async createCategory(input: { name: string; slug: string; sortOrder: number }): Promise<CategoryAdminRecord> {
+    const id = crypto.randomUUID();
+    try {
+      await this.db.prepare(
+        'INSERT INTO categories (id, slug, name, sort_order) VALUES (?1, ?2, ?3, ?4)',
+      ).bind(id, input.slug, input.name, input.sortOrder).run();
+    } catch (error) {
+      if (error instanceof Error && /UNIQUE constraint failed: categories\.(slug|name)/i.test(error.message)) {
+        throw new ApiError(409, 'CATEGORY_ALREADY_EXISTS', 'Já existe uma categoria com esse nome ou slug.');
+      }
+      throw error;
+    }
+    return { id, name: input.name, revision: 1, slug: input.slug, sortOrder: input.sortOrder, status: 'ACTIVE' };
+  }
+
+  async updateCategory(input: {
+    expectedRevision: number;
+    id: string;
+    name: string;
+    sortOrder: number;
+    status: 'ACTIVE' | 'DISABLED';
+  }): Promise<CategoryAdminRecord> {
+    let result;
+    try {
+      result = await this.db.prepare(
+        `UPDATE categories SET name = ?1, sort_order = ?2, status = ?3, revision = revision + 1, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?4 AND revision = ?5`,
+      ).bind(input.name, input.sortOrder, input.status, input.id, input.expectedRevision).run();
+    } catch (error) {
+      if (error instanceof Error && /UNIQUE constraint failed: categories\.name/i.test(error.message)) {
+        throw new ApiError(409, 'CATEGORY_ALREADY_EXISTS', 'Já existe uma categoria com esse nome.');
+      }
+      throw error;
+    }
+    if ((result.meta.changes ?? 0) !== 1) {
+      const exists = await this.db.prepare('SELECT 1 FROM categories WHERE id = ?1').bind(input.id).first();
+      if (exists === null) throw new ApiError(404, 'CATEGORY_NOT_FOUND', 'Categoria não encontrada.');
+      throw new ApiError(409, 'CATEGORY_CONFLICT', 'Esta categoria mudou de estado. Atualize a tela.');
+    }
+    const updated = await this.db.prepare('SELECT id, slug, name, sort_order, status, revision FROM categories WHERE id = ?1')
+      .bind(input.id).first<CategoryAdminRow>();
+    if (updated === null) throw new ApiError(404, 'CATEGORY_NOT_FOUND', 'Categoria não encontrada.');
+    return {
+      id: updated.id, name: updated.name, revision: updated.revision, slug: updated.slug,
+      sortOrder: updated.sort_order, status: updated.status,
+    };
   }
 
   async listThemes(search = '', categoryId: string | null = null, limit = 60): Promise<ThemeSummaryRecord[]> {
@@ -120,7 +205,7 @@ export class ThemeRepository {
 
   async listThemesForAdmin(search = '', limit = 100): Promise<AdminThemeSummaryRecord[]> {
     const result = await this.db.prepare(
-      `SELECT ${THEME_COLUMNS}, t.status
+      `SELECT ${ADMIN_THEME_COLUMNS}
          FROM themes t
          JOIN categories c ON c.id = t.category_id
         WHERE (?1 = '' OR t.name LIKE ?2 ESCAPE '\\' COLLATE NOCASE)
@@ -144,13 +229,27 @@ export class ThemeRepository {
 
   async findThemeForAdmin(id: string): Promise<AdminThemeSummaryRecord | null> {
     const row = await this.db.prepare(
-      `SELECT ${THEME_COLUMNS}, t.status
+      `SELECT ${ADMIN_THEME_COLUMNS}
          FROM themes t
          JOIN categories c ON c.id = t.category_id
         WHERE t.id = ?1
         LIMIT 1`,
     ).bind(id).first<ThemeRow>();
     return row === null ? null : mapAdminTheme(row);
+  }
+
+  /** Papel editorial do usuário sobre este tema, para autorizar CRUD de pergunta. */
+  async themeEditAccess(themeId: string, userId: string): Promise<{
+    origin: 'OFFICIAL' | 'USER';
+    owned: boolean;
+  } | null> {
+    const theme = await this.db.prepare('SELECT origin FROM themes WHERE id = ?1')
+      .bind(themeId).first<{ origin: 'OFFICIAL' | 'USER' }>();
+    if (theme === null) return null;
+    const ownership = await this.db.prepare(
+      'SELECT 1 AS owned FROM theme_ownership WHERE theme_id = ?1 AND user_id = ?2',
+    ).bind(themeId, userId).first<{ owned: number }>();
+    return { origin: theme.origin, owned: ownership !== null };
   }
 
   async readArtwork(themeId: string, version: number): Promise<ThemeArtworkBlobRecord | null> {
@@ -331,6 +430,93 @@ export class ThemeRepository {
       name: input.name,
       slug,
     };
+  }
+
+  /** Aprovar um tema PENDING publica-o e concede OWNER a quem propôs. */
+  async approveTheme(input: { expectedRevision: number; themeId: string }): Promise<AdminThemeSummaryRecord> {
+    const theme = await this.db.prepare('SELECT status, created_by_user_id FROM themes WHERE id = ?1')
+      .bind(input.themeId).first<{ created_by_user_id: string | null; status: string }>();
+    if (theme === null) throw new ApiError(404, 'THEME_NOT_FOUND', 'Tema não encontrado.');
+    const statements: D1PreparedStatement[] = [
+      this.db.prepare(
+        `UPDATE themes SET status = 'ACTIVE', revision = revision + 1, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?1 AND revision = ?2 AND status = 'PENDING'`,
+      ).bind(input.themeId, input.expectedRevision),
+    ];
+    if (theme.created_by_user_id !== null) {
+      statements.push(this.db.prepare(
+        'INSERT OR IGNORE INTO theme_ownership (theme_id, user_id) VALUES (?1, ?2)',
+      ).bind(input.themeId, theme.created_by_user_id));
+    }
+    const results = await this.db.batch(statements);
+    if ((results[0]?.meta.changes ?? 0) !== 1) {
+      throw new ApiError(409, 'THEME_CONFLICT', 'Este tema mudou de estado. Atualize a tela.');
+    }
+    const updated = await this.findThemeForAdmin(input.themeId);
+    if (updated === null) throw new ApiError(404, 'THEME_NOT_FOUND', 'Tema não encontrado.');
+    return updated;
+  }
+
+  async rejectTheme(input: {
+    expectedRevision: number;
+    note: string | null;
+    themeId: string;
+  }): Promise<AdminThemeSummaryRecord> {
+    const result = await this.db.prepare(
+      `UPDATE themes SET status = 'REJECTED', rejection_note = ?1, revision = revision + 1, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?2 AND revision = ?3 AND status = 'PENDING'`,
+    ).bind(input.note, input.themeId, input.expectedRevision).run();
+    if ((result.meta.changes ?? 0) !== 1) await this.assertThemeConflictOrMissing(input.themeId);
+    const updated = await this.findThemeForAdmin(input.themeId);
+    if (updated === null) throw new ApiError(404, 'THEME_NOT_FOUND', 'Tema não encontrado.');
+    return updated;
+  }
+
+  /** Edita nome/descrição/categoria. A permissão (ADMIN ou OWNER do tema USER) é checada por quem chama. */
+  async editTheme(input: {
+    categoryId: string;
+    description: string;
+    expectedRevision: number;
+    name: string;
+    themeId: string;
+  }): Promise<AdminThemeSummaryRecord> {
+    const category = await this.db.prepare("SELECT id FROM categories WHERE id = ?1 AND status = 'ACTIVE'")
+      .bind(input.categoryId).first<{ id: string }>();
+    if (category === null) throw new ApiError(400, 'CATEGORY_NOT_FOUND', 'Categoria inválida.');
+    let result;
+    try {
+      result = await this.db.prepare(
+        `UPDATE themes SET name = ?1, description = ?2, category_id = ?3, revision = revision + 1, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?4 AND revision = ?5`,
+      ).bind(input.name, input.description, input.categoryId, input.themeId, input.expectedRevision).run();
+    } catch (error) {
+      if (error instanceof Error && /UNIQUE constraint failed: themes\.name/i.test(error.message)) {
+        throw new ApiError(409, 'THEME_ALREADY_EXISTS', 'Já existe um tema com esse nome.');
+      }
+      throw error;
+    }
+    if ((result.meta.changes ?? 0) !== 1) await this.assertThemeConflictOrMissing(input.themeId);
+    const updated = await this.findThemeForAdmin(input.themeId);
+    if (updated === null) throw new ApiError(404, 'THEME_NOT_FOUND', 'Tema não encontrado.');
+    return updated;
+  }
+
+  async deactivateTheme(input: { expectedRevision: number; themeId: string }): Promise<AdminThemeSummaryRecord> {
+    const result = await this.db.prepare(
+      `UPDATE themes SET status = 'DISABLED', revision = revision + 1, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?1 AND revision = ?2 AND status = 'ACTIVE'`,
+    ).bind(input.themeId, input.expectedRevision).run();
+    if ((result.meta.changes ?? 0) !== 1) await this.assertThemeConflictOrMissing(input.themeId);
+    const updated = await this.findThemeForAdmin(input.themeId);
+    if (updated === null) throw new ApiError(404, 'THEME_NOT_FOUND', 'Tema não encontrado.');
+    return updated;
+  }
+
+  private async assertThemeConflictOrMissing(themeId: string): Promise<never> {
+    const exists = await this.db.prepare('SELECT 1 AS found FROM themes WHERE id = ?1')
+      .bind(themeId).first<{ found: number }>();
+    if (exists === null) throw new ApiError(404, 'THEME_NOT_FOUND', 'Tema não encontrado.');
+    throw new ApiError(409, 'THEME_CONFLICT', 'Este tema mudou de estado. Atualize a tela.');
   }
 
   async personalRanking(themeId: string, userId: string): Promise<{
