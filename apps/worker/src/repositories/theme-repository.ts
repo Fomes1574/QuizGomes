@@ -6,6 +6,10 @@ import {
 import { ApiError } from '../http/api-error.js';
 import { customAvatarUrl } from '../storage/custom-avatar.js';
 
+/** Limite técnico contra rajadas automatizadas de propostas de tema, não um cooldown social. */
+export const THEME_SUBMISSION_RATE_LIMIT = 5;
+export const THEME_SUBMISSION_RATE_WINDOW_MS = 60 * 60_000;
+
 export interface CategoryRecord {
   id: string;
   name: string;
@@ -412,6 +416,7 @@ export class ThemeRepository {
     name: string;
     userId: string;
   }): Promise<ThemeSummaryRecord> {
+    await this.assertSubmissionRate(input.userId);
     const category = await this.db.prepare(
       "SELECT id, name FROM categories WHERE id = ?1 AND status = 'ACTIVE'",
     ).bind(input.categoryId).first<{ id: string; name: string }>();
@@ -436,6 +441,20 @@ export class ThemeRepository {
       name: input.name,
       slug,
     };
+  }
+
+  private async assertSubmissionRate(userId: string): Promise<void> {
+    // themes.created_at nasce de CURRENT_TIMESTAMP (formato "YYYY-MM-DD HH:MM:SS" do
+    // próprio SQLite); comparar contra um ISO string gerado em JS ("...T...Z") compara
+    // formatos diferentes e nunca bate. datetime('now', ...) usa o mesmo formato da coluna.
+    const row = await this.db.prepare(
+      `SELECT COUNT(*) AS total FROM themes
+        WHERE created_by_user_id = ?1 AND origin = 'USER'
+          AND created_at >= datetime('now', ?2)`,
+    ).bind(userId, `-${Math.ceil(THEME_SUBMISSION_RATE_WINDOW_MS / 1_000)} seconds`).first<{ total: number }>();
+    if ((row?.total ?? 0) >= THEME_SUBMISSION_RATE_LIMIT) {
+      throw new ApiError(429, 'THEME_SUBMISSION_RATE_LIMITED', 'Muitas propostas de tema em pouco tempo. Tente de novo em instantes.');
+    }
   }
 
   /** Aprovar um tema PENDING publica-o e concede OWNER a quem propôs. */

@@ -146,4 +146,26 @@ describe('M11 — categorias e moderação de temas', () => {
     expect(await themes.themeEditAccess(officialId, someone.id)).toEqual({ origin: 'OFFICIAL', owned: false });
     expect(await themes.themeEditAccess('tema-fantasma', someone.id)).toBeNull();
   });
+
+  it('M12 — limite técnico barra rajada de propostas de tema do mesmo usuário', async () => {
+    const { users } = await fixture(2);
+    const proposer = userAt(users, 0);
+    const other = userAt(users, 1);
+    const themes = new ThemeRepository(env.CORE_DB);
+    const category = await themes.createCategory({ name: 'Categoria Rate Limit', slug: 'categoria-rate-limit', sortOrder: 0 });
+
+    for (let index = 0; index < 5; index += 1) {
+      await themes.submitTheme({
+        categoryId: category.id, description: 'Descrição válida o suficiente.', name: `Tema Rajada ${index}`, userId: proposer.id,
+      });
+    }
+    await expect(themes.submitTheme({
+      categoryId: category.id, description: 'Descrição válida o suficiente.', name: 'Tema Rajada 6', userId: proposer.id,
+    })).rejects.toMatchObject({ code: 'THEME_SUBMISSION_RATE_LIMITED', status: 429 });
+
+    // O limite é por usuário: outro proponente não é afetado pela rajada alheia.
+    await expect(themes.submitTheme({
+      categoryId: category.id, description: 'Descrição válida o suficiente.', name: 'Tema De Outro Usuário', userId: other.id,
+    })).resolves.toMatchObject({ name: 'Tema De Outro Usuário' });
+  });
 });
