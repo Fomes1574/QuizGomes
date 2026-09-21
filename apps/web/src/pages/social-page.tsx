@@ -13,7 +13,9 @@ import { apiRequest } from '../lib/api.js';
 import { challengeCardCopy, type ChallengeView } from '../lib/challenges.js';
 import type { FriendPresence, SocialCandidate, SocialFriend, SocialSnapshot, SocialUser } from '../lib/social.js';
 
-const EMPTY_SNAPSHOT: SocialSnapshot = { friendLimit: 200, friends: [], incoming: [], outgoing: [] };
+const EMPTY_SNAPSHOT: SocialSnapshot = {
+  friendLimit: 200, friends: [], incoming: [], incomingNextCursor: null, outgoing: [], outgoingNextCursor: null,
+};
 const PRESENCE_LABELS: Record<FriendPresence, string> = {
   IN_MATCH: 'Em partida',
   MATCHMAKING: 'Procurando partida',
@@ -336,6 +338,8 @@ export function SocialPage() {
   const [error, setError] = useState<string | null>(null);
   const [blocking, setBlocking] = useState<SocialUser | null>(null);
 
+  const [loadingMoreRequests, setLoadingMoreRequests] = useState<'incoming' | 'outgoing' | null>(null);
+
   const load = useCallback(async () => {
     if (profile === null) return;
     try {
@@ -350,6 +354,24 @@ export function SocialPage() {
   }, [getToken, profile]);
 
   useEffect(() => { queueMicrotask(() => { void load(); }); }, [load, revision]);
+
+  async function loadMoreRequests(direction: 'incoming' | 'outgoing') {
+    const cursor = direction === 'incoming' ? snapshot.incomingNextCursor : snapshot.outgoingNextCursor;
+    if (cursor === null) return;
+    setLoadingMoreRequests(direction);
+    try {
+      const response = await apiRequest<{ nextCursor: string | null; requests: SocialSnapshot['incoming'] }>(
+        `/api/social/requests?direction=${direction}&cursor=${encodeURIComponent(cursor)}`, { getToken },
+      );
+      setSnapshot((current) => direction === 'incoming'
+        ? { ...current, incoming: [...current.incoming, ...response.requests], incomingNextCursor: response.nextCursor }
+        : { ...current, outgoing: [...current.outgoing, ...response.requests], outgoingNextCursor: response.nextCursor });
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Não foi possível carregar mais solicitações.');
+    } finally {
+      setLoadingMoreRequests(null);
+    }
+  }
 
   const challengeAction = useCallback((challenge: ChallengeView, action: 'accept' | 'cancel' | 'decline') => {
     if (pendingActionsRef.current.has(challenge.id)) return;
@@ -518,6 +540,11 @@ export function SocialPage() {
                     </div>
                   </article>
                 ))}
+                {snapshot.incomingNextCursor !== null ? (
+                  <Button disabled={loadingMoreRequests !== null} onClick={() => void loadMoreRequests('incoming')} type="button" variant="ghost">
+                    {loadingMoreRequests === 'incoming' ? 'Carregando…' : 'Carregar mais'}
+                  </Button>
+                ) : null}
               </section>
 
               {snapshot.outgoing.length > 0 ? (
@@ -532,6 +559,11 @@ export function SocialPage() {
                       )} type="button">Cancelar solicitação</button>
                     </article>
                   ))}
+                  {snapshot.outgoingNextCursor !== null ? (
+                    <Button disabled={loadingMoreRequests !== null} onClick={() => void loadMoreRequests('outgoing')} type="button" variant="ghost">
+                      {loadingMoreRequests === 'outgoing' ? 'Carregando…' : 'Carregar mais'}
+                    </Button>
+                  ) : null}
                 </section>
               ) : null}
 

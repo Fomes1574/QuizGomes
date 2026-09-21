@@ -85,6 +85,30 @@ describe('Perfil — privacidade e notificações opcionais', () => {
       expect.objectContaining({ body: { publicId: '#QGBLOCKED1' }, method: 'DELETE' })));
   });
 
+  it('M12 — "Carregar mais" busca a próxima página de bloqueados e soma à lista', async () => {
+    mocks.apiRequest.mockImplementation((path: string) => {
+      if (path === '/api/profile/summary') return Promise.resolve({ activeStreak: null, bestTheme: null, missions: [] });
+      if (path === '/api/social/blocks') return Promise.resolve({
+        nextCursor: 'cursor-1',
+        users: [{ customAvatarUrl: null, displayName: 'Pessoa Bloqueada', frameId: null, photoUrl: null, publicId: '#QGBLOCKED1' }],
+      });
+      if (path === '/api/social/blocks?cursor=cursor-1') return Promise.resolve({
+        nextCursor: null,
+        users: [{ customAvatarUrl: null, displayName: 'Outra Pessoa', frameId: null, photoUrl: null, publicId: '#QGBLOCKED2' }],
+      });
+      return Promise.resolve({ ok: true });
+    });
+    render(<ProfilePage />);
+    fireEvent.click(screen.getByRole('button', { name: 'Usuários bloqueados' }));
+    expect(await screen.findByText('Pessoa Bloqueada')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Carregar mais' }));
+    expect(await screen.findByText('Outra Pessoa')).toBeInTheDocument();
+    // A primeira página continua visível: "carregar mais" soma, nunca substitui.
+    expect(screen.getByText('Pessoa Bloqueada')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Carregar mais' })).not.toBeInTheDocument();
+  });
+
   it('solicita notificações apenas após gesto explícito do usuário', async () => {
     render(<ProfilePage />);
     expect(mocks.activate).not.toHaveBeenCalled();

@@ -55,7 +55,9 @@ export function ProfilePage() {
   const [name, setName] = useState(profile?.displayName ?? '');
   const [privacyOpen, setPrivacyOpen] = useState(false);
   const [blockedUsers, setBlockedUsers] = useState<SocialUser[]>([]);
+  const [blockedUsersCursor, setBlockedUsersCursor] = useState<string | null>(null);
   const [privacyLoading, setPrivacyLoading] = useState(false);
+  const [loadingMoreBlocked, setLoadingMoreBlocked] = useState(false);
   const [unblocking, setUnblocking] = useState<SocialUser | null>(null);
   const [notificationState, setNotificationState] = useState(browserNotificationState);
   const [notificationBusy, setNotificationBusy] = useState(false);
@@ -107,12 +109,29 @@ export function ProfilePage() {
     setPrivacyOpen(true);
     setPrivacyLoading(true);
     try {
-      const response = await apiRequest<{ users: SocialUser[] }>('/api/social/blocks', { getToken });
+      const response = await apiRequest<{ nextCursor: string | null; users: SocialUser[] }>('/api/social/blocks', { getToken });
       setBlockedUsers(response.users);
+      setBlockedUsersCursor(response.nextCursor);
     } catch (reason) {
       setSettingsError(reason instanceof Error ? reason.message : 'Não foi possível carregar usuários bloqueados.');
     } finally {
       setPrivacyLoading(false);
+    }
+  }
+
+  async function loadMoreBlocked() {
+    if (blockedUsersCursor === null) return;
+    setLoadingMoreBlocked(true);
+    try {
+      const response = await apiRequest<{ nextCursor: string | null; users: SocialUser[] }>(
+        `/api/social/blocks?cursor=${encodeURIComponent(blockedUsersCursor)}`, { getToken },
+      );
+      setBlockedUsers((current) => [...current, ...response.users]);
+      setBlockedUsersCursor(response.nextCursor);
+    } catch (reason) {
+      setSettingsError(reason instanceof Error ? reason.message : 'Não foi possível carregar mais usuários bloqueados.');
+    } finally {
+      setLoadingMoreBlocked(false);
     }
   }
 
@@ -251,6 +270,11 @@ export function ProfilePage() {
                 <Button onClick={() => setUnblocking(user)} variant="secondary">Desbloquear</Button>
               </article>
             ))}
+            {blockedUsersCursor !== null ? (
+              <Button disabled={loadingMoreBlocked} onClick={() => void loadMoreBlocked()} variant="ghost">
+                {loadingMoreBlocked ? 'Carregando…' : 'Carregar mais'}
+              </Button>
+            ) : null}
           </div>
         ) : null}
       </section>

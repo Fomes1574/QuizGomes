@@ -5,6 +5,22 @@ export const FRIEND_REQUEST_COOLDOWN_MS = 30 * 24 * 60 * 60 * 1_000;
 /** Amizades ativas por usuário. Validado no envio e, autoritativamente, no aceite. */
 export const FRIEND_LIMIT = 200;
 const SEARCH_LIMIT = 20;
+/** Sem cap de quantos pedidos pendentes ou bloqueios alguém pode acumular: paginado, nunca truncado silenciosamente. */
+const REQUEST_PAGE_SIZE = 50;
+const BLOCK_PAGE_SIZE = 50;
+
+function encodePageCursor(sortKey: string, tieBreaker: string): string {
+  return btoa(JSON.stringify([sortKey, tieBreaker]));
+}
+
+function decodePageCursor(cursor: string): { sortKey: string; tieBreaker: string } | null {
+  try {
+    const [sortKey, tieBreaker] = JSON.parse(atob(cursor)) as [string, string];
+    return typeof sortKey === 'string' && typeof tieBreaker === 'string' ? { sortKey, tieBreaker } : null;
+  } catch {
+    return null;
+  }
+}
 
 export interface SocialUser {
   customAvatarUrl: string | null;
@@ -146,7 +162,9 @@ export class SocialRepository {
     friendLimit: number;
     friends: SocialFriend[];
     incoming: SocialRequest[];
+    incomingNextCursor: string | null;
     outgoing: SocialRequest[];
+    outgoingNextCursor: string | null;
   }> {
     const [friends, incoming, outgoing] = await Promise.all([
       this.db.prepare(
@@ -174,8 +192,10 @@ export class SocialRepository {
     return {
       friendLimit: FRIEND_LIMIT,
       friends: friends.results.map((row) => ({ ...person(row), muted: row.muted === 1 })),
-      incoming,
-      outgoing,
+      incoming: incoming.requests,
+      incomingNextCursor: incoming.nextCursor,
+      outgoing: outgoing.requests,
+      outgoingNextCursor: outgoing.nextCursor,
     };
   }
 
@@ -508,17 +528,30 @@ export class SocialRepository {
     if ((result.meta.changes ?? 0) === 0) throw unavailable();
   }
 
-  async blockedUsers(actorUserId: string): Promise<SocialUser[]> {
+  /** Bloqueados, paginados por (created_at, blocked_user_id) — nunca trunca silenciosamente além da página. */
+  async blockedUsers(actorUserId: string, cursor: string | null = null): Promise<{ nextCursor: string | null; users: SocialUser[] }> {
+    const decoded = cursor === null ? null : decodePageCursor(cursor);
+    const cursorClause = decoded === null
+      ? ''
+      : 'AND (b.created_at < ?2 OR (b.created_at = ?2 AND b.blocked_user_id < ?3))';
+    const binds: unknown[] = [actorUserId];
+    if (decoded !== null) binds.push(decoded.sortKey, decoded.tieBreaker);
     const rows = await this.db.prepare(
-      `SELECT ${PUBLIC_PERSON_COLUMNS}
+      `SELECT ${PUBLIC_PERSON_COLUMNS}, b.created_at, b.blocked_user_id
          FROM user_blocks b
          JOIN user_profiles p ON p.user_id = b.blocked_user_id
          JOIN users u ON u.id = p.user_id AND u.disabled_at IS NULL
          LEFT JOIN user_custom_avatars a ON a.user_id = p.user_id
-        WHERE b.blocker_user_id = ?1
-        ORDER BY p.display_name COLLATE NOCASE LIMIT 100`,
-    ).bind(actorUserId).all<PersonRow>();
-    return rows.results.map(person);
+        WHERE b.blocker_user_id = ?1 ${cursorClause}
+        ORDER BY b.created_at DESC, b.blocked_user_id DESC
+        LIMIT ${BLOCK_PAGE_SIZE + 1}`,
+    ).bind(...binds).all<PersonRow & { blocked_user_id: string; created_at: string }>();
+    const page = rows.results.slice(0, BLOCK_PAGE_SIZE);
+    const last = page.at(-1);
+    const nextCursor = rows.results.length > BLOCK_PAGE_SIZE && last !== undefined
+      ? encodePageCursor(last.created_at, last.blocked_user_id)
+      : null;
+    return { nextCursor, users: page.map(person) };
   }
 
   async registerInstallation(actorUserId: string, installationId: string): Promise<void> {
@@ -569,9 +602,20 @@ export class SocialRepository {
     return row !== null;
   }
 
-  private async requests(actorUserId: string, direction: 'incoming' | 'outgoing'): Promise<SocialRequest[]> {
+  /** Pedidos pendentes, paginados por (created_at, id) — nunca trunca silenciosamente além da página. */
+  async requests(
+    actorUserId: string,
+    direction: 'incoming' | 'outgoing',
+    cursor: string | null = null,
+  ): Promise<{ nextCursor: string | null; requests: SocialRequest[] }> {
     const actorColumn = direction === 'incoming' ? 'recipient_user_id' : 'sender_user_id';
     const personColumn = direction === 'incoming' ? 'sender_user_id' : 'recipient_user_id';
+    const decoded = cursor === null ? null : decodePageCursor(cursor);
+    const cursorClause = decoded === null
+      ? ''
+      : 'AND (r.created_at < ?2 OR (r.created_at = ?2 AND r.id < ?3))';
+    const binds: unknown[] = [actorUserId];
+    if (decoded !== null) binds.push(decoded.sortKey, decoded.tieBreaker);
     const rows = await this.db.prepare(
       `SELECT ${PUBLIC_PERSON_COLUMNS}, r.id AS request_id, r.created_at
          FROM friend_requests r
@@ -584,9 +628,16 @@ export class SocialRepository {
              WHERE (b.blocker_user_id = ?1 AND b.blocked_user_id = p.user_id)
                 OR (b.blocker_user_id = p.user_id AND b.blocked_user_id = ?1)
           )
-        ORDER BY r.created_at DESC LIMIT 100`,
-    ).bind(actorUserId).all<RequestRow>();
-    return rows.results.map((row) => ({ createdAt: row.created_at, id: row.request_id, user: person(row) }));
+          ${cursorClause}
+        ORDER BY r.created_at DESC, r.id DESC
+        LIMIT ${REQUEST_PAGE_SIZE + 1}`,
+    ).bind(...binds).all<RequestRow>();
+    const page = rows.results.slice(0, REQUEST_PAGE_SIZE);
+    const last = page.at(-1);
+    const nextCursor = rows.results.length > REQUEST_PAGE_SIZE && last !== undefined
+      ? encodePageCursor(last.created_at, last.request_id)
+      : null;
+    return { nextCursor, requests: page.map((row) => ({ createdAt: row.created_at, id: row.request_id, user: person(row) })) };
   }
 
   private async pendingPair(first: string, second: string): Promise<PendingRow | null> {

@@ -200,8 +200,8 @@ describe('Milestone 9A — Social Foundation no runtime Workers/D1', () => {
     expect(await repository.search(bia.id, alice.publicId)).toEqual([]);
     await expect(repository.sendRequest(bia.id, alice.publicId)).rejects.toMatchObject({ code: 'USER_UNAVAILABLE' });
     await expect(repository.sendRequest(alice.id, bia.publicId)).rejects.toMatchObject({ code: 'USER_UNAVAILABLE' });
-    expect((await repository.blockedUsers(alice.id)).map((entry) => entry.publicId)).toEqual([bia.publicId]);
-    expect(await repository.blockedUsers(bia.id)).toEqual([]);
+    expect((await repository.blockedUsers(alice.id)).users.map((entry) => entry.publicId)).toEqual([bia.publicId]);
+    expect((await repository.blockedUsers(bia.id)).users).toEqual([]);
 
     await repository.unblock(alice.id, bia.publicId);
     expect((await repository.snapshot(alice.id)).friends).toEqual([]);

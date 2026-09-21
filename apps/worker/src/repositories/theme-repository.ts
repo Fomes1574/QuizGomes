@@ -203,7 +203,13 @@ export class ThemeRepository {
     return result.results.map(mapTheme);
   }
 
-  async listThemesForAdmin(search = '', limit = 100): Promise<AdminThemeSummaryRecord[]> {
+  /**
+   * PENDING sempre ordena antes de ACTIVE/DISABLED/REJECTED, então nenhuma
+   * proposta pendente some enquanto o total de PENDING ficar abaixo do limite.
+   * Sem cursor: uma fila de moderação com centenas de propostas simultâneas
+   * pede paginação de verdade, não coberta aqui — ver auditoria de M12.
+   */
+  async listThemesForAdmin(search = '', limit = 500): Promise<AdminThemeSummaryRecord[]> {
     const result = await this.db.prepare(
       `SELECT ${ADMIN_THEME_COLUMNS}
          FROM themes t
@@ -212,7 +218,7 @@ export class ThemeRepository {
         ORDER BY CASE t.status WHEN 'PENDING' THEN 0 WHEN 'ACTIVE' THEN 1 ELSE 2 END,
                  t.updated_at DESC, t.name
         LIMIT ?3`,
-    ).bind(search, escapedLike(search), Math.min(200, Math.max(1, limit))).all<ThemeRow>();
+    ).bind(search, escapedLike(search), Math.min(500, Math.max(1, limit))).all<ThemeRow>();
     return result.results.map(mapAdminTheme);
   }
 

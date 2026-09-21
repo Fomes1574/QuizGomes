@@ -27,7 +27,9 @@ export interface SocialSnapshot {
   friendLimit: number;
   friends: SocialFriend[];
   incoming: SocialRequest[];
+  incomingNextCursor: string | null;
   outgoing: SocialRequest[];
+  outgoingNextCursor: string | null;
 }
 
 export type FriendPresence = 'ONLINE' | 'MATCHMAKING' | 'IN_MATCH' | 'RECONNECTING' | 'OFFLINE';

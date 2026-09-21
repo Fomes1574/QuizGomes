@@ -379,4 +379,32 @@ describe('Social Foundation — interface web', () => {
       view.unmount();
     }
   });
+
+  it('M12 — "Carregar mais" busca a próxima página de pedidos sem substituir os já exibidos', async () => {
+    const secondIncoming = {
+      createdAt: '2026-08-20', id: '33333333-3333-4333-8333-333333333333',
+      user: { ...incomingUser, displayName: 'Carlos Extra', publicId: '#QGCARLOS4' },
+    };
+    mocks.apiRequest.mockImplementation((path: string) => {
+      if (path === '/api/social') return Promise.resolve({
+        friends: [], incoming: [{ createdAt: '2026-08-21', id: '11111111-1111-4111-8111-111111111111', user: incomingUser }],
+        incomingNextCursor: 'cursor-1', outgoing: [], outgoingNextCursor: null,
+      });
+      if (path === '/api/social/requests?direction=incoming&cursor=cursor-1') {
+        return Promise.resolve({ nextCursor: null, requests: [secondIncoming] });
+      }
+      return Promise.resolve({ ok: true });
+    });
+    render(socialPage());
+    await screen.findByText('Ana Real');
+    const incoming = screen.getByRole('region', { name: 'Pedidos recebidos' });
+    expect(within(incoming).queryByText('Carlos Extra')).not.toBeInTheDocument();
+
+    fireEvent.click(within(incoming).getByRole('button', { name: 'Carregar mais' }));
+
+    expect(await within(incoming).findByText('Carlos Extra')).toBeInTheDocument();
+    // A primeira página continua visível: "carregar mais" soma, nunca substitui.
+    expect(within(incoming).getByText('Ana Real')).toBeInTheDocument();
+    expect(within(incoming).queryByRole('button', { name: 'Carregar mais' })).not.toBeInTheDocument();
+  });
 });

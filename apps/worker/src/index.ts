@@ -1368,6 +1368,10 @@ async function socialRoute(request: Request, env: Env, url: URL, context: Execut
   if (url.pathname === '/api/social/search' && request.method === 'GET') {
     return json({ users: await social.search(profile.userId, url.searchParams.get('q') ?? '') });
   }
+  if (url.pathname === '/api/social/requests' && request.method === 'GET') {
+    const direction = url.searchParams.get('direction') === 'outgoing' ? 'outgoing' : 'incoming';
+    return json(await social.requests(profile.userId, direction, url.searchParams.get('cursor')));
+  }
   if (url.pathname === '/api/social/requests' && request.method === 'POST') {
     const parsed = socialTargetSchema.safeParse(await readJson(request));
     if (!parsed.success) throw validationError(parsed.error);
@@ -1415,7 +1419,7 @@ async function socialRoute(request: Request, env: Env, url: URL, context: Execut
     return json({ ok: true });
   }
   if (url.pathname === '/api/social/blocks') {
-    if (request.method === 'GET') return json({ users: await social.blockedUsers(profile.userId) });
+    if (request.method === 'GET') return json(await social.blockedUsers(profile.userId, url.searchParams.get('cursor')));
     if (request.method === 'POST' || request.method === 'DELETE') {
       const parsed = socialTargetSchema.safeParse(await readJson(request));
       if (!parsed.success) throw validationError(parsed.error);
