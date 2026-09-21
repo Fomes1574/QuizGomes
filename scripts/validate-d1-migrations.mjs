@@ -632,6 +632,46 @@ function assertQuestionVersioningInvariants(scenario) {
 }
 
 /** @param {MigrationScenario} scenario */
+function assertQuestionStatisticsInvariants(scenario) {
+  const questionId = `stats-question-${scenario.name}`;
+  const poolId = `stats-pool-${scenario.name}`;
+  executeSql(scenario, `
+    INSERT INTO question_pools (id, theme_id, difficulty, active_count) VALUES ('${poolId}', 'theme-x', 'EASY', 1);
+    INSERT INTO questions (
+      id, pool_id, active_slot, prompt, option_a, option_b, option_c, option_d,
+      correct_option, content_hash, status
+    ) VALUES (
+      '${questionId}', '${poolId}', 1, 'x', 'a', 'b', 'c', 'd', 0, 'hash-stats-${scenario.name}', 'ACTIVE'
+    );
+    INSERT INTO question_statistics_ledger (context_kind, context_id, round_number, user_id, question_id)
+    VALUES ('MATCH', 'match-stats-${scenario.name}', 1, 'user-stats-${scenario.name}', '${questionId}');
+  `);
+  // A chave primária do ledger — não a aplicação — é a barreira definitiva:
+  // o mesmo (contexto, rodada, usuário) nunca pode alimentar as estatísticas duas vezes.
+  executeSql(scenario, `
+    INSERT INTO question_statistics_ledger (context_kind, context_id, round_number, user_id, question_id)
+    VALUES ('MATCH', 'match-stats-${scenario.name}', 1, 'user-stats-${scenario.name}', 'outra-pergunta-${scenario.name}')
+  `, true);
+  // Contexto CHALLENGE, outra rodada ou outro usuário continuam livres.
+  executeSql(scenario, `
+    INSERT INTO question_statistics_ledger (context_kind, context_id, round_number, user_id, question_id)
+    VALUES ('CHALLENGE', 'match-stats-${scenario.name}', 1, 'user-stats-${scenario.name}', '${questionId}')
+  `);
+  executeSql(scenario, `
+    INSERT INTO question_statistics_ledger (context_kind, context_id, round_number, user_id, question_id)
+    VALUES ('MATCH', 'match-stats-${scenario.name}', 2, 'user-stats-${scenario.name}', '${questionId}')
+  `);
+  executeSql(scenario, `
+    INSERT INTO question_statistics_ledger (context_kind, context_id, round_number, user_id, question_id)
+    VALUES ('MATCH', 'match-stats-${scenario.name}', 1, 'outro-usuario-${scenario.name}', '${questionId}')
+  `);
+  const entries = query(scenario, `
+    SELECT COUNT(*) AS total FROM question_statistics_ledger WHERE context_id = 'match-stats-${scenario.name}'
+  `);
+  assert(entries[0]?.total === 4, `${scenario.name}: ledger de estatísticas não distinguiu contexto/rodada/usuário corretamente`);
+}
+
+/** @param {MigrationScenario} scenario */
 function assertAvatarInvariants(scenario) {
   const userId = `avatar-user-${scenario.name}`;
   executeSql(scenario, `
@@ -777,7 +817,7 @@ async function assertRollback(scenario) {
 }
 
 /** @param {MigrationScenario} scenario @param {string} [expectedLastMigration] */
-function assertFinalQuestionDataset(scenario, expectedLastMigration = '0004_question_editorial_versioning.sql') {
+function assertFinalQuestionDataset(scenario, expectedLastMigration = '0005_question_statistics_ledger.sql') {
   const appliedMigrations = query(scenario, 'SELECT name FROM d1_migrations ORDER BY id');
   assert(
     appliedMigrations.at(-1)?.name === expectedLastMigration,
@@ -871,6 +911,10 @@ try {
   assert(
     questionMigrationNames.includes('0004_question_editorial_versioning.sql'),
     'Migration Questions 0004 de versionamento editorial ausente',
+  );
+  assert(
+    questionMigrationNames.includes('0005_question_statistics_ledger.sql'),
+    'Migration Questions 0005 do ledger de estatísticas ausente',
   );
 
   await assertRemoteParser(coreSourceMigrationsDirectory, migrationNames);
@@ -1008,12 +1052,14 @@ try {
   applyMigrations(emptyQuestions);
   assertFinalQuestionDataset(emptyQuestions);
   assertQuestionVersioningInvariants(emptyQuestions);
+  assertQuestionStatisticsInvariants(emptyQuestions);
 
   const upgradeQuestions = await createScenario(
     'questions-upgrade-0002',
     questionMigrationNames.filter((name) => ![
       '0003_expand_synthetic_smoke_test.sql',
       '0004_question_editorial_versioning.sql',
+      '0005_question_statistics_ledger.sql',
     ].includes(name)),
     {
       binding: 'QUESTIONS_DB',
@@ -1046,10 +1092,22 @@ try {
     join(upgradeQuestions.migrationsDirectory, '0004_question_editorial_versioning.sql'),
   );
   applyMigrations(upgradeQuestions);
-  assertFinalQuestionDataset(upgradeQuestions);
+  assertFinalQuestionDataset(upgradeQuestions, '0004_question_editorial_versioning.sql');
   assertQuestionVersioningInvariants(upgradeQuestions);
+  console.log('Validando upgrade Questions D1 exato de 0004 para 0005 ledger de estatísticas...');
+  assert(
+    !query(upgradeQuestions, "SELECT name FROM sqlite_master WHERE name = 'question_statistics_ledger'").length,
+    'questions-upgrade-0002: ledger de estatísticas já existia antes da 0005',
+  );
+  await copyFile(
+    join(questionSourceMigrationsDirectory, '0005_question_statistics_ledger.sql'),
+    join(upgradeQuestions.migrationsDirectory, '0005_question_statistics_ledger.sql'),
+  );
+  applyMigrations(upgradeQuestions);
+  assertFinalQuestionDataset(upgradeQuestions);
+  assertQuestionStatisticsInvariants(upgradeQuestions);
 
-  console.log('Migrations D1 aprovadas: parser Wrangler, bancos vazios, upgrades Core 0003→0004→0005→0006→0007→0008→0009→0010→0011→0012 e Questions 0002→0003→0004, invariantes sociais, de desafio, de denúncia e editoriais, rollback e schemas finais.');
+  console.log('Migrations D1 aprovadas: parser Wrangler, bancos vazios, upgrades Core 0003→0004→0005→0006→0007→0008→0009→0010→0011→0012 e Questions 0002→0003→0004→0005, invariantes sociais, de desafio, de denúncia e editoriais, rollback e schemas finais.');
 } finally {
   await rm(temporaryRoot, { force: true, recursive: true });
 }

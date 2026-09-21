@@ -728,6 +728,24 @@ describe('Milestone 8 no runtime Workers simulado', () => {
     expect(await env.CORE_DB.prepare('SELECT COUNT(*) AS total FROM active_match_players WHERE match_id = ?1')
       .bind(roomId).first<{ total: number }>()).toEqual({ total: 0 });
 
+    // Estatísticas de pergunta: lidas de volta de match_answers/match_questions
+    // já persistidos, best-effort e sem influenciar o resultado acima.
+    const allQuestionIds = await env.CORE_DB.prepare(
+      'SELECT DISTINCT question_id FROM match_questions WHERE match_id = ?1',
+    ).bind(roomId).all<{ question_id: string }>();
+    expect(allQuestionIds.results).toHaveLength(5);
+    for (const { question_id: otherQuestionId } of allQuestionIds.results) {
+      const stats = await env.QUESTIONS_DB.prepare(
+        'SELECT use_count, answer_count FROM question_statistics WHERE question_id = ?1',
+      ).bind(otherQuestionId).first<{ answer_count: number; use_count: number }>();
+      // Só a pergunta da rodada 1 foi realmente respondida pelos dois; 2-5 esgotaram o tempo dos dois.
+      const expectedAnswers = otherQuestionId === questionId ? 2 : 0;
+      expect(stats, otherQuestionId).toEqual({ answer_count: expectedAnswers, use_count: 2 });
+    }
+    expect(await env.QUESTIONS_DB.prepare(
+      "SELECT COUNT(*) AS total FROM question_statistics_ledger WHERE context_kind = 'MATCH' AND context_id = ?1",
+    ).bind(roomId).first()).toEqual({ total: 10 });
+
     for (const userId of fixture.userIds) {
       const row = await env.CORE_DB.prepare(
         'SELECT state_blob FROM user_pool_states WHERE user_id = ?1 AND pool_id = ?2',

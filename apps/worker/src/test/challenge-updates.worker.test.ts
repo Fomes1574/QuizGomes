@@ -239,6 +239,33 @@ describe('M9C+M10 — Social converge por evento, sem polling', () => {
     expect(await repository.byId(challengeId)).toMatchObject({ status: 'COMPLETED' });
   });
 
+  it('selar as duas metades registra estatísticas por pergunta, uma vez por jogador', async () => {
+    const { themeSlug, users } = await fixture(2);
+    const first = userAt(users, 0);
+    const second = userAt(users, 1);
+    await befriend(first, second);
+    const { challengeId, repository } = await asyncChallenge(first, second, themeSlug);
+    const questions = await repository.questionSet(challengeId);
+    expect(questions).toHaveLength(5);
+
+    await finalizeHalf(await openRoom(challengeId, 'FIRST'), [20, 18, 0, 15, 11]);
+    await env.CORE_DB.prepare("UPDATE challenges SET status = 'SECOND_PLAYER_ACTIVE' WHERE id = ?1")
+      .bind(challengeId).run();
+    await finalizeHalf(await openRoom(challengeId, 'SECOND'), [20, 20, 20, 20, 20]);
+
+    for (const question of questions) {
+      const stats = await env.QUESTIONS_DB.prepare(
+        'SELECT answer_count, use_count FROM question_statistics WHERE question_id = ?1',
+      ).bind(question.id).first<{ answer_count: number; use_count: number }>();
+      // Os dois jogadores responderam cada uma das 5 perguntas: 2 usos por pergunta.
+      expect(stats, question.id).toEqual({ answer_count: 2, use_count: 2 });
+    }
+    const ledgerTotal = await env.QUESTIONS_DB.prepare(
+      "SELECT COUNT(*) AS total FROM question_statistics_ledger WHERE context_kind = 'CHALLENGE' AND context_id = ?1",
+    ).bind(challengeId).first<{ total: number }>();
+    expect(ledgerTotal?.total).toBe(10);
+  });
+
   it('"Cancelar e voltar" na metade assíncrona encerra o desafio e avisa os dois lados', async () => {
     const { themeSlug, users } = await fixture(2);
     const first = userAt(users, 0);
@@ -349,6 +376,10 @@ describe('M9C+M10 — Social converge por evento, sem polling', () => {
     // A selagem perdedora é silenciosa: não gera um segundo CHALLENGE_UPDATED.
     expect(firstSide.messages.some((message) => message.type === 'CHALLENGE_UPDATED')).toBe(false);
     expect(secondSide.messages.some((message) => message.type === 'CHALLENGE_UPDATED')).toBe(false);
+    // Nem estatística: a corrida perdida nunca chega a registrar use/answer_count.
+    expect(await env.QUESTIONS_DB.prepare(
+      "SELECT COUNT(*) AS total FROM question_statistics_ledger WHERE context_kind = 'CHALLENGE' AND context_id = ?1",
+    ).bind(challengeId).first()).toEqual({ total: 0 });
 
     // Selar de novo (retry do alarme) continua sem efeito colateral.
     await runInDurableObject(stub, async (instance) => {

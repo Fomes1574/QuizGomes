@@ -16,6 +16,7 @@ import type { Env } from '../env.js';
 import { ChallengeRepository, type ChallengeWriteOutcome } from '../repositories/challenge-repository.js';
 import { recordReportView } from '../repositories/report-view-repository.js';
 import { notifyChallengeReadyForSecond, notifyChallengeUpdated } from '../services/challenge-notifier.js';
+import { recordQuestionAnswers } from '../services/question-statistics-service.js';
 
 /**
  * Sala de uma metade do desafio assíncrono.
@@ -493,6 +494,22 @@ export class ChallengeRoom {
     if (outcome === 'NOT_APPLICABLE') {
       await this.ctx.storage.delete(SEALED_KEY);
       return;
+    }
+    if (outcome === 'APPLIED') {
+      const statsUserId = isSecondPlayer ? challenge.secondPlayerUserId : challenge.firstPlayerUserId;
+      await recordQuestionAnswers(this.env.QUESTIONS_DB, sealed.flatMap((answer, index) => {
+        const questionId = state.questions[index]?.id;
+        return questionId === undefined ? [] : [{
+          contextId: state.challengeId,
+          contextKind: 'CHALLENGE' as const,
+          correct: answer.correct,
+          questionId,
+          remainingMs: answer.remainingMs,
+          roundNumber: index + 1,
+          selectedOption: answer.selectedOption,
+          userId: statsUserId,
+        }];
+      }));
     }
     const finalized = state.phase === 'FINALIZING' ? markAsyncHalfFinalized(state) : state;
     await this.ctx.storage.put(STATE_KEY, finalized);

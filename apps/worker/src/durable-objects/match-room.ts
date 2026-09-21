@@ -18,6 +18,7 @@ import {
 } from '../repositories/live-match-repository.js';
 import { ChallengeRepository } from '../repositories/challenge-repository.js';
 import { notifyChallengeUpdated } from '../services/challenge-notifier.js';
+import { recordQuestionAnswers } from '../services/question-statistics-service.js';
 
 interface RoomAttachment {
   seat: LiveSeat;
@@ -505,7 +506,41 @@ export class MatchRoom {
       for (const socket of this.ctx.getWebSockets()) this.sendTerminal(socket, finalized, summary);
     }
     await this.reconcileDirectChallenge(state.matchId);
+    await this.recordMatchStatistics(state.matchId);
     await this.finishPresenceCleanup();
+  }
+
+  /**
+   * Estatísticas de pergunta são lidas de volta do resultado já persistido
+   * (`match_answers`/`match_questions`), nunca do estado em memória: assim
+   * funcionam igual numa finalização nova ou num retry que só repete o
+   * `persistFinalized` de um resultado já aplicado. `recordQuestionAnswers`
+   * tem sua própria idempotência por ledger, então retry nunca duplica.
+   */
+  private async recordMatchStatistics(matchId: string): Promise<void> {
+    try {
+      const rows = await this.env.CORE_DB.prepare(
+        `SELECT ma.round_number, ma.user_id, ma.selected_option, ma.remaining_ms, ma.is_correct, mq.question_id
+           FROM match_answers ma
+           JOIN match_questions mq ON mq.match_id = ma.match_id AND mq.round_number = ma.round_number
+          WHERE ma.match_id = ?1`,
+      ).bind(matchId).all<{
+        is_correct: number; question_id: string; remaining_ms: number;
+        round_number: number; selected_option: number | null; user_id: string;
+      }>();
+      await recordQuestionAnswers(this.env.QUESTIONS_DB, rows.results.map((row) => ({
+        contextId: matchId,
+        contextKind: 'MATCH' as const,
+        correct: row.is_correct === 1,
+        questionId: row.question_id,
+        remainingMs: row.remaining_ms,
+        roundNumber: row.round_number,
+        selectedOption: row.selected_option,
+        userId: row.user_id,
+      })));
+    } catch {
+      console.error(JSON.stringify({ code: 'QUESTION_STATISTICS_RECORD_FAILED', event: 'match_statistics', matchId }));
+    }
   }
 
   private async reconcileDirectChallenge(matchId: string): Promise<void> {
