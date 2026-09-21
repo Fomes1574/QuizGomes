@@ -10,7 +10,6 @@ import { Logo } from './logo.js';
 const destinations: Array<{ icon: IconName; label: string; to: string }> = [
   { icon: 'themes', label: 'Temas', to: '/' },
   { icon: 'social', label: 'Social', to: '/social' },
-  { icon: 'create', label: 'Criar', to: '/criar' },
   { icon: 'profile', label: 'Perfil', to: '/perfil' },
 ];
 

@@ -1,5 +1,6 @@
 import { levelProgress } from '@quiz-gomes/domain';
 import { lazy, Suspense, useEffect, useState, type FormEvent } from 'react';
+import { NavLink } from 'react-router-dom';
 import { Avatar } from '../components/avatar.js';
 import { AvatarFrame } from '../components/avatar-frame.js';
 import { LoadingState } from '../components/async-state.js';
@@ -279,6 +280,7 @@ export function ProfilePage() {
         ) : null}
       </section>
       {settingsError !== null ? <p className="form-message form-message--error" role="alert">{settingsError}</p> : null}
+      {role === 'ADMIN' ? <section className="settings-card"><div><h2>Administração</h2><p>Gerencie conteúdo, moderação, usuários e auditoria.</p></div><NavLink className="button button--secondary" to="/admin">Abrir administração</NavLink></section> : null}
       <section className="settings-card"><div><h2>Créditos</h2><p>Quiz Gomes foi criado por Gomes.</p></div></section>
       <Button onClick={() => void signOut()} variant="ghost">Sair da conta</Button>
       {unblocking !== null ? (

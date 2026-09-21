@@ -1,5 +1,5 @@
 import { lazy, Suspense } from 'react';
-import { Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes } from 'react-router-dom';
 import { AppShell } from './components/app-shell.js';
 import { LoadingState } from './components/async-state.js';
 import { DirectChallengeWaiting } from './components/direct-challenge-waiting.js';
@@ -22,7 +22,8 @@ export function App() {
         <Route element={<AppShell />}>
           <Route index element={<ThemesPage />} />
           <Route path="social" element={<Suspense fallback={<LoadingState label="Abrindo Social" />}><SocialPage /></Suspense>} />
-          <Route path="criar" element={<Suspense fallback={<LoadingState label="Abrindo criação" />}><CreatePage /></Suspense>} />
+          <Route path="admin" element={<Suspense fallback={<LoadingState label="Abrindo administração" />}><CreatePage adminOnly /></Suspense>} />
+          <Route path="criar" element={<Navigate replace to="/" />} />
           <Route path="perfil" element={<ProfilePage />} />
           <Route path="temas/:slug" element={<ThemeDetailPage />} />
           <Route path="*" element={<NotFoundPage />} />

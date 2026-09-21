@@ -140,7 +140,7 @@ O cliente envia somente READY, número da rodada, ID da pergunta e opção escol
 
 ## PWA
 
-Um único service worker Workbox `injectManifest` reúne shell offline, precache/atualização e FCM background. O frontend fornece a registration existente para `register({ serviceWorkerRegistration, vapidKey })`; não existe `firebase-messaging-sw.js` concorrente no root scope. `/api/**`, Firebase auth endpoints e WebSockets usam rede e nunca cache competitivo. Mensagens somente-data geram uma notificação controlada no background; foreground invalida badge/lista sem duplicar alerta do sistema. Clique abre `/social?section=pedidos`. Permissão é solicitada apenas por gesto explícito em Perfil. O app permanece navegável offline apenas no shell. A rota Criar e o editor de arte ADMIN são chunks lazy excluídos do precache; Firebase Messaging também permanece em chunk separado para usuários com push autorizado.
+Um único service worker Workbox `injectManifest` reúne shell offline, precache/atualização e FCM background. O frontend fornece a registration existente para `register({ serviceWorkerRegistration, vapidKey })`; não existe `firebase-messaging-sw.js` concorrente no root scope. `/api/**`, Firebase auth endpoints e WebSockets usam rede e nunca cache competitivo. Mensagens somente-data geram uma notificação controlada no background; foreground invalida badge/lista sem duplicar alerta do sistema. Clique abre `/social?section=pedidos`. Permissão é solicitada apenas por gesto explícito em Perfil. O app permanece navegável offline apenas no shell. A rota administrativa e o editor de arte ADMIN são chunks lazy excluídos do precache; Firebase Messaging também permanece em chunk separado para usuários com push autorizado.
 
 ## Armazenamento de imagens
 

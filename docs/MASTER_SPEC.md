@@ -36,12 +36,11 @@ Temas visuais obrigatórios: Claro, Escuro e Sistema, com preferência persistid
 
 ## 3. Navegação e páginas
 
-Fora da partida existem exatamente quatro destinos na barra inferior:
+Fora da partida existem exatamente três destinos na barra inferior:
 
 1. Temas
 2. Social
-3. Criar
-4. Perfil
+3. Perfil
 
 Não existe Home separada. Temas é a entrada principal. A barra desaparece completamente durante partidas.
 
@@ -59,9 +58,9 @@ A página do tema contém capa opcional, nome, descrição curta, total de pergu
 
 Amigos online/offline, pedidos, desafios, assíncronos pendentes, partidas aguardando desafiante e pesquisa por nome ou ID público. Perfil de amigo mostra dados cosméticos e competitivos básicos e permite desafiar.
 
-### Criar
+### Administração
 
-Usuário envia tema pendente escolhendo categoria existente. Após aprovação, torna-se owner. Apenas owner e ADMIN adicionam perguntas ao tema do owner. Editar pergunta aprovada devolve-a à revisão.
+Não há aba pública de criação na V1. A rota administrativa, acessível pelo Perfil somente a ADMIN, preserva catálogo, moderação, importação e auditoria para a curadoria do conteúdo real. Propostas públicas de tema permanecem desativadas na interface até haver operação para avaliá-las; o pipeline e os dados existentes não são removidos.
 
 ### Perfil
 

@@ -2,6 +2,7 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { MemoryRouter } from 'react-router-dom';
 import { ProfilePage } from '../pages/profile-page.js';
 
 const mocks = vi.hoisted(() => ({
@@ -19,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   },
   pushConfigured: true,
   refresh: vi.fn(() => Promise.resolve()),
+  role: 'PLAYER',
 }));
 
 vi.mock('../features/auth-context.js', () => ({
@@ -28,7 +30,7 @@ vi.mock('../features/auth-context.js', () => ({
     getToken: mocks.getToken,
     profile: mocks.profile,
     removeCustomAvatar: vi.fn(),
-    role: 'PLAYER',
+    role: mocks.role,
     signIn: vi.fn(),
     signOut: vi.fn(),
     updateDisplayName: vi.fn(),
@@ -55,6 +57,7 @@ describe('Perfil — privacidade e notificações opcionais', () => {
     mocks.refresh.mockClear();
     mocks.notificationState = 'prompt';
     mocks.pushConfigured = true;
+    mocks.role = 'PLAYER';
     mocks.apiRequest.mockImplementation((path: string) => {
       if (path === '/api/profile/summary') return Promise.resolve({ activeStreak: null, bestTheme: null, missions: [] });
       if (path === '/api/social/blocks') return Promise.resolve({ users: [{
@@ -68,10 +71,13 @@ describe('Perfil — privacidade e notificações opcionais', () => {
     });
   });
 
-  afterEach(() => cleanup());
+  afterEach(() => {
+    mocks.role = 'PLAYER';
+    cleanup();
+  });
 
   it('carrega bloqueados somente ao abrir Privacidade e Segurança e confirma o desbloqueio', async () => {
-    render(<ProfilePage />);
+    render(<MemoryRouter><ProfilePage /></MemoryRouter>);
     expect(mocks.apiRequest).toHaveBeenCalledWith('/api/profile/summary', expect.any(Object));
     fireEvent.click(screen.getByRole('button', { name: 'Usuários bloqueados' }));
     expect(await screen.findByText('Pessoa Bloqueada')).toBeInTheDocument();
@@ -130,6 +136,12 @@ describe('Perfil — privacidade e notificações opcionais', () => {
     render(<ProfilePage />);
     expect(screen.getByText('Notificações ainda não configuradas')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Ativar notificações' })).not.toBeInTheDocument();
+  });
+
+  it('mostra Administração somente para ADMIN, fora da navegação principal', () => {
+    mocks.role = 'ADMIN';
+    render(<MemoryRouter><ProfilePage /></MemoryRouter>);
+    expect(screen.getByRole('link', { name: 'Abrir administração' })).toHaveAttribute('href', '/admin');
   });
 });
 

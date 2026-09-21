@@ -195,7 +195,7 @@ A limpeza já está preparada em `apps/worker/maintenance/synthetic-smoke-test`,
 
 Nenhum destes itens foi executado fisicamente nesta entrega; ficam pendentes de confirmação do proprietário no hostname implantado, além da regressão completa do M8–M10 já registrada acima.
 
-1. logado como ADMIN, abra **Criar**: crie uma categoria, edite nome/ordem/status, aprove/rejeite um tema PENDING (proposto por outra conta) com nota de rejeição, edite um tema USER como o próprio OWNER e confirme que a edição de um tema OFFICIAL só é possível como ADMIN;
+1. logado como ADMIN, abra **Perfil → Administração**: crie uma categoria, edite nome/ordem/status, aprove/rejeite um tema PENDING (proposto por outra conta) com nota de rejeição, edite um tema USER como o próprio OWNER e confirme que a edição de um tema OFFICIAL só é possível como ADMIN. Confirme também que a barra inferior tem apenas Temas, Social e Perfil, `/criar` retorna a Temas e a rota administrativa não é acessível a PLAYER;
 2. no mesmo painel, crie uma pergunta nova para um tema (4 alternativas distintas, 1 fonte) e confirme que ela nasce **Em revisão** e não aparece em partida até ser aprovada; aprove e confirme que ela passa a ser sorteável; desative-a e confirme que some do sorteio sem quebrar a densidade dos slots restantes;
 3. importe um lote pequeno via JSON e via CSV (inclua uma linha inválida de propósito) e confirme o diagnóstico por linha sem importação parcial;
 4. conceda e revogue ADMIN para uma conta de teste em **Usuários e papéis**, e confirme a entrada correspondente em **Trilha de auditoria**;

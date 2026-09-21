@@ -6,7 +6,7 @@ Estas regras valem para toda alteração neste repositório.
 
 - O nome é **QUIZ GOMES**. A experiência é competitiva, rápida, sofisticada e centrada na pergunta.
 - Todo texto visível ao usuário deve estar em português do Brasil.
-- Fora da partida existem exatamente quatro destinos principais: Temas, Social, Criar e Perfil. A barra desaparece durante a partida.
+- Fora da partida existem exatamente três destinos principais: Temas, Social e Perfil. A barra desaparece durante a partida. Criação pública fica desativada na V1; administração é uma rota separada, visível somente a ADMIN pelo Perfil.
 - Não criar subtemas. A hierarquia é Categoria → Tema → Dificuldade → Pergunta.
 - Ranking e Conhecimento são por tema. Média de categoria é somente estatística.
 - Matchmaking público é apenas simultâneo. Assíncrono é apenas entre amigos.

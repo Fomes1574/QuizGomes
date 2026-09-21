@@ -61,7 +61,7 @@ async function persistArtwork(
   return result.theme;
 }
 
-export function CreatePage() {
+export function CreatePage({ adminOnly = false }: { adminOnly?: boolean }) {
   const { firebaseUser, getToken, profile, role, signIn } = useAuth();
   const [categories, setCategories] = useState<Category[]>([]);
   const [name, setName] = useState('');
@@ -122,18 +122,27 @@ export function CreatePage() {
     }
   }
 
+  if (adminOnly && role !== 'ADMIN') {
+    return (
+      <section className="page page--narrow">
+        <div className="empty-state"><h1>Administração</h1><p>Esta área é restrita à administração.</p></div>
+      </section>
+    );
+  }
+
   return (
     <section className="page page--create">
-      <div className="page-heading"><div><span className="eyebrow">Contribua</span><h1>Criar tema</h1><p>Proponha um novo assunto. A publicação acontece somente após revisão.</p></div></div>
+      <div className="page-heading"><div><span className="eyebrow">{adminOnly ? 'Administração' : 'Contribua'}</span><h1>{adminOnly ? 'Conteúdo e moderação' : 'Criar tema'}</h1><p>{adminOnly ? 'Gerencie o catálogo, revisões e auditoria.' : 'Proponha um novo assunto. A publicação acontece somente após revisão.'}</p></div></div>
       {firebaseUser === null ? (
         <div className="auth-card">
           <span className="auth-card__symbol">+</span>
-          <h2>Entre para criar</h2>
-          <p>Seu perfil identifica a autoria e, após aprovação, torna você owner do tema.</p>
+          <h2>{adminOnly ? 'Entre para administrar' : 'Entre para criar'}</h2>
+          <p>{adminOnly ? 'A administração pode cadastrar e moderar o catálogo.' : 'Seu perfil identifica a autoria e, após aprovação, torna você owner do tema.'}</p>
           <Button onClick={() => void signIn()}>Continuar com Google</Button>
         </div>
       ) : (
         <form className="form-card" onSubmit={(event) => void submit(event)}>
+          {adminOnly ? <h2>Novo tema</h2> : null}
           <label className="field"><span>Categoria</span><select onChange={(event) => setCategoryId(event.target.value)} required value={categoryId}>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>
           <label className="field"><span>Nome do tema</span><input maxLength={60} minLength={2} onChange={(event) => setName(event.target.value)} placeholder="Ex.: The Last of Us" required value={name} /></label>
           <label className="field"><span>Descrição curta</span><textarea maxLength={240} minLength={12} onChange={(event) => setDescription(event.target.value)} placeholder="Diga em poucas palavras o que este tema reúne." required rows={4} value={description} /><small>{description.length}/240</small></label>
