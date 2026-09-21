@@ -24,7 +24,9 @@ históricos explicam decisões passadas, mas não restabelecem regras antigas.
   Auth e FCM opcional. Sem polling, Firestore, RTDB, Storage, Functions, KV de
   presença, Workers Paid, billing ou serviço pago.
 - Categoria → Tema → Dificuldade → Pergunta; sem subtemas. Navbar fora do jogo:
-  Temas, Social, Criar, Perfil. UI pt-BR, claro/escuro/sistema.
+  Temas, Social, Perfil. A criação pública está suspensa; `/criar` redireciona a
+  Temas e a curadoria fica em `/admin`, acessível pelo Perfil somente a ADMIN.
+  UI pt-BR, claro/escuro/sistema.
 - EASY/MEDIUM/HARD = **5/8/12**; 10 s; quatro opções distintas, uma correta.
   Seleção uniforme em slots densos sem `ORDER BY RANDOM()` e sem histórico entre
   partidas; apenas sem repetição na própria partida. Descoberta não afeta sorteio.
@@ -54,10 +56,12 @@ visualização apenas de `match_questions`/`challenge_questions`, pois o conjunt
 seguras e stats existentes. O CRUD de editar/desativar fica no M11, sem ação
 fantasma no painel de reports. Não recalcular score/XP/Conhecimento.
 
-### 2. Conteúdo/admin (M11)
+### 2. Conteúdo/admin (M11 entregue; preservar para curadoria real)
 
-- Usuário propõe tema; aprovação torna o criador OWNER. OWNER+ADMIN criam/alteram
-  perguntas só nos próprios temas USER; usuário comum nunca altera tema oficial.
+- O pipeline de proposta/OWNER já existe, mas a entrada pública está suspensa.
+  ADMIN cadastra e modera os primeiros temas reais pela rota administrativa;
+  OWNER+ADMIN criam/alteram perguntas só nos próprios temas USER; usuário comum
+  nunca altera tema oficial.
 - Pergunta ACTIVE editada gera revisão/versionamento; publicação atual permanece
   ativa até aprovação. IN_REVIEW não entra em pool.
 - Admin: categorias CRUD/status/ordem; temas/ownership; perguntas/fontes/
@@ -103,7 +107,7 @@ desktop. Sem polling ou writes periódicos.
 ## Migrations e validação
 
 - Migrations aplicadas são imutáveis; toda mudança nova é forward-only a partir de
-  Core `0011` e Questions `0004`. Validar banco vazio, upgrade `0009→latest` e
+  Core `0012` e Questions `0005`. Validar banco vazio, upgrade `0009→latest` e
   rollback. Questions antes de Core quando necessário.
 - Antes do push final: lint, typecheck, unit/domain, Worker/DO/WebSocket,
   migrations, build, audit de produção, secrets, diff, E2E disponível,
