@@ -167,7 +167,8 @@ function assertFinalSchema(scenario) {
        'idx_challenge_answers_user', 'question_reports', 'question_report_views',
        'idx_question_reports_open_per_user_context', 'idx_question_reports_status_created',
        'idx_question_reports_question', 'idx_question_reports_reporter_created',
-       'idx_question_report_views_proof'
+       'idx_question_report_views_proof', 'user_daily_missions', 'user_theme_streaks',
+       'idx_user_daily_missions_user_day', 'idx_user_theme_streaks_active'
      )
         OR type = 'trigger'
      ORDER BY type, name
@@ -187,7 +188,7 @@ function assertFinalSchema(scenario) {
   for (const tableName of [
     'friend_request_pair_state', 'user_blocks', 'push_installations',
     'friendship_mutes', 'challenges', 'challenge_questions', 'challenge_answers',
-    'question_reports', 'question_report_views',
+    'question_reports', 'question_report_views', 'user_daily_missions', 'user_theme_streaks',
   ]) {
     assert(
       schemaObjects.some(({ name, type }) => name === tableName && type === 'table'),
@@ -210,6 +211,7 @@ function assertFinalSchema(scenario) {
     'idx_question_reports_status_created',
     'idx_question_reports_question',
     'idx_question_reports_reporter_created', 'idx_question_report_views_proof',
+    'idx_user_daily_missions_user_day', 'idx_user_theme_streaks_active',
   ]) {
     assert(
       schemaObjects.some(({ name, type }) => name === indexName && type === 'index'),
@@ -219,9 +221,14 @@ function assertFinalSchema(scenario) {
   assert(!schemaObjects.some(({ type }) => type === 'trigger'), `${scenario.name}: migration criou trigger remoto frágil`);
 
   const themeColumns = query(scenario, 'PRAGMA table_info(themes)');
-  for (const columnName of ['artwork_icon_key', 'artwork_version', 'artwork_kind']) {
+  for (const columnName of ['artwork_icon_key', 'artwork_version', 'artwork_kind', 'revision', 'rejection_note']) {
     assert(themeColumns.some(({ name }) => name === columnName), `${scenario.name}: coluna ${columnName} ausente`);
   }
+  const categoryColumns = query(scenario, 'PRAGMA table_info(categories)');
+  assert(
+    categoryColumns.some(({ name }) => name === 'revision'),
+    `${scenario.name}: coluna revision de categories ausente`,
+  );
 
   const foreignKeys = query(scenario, 'PRAGMA foreign_key_list(theme_artwork_blobs)');
   const expectedForeignKey = [
@@ -250,8 +257,8 @@ function assertFinalSchema(scenario) {
 
   const appliedMigrations = query(scenario, 'SELECT name FROM d1_migrations ORDER BY id');
   assert(
-    appliedMigrations.at(-1)?.name === '0011_question_report_views.sql',
-    `${scenario.name}: 0011 de recibos de visualização não foi registrada como última migration`,
+    appliedMigrations.at(-1)?.name === '0012_editorial_missions_streak.sql',
+    `${scenario.name}: 0012 do pipeline editorial não foi registrada como última migration`,
   );
   const upgradedTheme = query(scenario, `
     SELECT artwork_kind, artwork_icon_key, artwork_version, active_question_count
@@ -470,6 +477,161 @@ function assertReportViewInvariants(scenario) {
 }
 
 /** @param {MigrationScenario} scenario */
+function assertEditorialInvariants(scenario) {
+  const owner = `editorial-owner-${scenario.name}`;
+  const themeId = `editorial-theme-${scenario.name}`;
+  const categoryId = `editorial-category-${scenario.name}`;
+  executeSql(scenario, `
+    INSERT INTO users (id, firebase_uid) VALUES ('${owner}', 'firebase-${owner}');
+    INSERT INTO categories (id, slug, name) VALUES ('${categoryId}', '${categoryId}', 'Categoria ${scenario.name}');
+    INSERT INTO themes (
+      id, category_id, slug, name, description, status, origin, created_by_user_id, question_shard_id
+    ) VALUES (
+      '${themeId}', '${categoryId}', '${themeId}', 'Tema ${scenario.name}', 'Fixture sintética.',
+      'PENDING', 'USER', '${owner}', 'questions-01'
+    );
+  `);
+  // CAS por revisão: a escrita com revisão desatualizada não aplica nada.
+  executeSql(scenario, `
+    UPDATE themes SET status = 'ACTIVE', revision = revision + 1
+     WHERE id = '${themeId}' AND revision = 99;
+  `);
+  const stillPending = query(scenario, `SELECT status, revision FROM themes WHERE id = '${themeId}'`);
+  assert(
+    stillPending.length === 1 && stillPending[0].status === 'PENDING' && stillPending[0].revision === 1,
+    `${scenario.name}: CAS de revisão do tema aplicou uma escrita com revisão errada`,
+  );
+  executeSql(scenario, `
+    UPDATE themes SET status = 'ACTIVE', revision = revision + 1
+     WHERE id = '${themeId}' AND revision = 1;
+    INSERT INTO theme_ownership (theme_id, user_id) VALUES ('${themeId}', '${owner}');
+  `);
+  const approved = query(scenario, `SELECT status, revision FROM themes WHERE id = '${themeId}'`);
+  assert(
+    approved.length === 1 && approved[0].status === 'ACTIVE' && approved[0].revision === 2,
+    `${scenario.name}: aprovação com revisão correta não avançou o tema`,
+  );
+
+  // Missões: par (usuário, dia, tipo) é único — gerar de novo é idempotente.
+  executeSql(scenario, `
+    INSERT INTO user_daily_missions (user_id, day_key, mission_type, target)
+    VALUES
+      ('${owner}', '2026-09-21', 'PLAY_MATCH', 1),
+      ('${owner}', '2026-09-21', 'ANSWER_QUESTIONS', 8),
+      ('${owner}', '2026-09-21', 'CORRECT_ANSWERS', 5);
+  `);
+  executeSql(scenario, `
+    INSERT OR IGNORE INTO user_daily_missions (user_id, day_key, mission_type, target)
+    VALUES ('${owner}', '2026-09-21', 'PLAY_MATCH', 1);
+  `);
+  const missions = query(scenario, `
+    SELECT COUNT(*) AS total FROM user_daily_missions
+     WHERE user_id = '${owner}' AND day_key = '2026-09-21'
+  `);
+  assert(missions[0]?.total === 3, `${scenario.name}: geração repetida de missões duplicou uma linha`);
+  executeSql(scenario, `
+    INSERT INTO user_daily_missions (user_id, day_key, mission_type, target)
+    VALUES ('${owner}', '2026-09-21', 'SCAN_ALL', 1)
+  `, true);
+
+  // Streak: best nunca fica abaixo do current, e o fallback determinístico
+  // usa o índice (user_id, current_streak DESC, theme_id).
+  executeSql(scenario, `
+    INSERT INTO user_theme_streaks (user_id, theme_id, current_streak, best_streak, last_active_day)
+    VALUES ('${owner}', '${themeId}', 3, 5, '2026-09-20');
+  `);
+  executeSql(scenario, `
+    UPDATE user_theme_streaks SET current_streak = 6 WHERE user_id = '${owner}' AND theme_id = '${themeId}'
+  `, true);
+  executeSql(scenario, `
+    UPDATE user_theme_streaks
+       SET current_streak = 6, best_streak = 6, last_active_day = '2026-09-21'
+     WHERE user_id = '${owner}' AND theme_id = '${themeId}'
+  `);
+  const streak = query(scenario, `
+    SELECT current_streak, best_streak FROM user_theme_streaks
+     WHERE user_id = '${owner}' AND theme_id = '${themeId}'
+  `);
+  assert(
+    streak.length === 1 && streak[0].current_streak === 6 && streak[0].best_streak === 6,
+    `${scenario.name}: streak não avançou current/best juntos`,
+  );
+}
+
+/** @param {MigrationScenario} scenario */
+function assertQuestionVersioningInvariants(scenario) {
+  const actor = `versioning-actor-${scenario.name}`;
+  const poolId = `versioning-pool-${scenario.name}`;
+  const activeId = `versioning-active-${scenario.name}`;
+  const draftId = `versioning-draft-${scenario.name}`;
+  executeSql(scenario, `
+    INSERT INTO question_pools (id, theme_id, difficulty, active_count)
+    VALUES ('${poolId}', 'theme-${scenario.name}', 'EASY', 1);
+    INSERT INTO questions (
+      id, pool_id, active_slot, prompt, option_a, option_b, option_c, option_d,
+      correct_option, content_hash, status, created_by_user_id
+    ) VALUES (
+      '${activeId}', '${poolId}', 1, 'Pergunta ativa ${scenario.name}?', 'A', 'B', 'C', 'D',
+      0, 'hash-active-${scenario.name}', 'ACTIVE', '${actor}'
+    );
+    INSERT INTO questions (
+      id, pool_id, prompt, option_a, option_b, option_c, option_d,
+      correct_option, content_hash, status, created_by_user_id, replaces_question_id
+    ) VALUES (
+      '${draftId}', '${poolId}', 'Pergunta revisada ${scenario.name}?', 'A2', 'B2', 'C2', 'D2',
+      1, 'hash-draft-${scenario.name}', 'IN_REVIEW', '${actor}', '${activeId}'
+    );
+  `);
+  const beforePublish = query(scenario, `
+    SELECT id, status, active_slot, replaces_question_id FROM questions
+     WHERE id IN ('${activeId}', '${draftId}')
+  `);
+  const draftBefore = beforePublish.find((row) => row.id === draftId);
+  const activeBefore = beforePublish.find((row) => row.id === activeId);
+  assert(
+    beforePublish.length === 2
+      && activeBefore?.status === 'ACTIVE' && activeBefore.active_slot === 1
+      && draftBefore?.status === 'IN_REVIEW' && draftBefore.active_slot === null
+      && draftBefore.replaces_question_id === activeId,
+    `${scenario.name}: rascunho de edição não nasceu vinculado à pergunta ativa`,
+  );
+  // Publicar o rascunho troca o slot no mesmo lote: a ativa some, o rascunho assume.
+  executeSql(scenario, `
+    UPDATE questions SET status = 'DISABLED', active_slot = NULL,
+           resolved_by_user_id = '${actor}', resolved_at = CURRENT_TIMESTAMP
+     WHERE id = '${activeId}' AND status = 'ACTIVE';
+    UPDATE questions SET status = 'ACTIVE', active_slot = 1,
+           resolved_by_user_id = '${actor}', resolved_at = CURRENT_TIMESTAMP
+     WHERE id = '${draftId}' AND status = 'IN_REVIEW';
+  `);
+  const afterPublish = query(scenario, `
+    SELECT id, status, active_slot FROM questions WHERE id IN ('${activeId}', '${draftId}')
+  `);
+  const active = afterPublish.find((row) => row.id === draftId);
+  const disabled = afterPublish.find((row) => row.id === activeId);
+  assert(
+    active?.status === 'ACTIVE' && active.active_slot === 1
+      && disabled?.status === 'DISABLED' && disabled.active_slot === null,
+    `${scenario.name}: publicação do rascunho não trocou o slot ativo atomicamente`,
+  );
+  // IN_REVIEW nunca pode ocupar um slot ativo: é o que o sorteio de rodada usa.
+  executeSql(scenario, `
+    INSERT INTO questions (
+      id, pool_id, active_slot, prompt, option_a, option_b, option_c, option_d,
+      correct_option, content_hash, status
+    ) VALUES (
+      'in-review-with-slot-${scenario.name}', '${poolId}', 2, 'x', 'a', 'b', 'c', 'd',
+      0, 'hash-bad-slot-${scenario.name}', 'IN_REVIEW'
+    )
+  `);
+  const leakedSlot = query(scenario, `
+    SELECT COUNT(*) AS total FROM questions
+     WHERE pool_id = '${poolId}' AND status = 'ACTIVE' AND active_slot = 2
+  `);
+  assert(leakedSlot[0]?.total === 0, `${scenario.name}: pergunta IN_REVIEW apareceu como ACTIVE no slot`);
+}
+
+/** @param {MigrationScenario} scenario */
 function assertAvatarInvariants(scenario) {
   const userId = `avatar-user-${scenario.name}`;
   executeSql(scenario, `
@@ -614,12 +776,12 @@ async function assertRollback(scenario) {
   assert(residue.length === 0, `${scenario.name}: migration com erro deixou schema ou histórico parcial`);
 }
 
-/** @param {MigrationScenario} scenario */
-function assertFinalQuestionDataset(scenario) {
+/** @param {MigrationScenario} scenario @param {string} [expectedLastMigration] */
+function assertFinalQuestionDataset(scenario, expectedLastMigration = '0004_question_editorial_versioning.sql') {
   const appliedMigrations = query(scenario, 'SELECT name FROM d1_migrations ORDER BY id');
   assert(
-    appliedMigrations.at(-1)?.name === '0003_expand_synthetic_smoke_test.sql',
-    `${scenario.name}: 0003 de Questions não foi registrada como última migration`,
+    appliedMigrations.at(-1)?.name === expectedLastMigration,
+    `${scenario.name}: ${expectedLastMigration} não foi registrada como última migration de Questions`,
   );
   const pool = query(scenario, `
     SELECT active_count, version, migration_status
@@ -701,7 +863,15 @@ try {
   );
   assert(migrationNames.includes('0010_question_reports.sql'), 'Migration Core 0010 de denúncias ausente');
   assert(migrationNames.includes('0011_question_report_views.sql'), 'Migration Core 0011 de recibos de denúncia ausente');
+  assert(
+    migrationNames.includes('0012_editorial_missions_streak.sql'),
+    'Migration Core 0012 do pipeline editorial/missões/streak ausente',
+  );
   assert(questionMigrationNames.includes('0003_expand_synthetic_smoke_test.sql'), 'Migration Questions 0003 ausente');
+  assert(
+    questionMigrationNames.includes('0004_question_editorial_versioning.sql'),
+    'Migration Questions 0004 de versionamento editorial ausente',
+  );
 
   await assertRemoteParser(coreSourceMigrationsDirectory, migrationNames);
   await assertRemoteParser(questionSourceMigrationsDirectory, questionMigrationNames);
@@ -716,6 +886,7 @@ try {
   assertChallengeInvariants(emptyDatabase);
   assertReportInvariants(emptyDatabase);
   assertReportViewInvariants(emptyDatabase);
+  assertEditorialInvariants(emptyDatabase);
 
   const upgradeDatabase = await createScenario(
     'upgrade-0003',
@@ -728,6 +899,7 @@ try {
       '0009_challenge_pair_limits_by_kind.sql',
       '0010_question_reports.sql',
       '0011_question_report_views.sql',
+      '0012_editorial_missions_streak.sql',
     ].includes(name)),
   );
   console.log('Validando upgrade D1 exato de 0003 para 0004...');
@@ -810,8 +982,19 @@ try {
     join(upgradeDatabase.migrationsDirectory, '0011_question_report_views.sql'),
   );
   applyMigrations(upgradeDatabase);
-  assertFinalSchema(upgradeDatabase);
   assertReportViewInvariants(upgradeDatabase);
+  console.log('Validando upgrade D1 atual exato de 0011 para 0012 pipeline editorial/missões/streak...');
+  assert(
+    !query(upgradeDatabase, "SELECT name FROM sqlite_master WHERE name = 'user_daily_missions'").length,
+    'upgrade-0003: tabela de missões já existia antes da 0012',
+  );
+  await copyFile(
+    join(coreSourceMigrationsDirectory, '0012_editorial_missions_streak.sql'),
+    join(upgradeDatabase.migrationsDirectory, '0012_editorial_missions_streak.sql'),
+  );
+  applyMigrations(upgradeDatabase);
+  assertFinalSchema(upgradeDatabase);
+  assertEditorialInvariants(upgradeDatabase);
   console.log('Validando rollback transacional de migration com erro...');
   await assertRollback(upgradeDatabase);
 
@@ -824,10 +1007,14 @@ try {
   console.log('Validando migrations Questions D1 em banco vazio...');
   applyMigrations(emptyQuestions);
   assertFinalQuestionDataset(emptyQuestions);
+  assertQuestionVersioningInvariants(emptyQuestions);
 
   const upgradeQuestions = await createScenario(
     'questions-upgrade-0002',
-    questionMigrationNames.filter((name) => name !== '0003_expand_synthetic_smoke_test.sql'),
+    questionMigrationNames.filter((name) => ![
+      '0003_expand_synthetic_smoke_test.sql',
+      '0004_question_editorial_versioning.sql',
+    ].includes(name)),
     {
       binding: 'QUESTIONS_DB',
       databaseName: questionDatabaseName,
@@ -848,9 +1035,21 @@ try {
     join(upgradeQuestions.migrationsDirectory, '0003_expand_synthetic_smoke_test.sql'),
   );
   applyMigrations(upgradeQuestions);
+  assertFinalQuestionDataset(upgradeQuestions, '0003_expand_synthetic_smoke_test.sql');
+  console.log('Validando upgrade Questions D1 exato de 0003 para 0004 versionamento editorial...');
+  assert(
+    !query(upgradeQuestions, 'PRAGMA table_info(questions)').some(({ name }) => name === 'replaces_question_id'),
+    'questions-upgrade-0002: coluna de versionamento já existia antes da 0004',
+  );
+  await copyFile(
+    join(questionSourceMigrationsDirectory, '0004_question_editorial_versioning.sql'),
+    join(upgradeQuestions.migrationsDirectory, '0004_question_editorial_versioning.sql'),
+  );
+  applyMigrations(upgradeQuestions);
   assertFinalQuestionDataset(upgradeQuestions);
+  assertQuestionVersioningInvariants(upgradeQuestions);
 
-  console.log('Migrations D1 aprovadas: parser Wrangler, bancos vazios, upgrades Core 0003→0004→0005→0006→0007→0008→0009→0010→0011 e Questions 0002→0003, invariantes sociais, de desafio e de denúncia, rollback e schemas finais.');
+  console.log('Migrations D1 aprovadas: parser Wrangler, bancos vazios, upgrades Core 0003→0004→0005→0006→0007→0008→0009→0010→0011→0012 e Questions 0002→0003→0004, invariantes sociais, de desafio, de denúncia e editoriais, rollback e schemas finais.');
 } finally {
   await rm(temporaryRoot, { force: true, recursive: true });
 }
