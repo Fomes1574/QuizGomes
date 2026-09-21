@@ -1,23 +1,6 @@
 import type { ImportedQuestion } from '../http/schemas.js';
 import { ApiError } from '../http/api-error.js';
-
-function normalized(question: ImportedQuestion): string {
-  return JSON.stringify({
-    difficulty: question.difficulty,
-    options: question.options.map((option) => option.normalize('NFKC').trim().toLocaleLowerCase('pt-BR')),
-    prompt: question.prompt.normalize('NFKC').trim().toLocaleLowerCase('pt-BR'),
-    themeId: question.themeId,
-  });
-}
-
-async function sha256(value: string): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
-function poolId(themeId: string, difficulty: string): string {
-  return `${themeId}:${difficulty.toLowerCase()}`;
-}
+import { questionContentHash, questionPoolId } from './question-content.js';
 
 export class QuestionImportService {
   constructor(
@@ -50,7 +33,7 @@ export class QuestionImportService {
     const missing = themeIds.filter((id) => !foundThemeIds.has(id));
     if (missing.length > 0) throw new ApiError(400, 'UNKNOWN_THEME', 'O lote contém tema inexistente.', { themeIds: missing });
 
-    const hashes = await Promise.all(questions.map((question) => sha256(normalized(question))));
+    const hashes = await Promise.all(questions.map((question) => questionContentHash(question)));
     if (new Set(hashes).size !== hashes.length) {
       throw new ApiError(400, 'DUPLICATE_IN_BATCH', 'O lote contém perguntas duplicadas.');
     }
@@ -64,7 +47,7 @@ export class QuestionImportService {
     ];
 
     questions.forEach((question, index) => {
-      const targetPoolId = poolId(question.themeId, question.difficulty);
+      const targetPoolId = questionPoolId(question.themeId, question.difficulty);
       statements.push(
         this.questionsDb.prepare(
           `INSERT OR IGNORE INTO question_pools (id, theme_id, difficulty)

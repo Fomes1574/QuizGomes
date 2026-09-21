@@ -87,6 +87,44 @@ export const importBatchSchema = z.object({
 
 export type ImportedQuestion = z.infer<typeof importedQuestionSchema>;
 
+function assertDistinctOptions(
+  question: { options: readonly [string, string, string, string] },
+  context: z.RefinementCtx,
+): void {
+  const normalizedOptions = question.options.map((option) => option.normalize('NFKC').toLocaleLowerCase('pt-BR'));
+  if (new Set(normalizedOptions).size !== 4) {
+    context.addIssue({ code: 'custom', message: 'As quatro alternativas precisam ser diferentes.', path: ['options'] });
+  }
+}
+
+const questionOptionsTuple = z.tuple([
+  z.string().trim().min(1).max(180),
+  z.string().trim().min(1).max(180),
+  z.string().trim().min(1).max(180),
+  z.string().trim().min(1).max(180),
+]);
+
+export const questionEditorialSchema = z.object({
+  correctOption: z.number().int().min(0).max(3),
+  difficulty: z.enum(['EASY', 'MEDIUM', 'HARD']),
+  options: questionOptionsTuple,
+  prompt: z.string().trim().min(1).max(360),
+  sources: z.array(sourceSchema).min(1).max(5),
+}).strict().superRefine(assertDistinctOptions);
+
+export type QuestionEditorialInput = z.infer<typeof questionEditorialSchema>;
+
+export const questionEditSchema = z.object({
+  correctOption: z.number().int().min(0).max(3),
+  options: questionOptionsTuple,
+  prompt: z.string().trim().min(1).max(360),
+  sources: z.array(sourceSchema).min(1).max(5),
+}).strict().superRefine(assertDistinctOptions);
+
+export const questionRejectionSchema = z.object({
+  note: z.string().trim().max(280).optional(),
+}).strict();
+
 export const reportCreationSchema = z.object({
   contextId: z.string().trim().min(1).max(128),
   contextKind: z.enum(['MATCH', 'CHALLENGE']),

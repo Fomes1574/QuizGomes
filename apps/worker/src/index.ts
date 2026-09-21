@@ -23,6 +23,9 @@ import {
   categoryUpdateSchema,
   importBatchSchema,
   profileInputSchema,
+  questionEditorialSchema,
+  questionEditSchema,
+  questionRejectionSchema,
   reportCreationSchema,
   reportResolutionSchema,
   themeArtworkChoiceSchema,
@@ -31,6 +34,7 @@ import {
   themeRejectionSchema,
   themeSubmissionSchema,
 } from './http/schemas.js';
+import { QuestionEditorialRepository } from './repositories/question-editorial-repository.js';
 import { QuestionRepository } from './repositories/question-repository.js';
 import { PoolStateRepository } from './repositories/pool-state-repository.js';
 import { ReportRepository, type ReportRecord } from './repositories/report-repository.js';
@@ -537,6 +541,102 @@ async function adminThemeModerationRoute(
   const theme = await themes.deactivateTheme({ expectedRevision: parsed.data.expectedRevision, themeId });
   await auditLog(env, profile.userId, 'DEACTIVATE_THEME', 'theme', themeId, {});
   return json({ theme });
+}
+
+/** ADMIN em qualquer tema; OWNER só no próprio tema USER; nunca em tema OFFICIAL. */
+async function requireQuestionEditAccess(
+  env: Env,
+  profileUserId: string,
+  isAdmin: boolean,
+  themeId: string,
+): Promise<void> {
+  if (isAdmin) return;
+  const access = await new ThemeRepository(env.CORE_DB).themeEditAccess(themeId, profileUserId);
+  if (access === null) throw new ApiError(404, 'THEME_NOT_FOUND', 'Tema não encontrado.');
+  if (access.origin !== 'USER' || !access.owned) {
+    throw new ApiError(403, 'THEME_EDIT_FORBIDDEN', 'Você não pode editar perguntas deste tema.');
+  }
+}
+
+/** `themes.active_question_count` é só um contador de exibição; a fonte real do sorteio é `question_pools.active_count`. */
+async function syncThemeQuestionCount(env: Env, themeId: string): Promise<void> {
+  try {
+    const totals = await env.QUESTIONS_DB.prepare(
+      'SELECT COALESCE(SUM(active_count), 0) AS total FROM question_pools WHERE theme_id = ?1',
+    ).bind(themeId).first<{ total: number }>();
+    await env.CORE_DB.prepare('UPDATE themes SET active_question_count = ?1 WHERE id = ?2')
+      .bind(totals?.total ?? 0, themeId).run();
+  } catch {
+    console.error(JSON.stringify({ code: 'THEME_QUESTION_COUNT_SYNC_FAILED', themeId }));
+  }
+}
+
+async function editorialQuestionsRoute(request: Request, env: Env, url: URL, themeId: string): Promise<Response> {
+  const identity = await requireUser(request, env);
+  const profile = await new UserRepository(env.CORE_DB).findByFirebaseUid(identity.uid);
+  if (profile === null) throw new ApiError(409, 'PROFILE_REQUIRED', 'Conclua seu perfil.');
+  const isAdmin = await hasAdminAccess(identity, env);
+  await requireQuestionEditAccess(env, profile.userId, isAdmin, themeId);
+  const questions = new QuestionEditorialRepository(env.QUESTIONS_DB);
+  if (request.method === 'GET') {
+    const cursor = url.searchParams.get('cursor');
+    return json(await questions.listForTheme({ cursor, themeId }));
+  }
+  if (request.method === 'POST') {
+    const parsed = questionEditorialSchema.safeParse(await readJson(request));
+    if (!parsed.success) throw validationError(parsed.error);
+    const created = await questions.create({ actorUserId: profile.userId, themeId, ...parsed.data });
+    await auditLog(env, profile.userId, 'CREATE_QUESTION', 'question', created.questionId, { themeId });
+    return json(created, { status: 201 });
+  }
+  throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Método não permitido.');
+}
+
+async function editorialQuestionActionRoute(
+  request: Request,
+  env: Env,
+  questionId: string,
+  action: 'approve' | 'deactivate' | 'edit' | 'reject',
+): Promise<Response> {
+  const identity = await requireUser(request, env);
+  const profile = await new UserRepository(env.CORE_DB).findByFirebaseUid(identity.uid);
+  if (profile === null) throw new ApiError(409, 'PROFILE_REQUIRED', 'Conclua seu perfil.');
+  const isAdmin = await hasAdminAccess(identity, env);
+  const questions = new QuestionEditorialRepository(env.QUESTIONS_DB);
+
+  if (action === 'edit') {
+    if (request.method !== 'PATCH') throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Método não permitido.');
+    const current = await questions.findForModeration(questionId);
+    if (current === null) throw new ApiError(404, 'QUESTION_NOT_FOUND', 'Pergunta não encontrada.');
+    await requireQuestionEditAccess(env, profile.userId, isAdmin, current.themeId);
+    const parsed = questionEditSchema.safeParse(await readJson(request));
+    if (!parsed.success) throw validationError(parsed.error);
+    const draft = await questions.proposeEdit({ actorUserId: profile.userId, questionId, ...parsed.data });
+    await auditLog(env, profile.userId, 'PROPOSE_QUESTION_EDIT', 'question', draft.draftId, { replaces: questionId });
+    return json(draft, { status: 201 });
+  }
+
+  if (request.method !== 'POST') throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Método não permitido.');
+  // Aprovar/rejeitar/desativar exigem ADMIN mesmo quando o OWNER criou a pergunta:
+  // ninguém aprova a própria submissão.
+  await requireAdmin(identity, env);
+  if (action === 'approve') {
+    const { themeId } = await questions.approve(questionId, profile.userId);
+    await syncThemeQuestionCount(env, themeId);
+    await auditLog(env, profile.userId, 'APPROVE_QUESTION', 'question', questionId, { themeId });
+    return json({ ok: true });
+  }
+  if (action === 'reject') {
+    const parsed = questionRejectionSchema.safeParse(await readJson(request));
+    if (!parsed.success) throw validationError(parsed.error);
+    const { themeId } = await questions.reject(questionId, profile.userId, parsed.data.note ?? null);
+    await auditLog(env, profile.userId, 'REJECT_QUESTION', 'question', questionId, { note: parsed.data.note ?? null, themeId });
+    return json({ ok: true });
+  }
+  const { themeId } = await questions.deactivate(questionId, profile.userId);
+  await syncThemeQuestionCount(env, themeId);
+  await auditLog(env, profile.userId, 'DEACTIVATE_QUESTION', 'question', questionId, { themeId });
+  return json({ ok: true });
 }
 
 async function adminThemeArtworkRoute(request: Request, env: Env, themeId: string): Promise<Response> {
@@ -1349,6 +1449,25 @@ async function apiRoute(request: Request, env: Env, url: URL, context: Execution
   const adminThemeEditMatch = /^\/api\/admin\/themes\/([a-z0-9_-]{1,128})$/i.exec(url.pathname);
   if (adminThemeEditMatch?.[1] !== undefined && request.method === 'PATCH') {
     return adminThemeModerationRoute(request, env, decodeURIComponent(adminThemeEditMatch[1]), 'edit');
+  }
+
+  const editorialQuestionsMatch = /^\/api\/editorial\/themes\/([a-z0-9_-]{1,128})\/questions$/i.exec(url.pathname);
+  if (editorialQuestionsMatch?.[1] !== undefined) {
+    return editorialQuestionsRoute(request, env, url, decodeURIComponent(editorialQuestionsMatch[1]));
+  }
+
+  const editorialQuestionActionMatch = /^\/api\/editorial\/questions\/([a-f0-9-]{36})\/(approve|reject|deactivate)$/i
+    .exec(url.pathname);
+  if (editorialQuestionActionMatch?.[1] !== undefined && editorialQuestionActionMatch[2] !== undefined) {
+    return editorialQuestionActionRoute(
+      request, env, editorialQuestionActionMatch[1],
+      editorialQuestionActionMatch[2] as 'approve' | 'deactivate' | 'reject',
+    );
+  }
+
+  const editorialQuestionEditMatch = /^\/api\/editorial\/questions\/([a-f0-9-]{36})$/i.exec(url.pathname);
+  if (editorialQuestionEditMatch?.[1] !== undefined && request.method === 'PATCH') {
+    return editorialQuestionActionRoute(request, env, editorialQuestionEditMatch[1], 'edit');
   }
 
   const themes = new ThemeRepository(env.CORE_DB);
