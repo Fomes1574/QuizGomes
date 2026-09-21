@@ -1,3 +1,4 @@
+import { categoryAverage, type CategoryAverage } from '@quiz-gomes/domain';
 import type { AuthenticatedUser } from '../env.js';
 import { customAvatarUrl } from '../storage/custom-avatar.js';
 
@@ -20,6 +21,19 @@ export interface BestThemeRecord {
   name: string;
   rankedMatches: number;
   slug: string;
+}
+
+export interface MatchSummaryRecord {
+  draws: number;
+  losses: number;
+  matches: number;
+  wins: number;
+}
+
+export interface CategoryAverageRecord {
+  average: CategoryAverage;
+  categoryId: string;
+  categoryName: string;
 }
 
 export interface AdminUserRecord {
@@ -114,6 +128,43 @@ export class UserRepository {
       rankedMatches: row.ranked_matches,
       slug: row.slug,
     };
+  }
+
+  /** Totais de partidas Ranqueadas somados de todos os temas: exibição no Perfil, sem efeito competitivo. */
+  async matchSummary(userId: string): Promise<MatchSummaryRecord> {
+    const row = await this.db.prepare(
+      `SELECT COALESCE(SUM(ranked_matches), 0) AS matches, COALESCE(SUM(wins), 0) AS wins,
+              COALESCE(SUM(losses), 0) AS losses, COALESCE(SUM(draws), 0) AS draws
+         FROM theme_rankings WHERE user_id = ?1`,
+    ).bind(userId).first<{ draws: number; losses: number; matches: number; wins: number }>();
+    return row ?? { draws: 0, losses: 0, matches: 0, wins: 0 };
+  }
+
+  /**
+   * Média ordinal fracionária por categoria (apenas temas com Ranqueada,
+   * cap em Desafiante I): puramente exibicional, nunca influencia matchmaking
+   * ou resultado. Categorias sem nenhum tema jogado não aparecem.
+   */
+  async categoryAverages(userId: string): Promise<CategoryAverageRecord[]> {
+    const result = await this.db.prepare(
+      `SELECT c.id AS category_id, c.name AS category_name, r.knowledge, r.ranked_matches
+         FROM theme_rankings r
+         JOIN themes t ON t.id = r.theme_id
+         JOIN categories c ON c.id = t.category_id
+        WHERE r.user_id = ?1`,
+    ).bind(userId).all<{ category_id: string; category_name: string; knowledge: number; ranked_matches: number }>();
+    const byCategory = new Map<string, { name: string; samples: { knowledge: number; rankedMatches: number }[] }>();
+    for (const row of result.results) {
+      const entry = byCategory.get(row.category_id) ?? { name: row.category_name, samples: [] };
+      entry.samples.push({ knowledge: row.knowledge, rankedMatches: row.ranked_matches });
+      byCategory.set(row.category_id, entry);
+    }
+    const records: CategoryAverageRecord[] = [];
+    for (const [categoryId, entry] of byCategory) {
+      const average = categoryAverage(entry.samples);
+      if (average !== null) records.push({ average, categoryId, categoryName: entry.name });
+    }
+    return records.sort((a, b) => a.categoryName.localeCompare(b.categoryName, 'pt-BR'));
   }
 
   /** Firebase UID de cada usuário, para reservas de presença e salas. */

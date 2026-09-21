@@ -10,6 +10,7 @@ import { useAuth } from '../features/auth-context.js';
 import { useSocial } from '../features/social-context.js';
 import { useThemeMode, type ThemeMode } from '../hooks/use-theme-mode.js';
 import { apiRequest } from '../lib/api.js';
+import type { CategoryAverage, MatchSummary } from '../lib/models.js';
 import { activateFriendNotifications, browserNotificationState, publicVapidKey } from '../lib/social-notifications.js';
 import type { SocialUser } from '../lib/social.js';
 
@@ -62,26 +63,32 @@ export function ProfilePage() {
   const [bestTheme, setBestTheme] = useState<{ knowledge: number; name: string; rankedMatches: number; slug: string } | null>(null);
   const [missions, setMissions] = useState<MissionSummary[]>([]);
   const [activeStreak, setActiveStreak] = useState<StreakSummary | null>(null);
+  const [matchSummary, setMatchSummary] = useState<MatchSummary | null>(null);
+  const [categoryAverages, setCategoryAverages] = useState<CategoryAverage[]>([]);
   const progress = levelProgress(profile?.totalXp ?? 0);
 
   useEffect(() => {
     if (profile === null) return;
     let active = true;
-    void apiRequest<{ activeStreak: StreakSummary | null; bestTheme: typeof bestTheme; missions: MissionSummary[] }>(
-      '/api/profile/summary',
-      { getToken },
-    )
+    void apiRequest<{
+      activeStreak: StreakSummary | null; bestTheme: typeof bestTheme; categoryAverages: CategoryAverage[];
+      matchSummary: MatchSummary; missions: MissionSummary[];
+    }>('/api/profile/summary', { getToken })
       .then((response) => {
         if (!active) return;
         setBestTheme(response.bestTheme ?? null);
         setMissions(response.missions ?? []);
         setActiveStreak(response.activeStreak ?? null);
+        setMatchSummary(response.matchSummary ?? null);
+        setCategoryAverages(response.categoryAverages ?? []);
       })
       .catch(() => {
         if (!active) return;
         setBestTheme(null);
         setMissions([]);
         setActiveStreak(null);
+        setMatchSummary(null);
+        setCategoryAverages([]);
       });
     return () => { active = false; };
   }, [getToken, profile]);
@@ -181,6 +188,30 @@ export function ProfilePage() {
           </ul>
         </article>
         <article className="profile-card"><span className="eyebrow">Sequência</span>{activeStreak === null ? <p>Jogue uma partida válida em qualquer tema para começar sua sequência.</p> : <><h2>{activeStreak.currentStreak} {activeStreak.currentStreak === 1 ? 'dia' : 'dias'}</h2><p>{activeStreak.themeName} · recorde de {activeStreak.bestStreak} {activeStreak.bestStreak === 1 ? 'dia' : 'dias'}</p></>}</article>
+        <article className="profile-card">
+          <span className="eyebrow">Partidas Ranqueadas</span>
+          {matchSummary === null || matchSummary.matches === 0 ? <p>Jogue sua primeira Ranqueada para preencher este espaço.</p> : (
+            <ul className="match-summary">
+              <li><strong>{matchSummary.matches}</strong><span>Partidas</span></li>
+              <li><strong>{matchSummary.wins}</strong><span>Vitórias</span></li>
+              <li><strong>{matchSummary.losses}</strong><span>Derrotas</span></li>
+              <li><strong>{matchSummary.draws}</strong><span>Empates</span></li>
+            </ul>
+          )}
+        </article>
+        <article className="profile-card">
+          <span className="eyebrow">Média por categoria</span>
+          {categoryAverages.length === 0 ? <p>Jogue Ranqueadas em mais de um tema da mesma categoria para ver sua média.</p> : (
+            <ul className="category-average-list">
+              {categoryAverages.map((entry) => (
+                <li key={entry.categoryId}>
+                  <span>{entry.categoryName}</span>
+                  <RankBadge knowledge={entry.average.rank.knowledge} />
+                </li>
+              ))}
+            </ul>
+          )}
+        </article>
       </div>
       <section className="settings-card"><div><h2>Aparência</h2><p>A preferência acompanha este dispositivo.</p></div><div className="segmented" role="radiogroup" aria-label="Aparência">{(['light', 'dark', 'system'] as ThemeMode[]).map((value) => <button aria-checked={mode === value} className={mode === value ? 'segmented__active' : ''} key={value} onClick={() => setMode(value)} role="radio" type="button">{{ light: 'Claro', dark: 'Escuro', system: 'Sistema' }[value]}</button>)}</div></section>
       <section className="settings-card">

@@ -97,6 +97,22 @@ export interface AuditLogPage {
   nextCursor: string | null;
 }
 
+export interface MatchSummary {
+  draws: number;
+  losses: number;
+  matches: number;
+  wins: number;
+}
+
+export interface CategoryAverage {
+  average: {
+    rank: { division: string; knowledge: number; tier: string };
+    sampledThemes: number;
+  };
+  categoryId: string;
+  categoryName: string;
+}
+
 export interface LeaderboardEntry {
   customAvatarUrl: string | null;
   displayName: string;

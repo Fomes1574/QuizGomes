@@ -154,3 +154,55 @@ describe('M11 — missões e streak no Perfil', () => {
     expect(screen.getByText('Jogue uma partida válida em qualquer tema para começar sua sequência.')).toBeInTheDocument();
   });
 });
+
+describe('M11 — partidas e média por categoria no Perfil', () => {
+  beforeEach(() => {
+    mocks.apiRequest.mockReset();
+    mocks.notificationState = 'prompt';
+    mocks.pushConfigured = true;
+  });
+
+  afterEach(() => cleanup());
+
+  it('exibe os totais de partidas Ranqueadas e a média por categoria', async () => {
+    mocks.apiRequest.mockImplementation((path: string) => {
+      if (path === '/api/profile/summary') return Promise.resolve({
+        activeStreak: null,
+        bestTheme: null,
+        categoryAverages: [{
+          average: { rank: { division: 'III', knowledge: 5_000, tier: 'Bronze' }, sampledThemes: 2 },
+          categoryId: 'cat-1',
+          categoryName: 'Jogos',
+        }],
+        matchSummary: { draws: 2, losses: 3, matches: 10, wins: 5 },
+        missions: [],
+      });
+      return Promise.resolve({ ok: true });
+    });
+    render(<ProfilePage />);
+
+    expect(await screen.findByText('10')).toBeInTheDocument();
+    expect(screen.getByText('Partidas')).toBeInTheDocument();
+    expect(screen.getByText('5')).toBeInTheDocument();
+    expect(screen.getByText('Vitórias')).toBeInTheDocument();
+    expect(screen.getByText('3')).toBeInTheDocument();
+    expect(screen.getByText('Derrotas')).toBeInTheDocument();
+    expect(screen.getByText('2')).toBeInTheDocument();
+    expect(screen.getByText('Empates')).toBeInTheDocument();
+    expect(screen.getByText('Jogos')).toBeInTheDocument();
+    expect(screen.getByText('Bronze III')).toBeInTheDocument();
+  });
+
+  it('sem Ranqueadas ainda, mostra os estados vazios de partidas e categoria', async () => {
+    mocks.apiRequest.mockImplementation((path: string) => {
+      if (path === '/api/profile/summary') return Promise.resolve({
+        activeStreak: null, bestTheme: null, categoryAverages: [], matchSummary: { draws: 0, losses: 0, matches: 0, wins: 0 }, missions: [],
+      });
+      return Promise.resolve({ ok: true });
+    });
+    render(<ProfilePage />);
+
+    expect(await screen.findAllByText('Jogue sua primeira Ranqueada para preencher este espaço.')).toHaveLength(2);
+    expect(screen.getByText('Jogue Ranqueadas em mais de um tema da mesma categoria para ver sua média.')).toBeInTheDocument();
+  });
+});

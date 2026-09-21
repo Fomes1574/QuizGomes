@@ -351,6 +351,8 @@ async function profileSummaryRoute(request: Request, env: Env): Promise<Response
   return json({
     activeStreak: await new StreakRepository(env.CORE_DB).activeStreakWithTheme(profile.userId),
     bestTheme: await repository.bestTheme(profile.userId),
+    categoryAverages: await repository.categoryAverages(profile.userId),
+    matchSummary: await repository.matchSummary(profile.userId),
     missions: await new MissionRepository(env.CORE_DB).listForDay(profile.userId, dayKey),
   });
 }

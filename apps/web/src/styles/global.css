@@ -588,6 +588,12 @@ h1, h2, h3, .brand-lockup__name, .hero-stat strong, .level-card > strong, .count
 .missions-list { display: grid; gap: 12px; margin: 12px 0 0; padding: 0; list-style: none; }
 .missions-list__item[data-done="true"] .missions-list__row { color: var(--brand); }
 .missions-list__row { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 6px; font-size: .75rem; font-weight: 650; }
+.match-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 12px 0 0; padding: 0; list-style: none; text-align: center; }
+.match-summary li { display: grid; gap: 2px; padding: 10px 4px; border-radius: 12px; background: var(--background-subtle); }
+.match-summary strong { font-size: 1.1rem; }
+.match-summary span { color: var(--text-secondary); font-size: .66rem; }
+.category-average-list { display: grid; gap: 10px; margin: 12px 0 0; padding: 0; list-style: none; }
+.category-average-list li { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: .8rem; font-weight: 650; }
 .settings-card { display: grid; gap: 15px; padding: 20px; }
 .settings-card h2 { margin-bottom: 5px; font-size: 1rem; }
 .settings-card p { margin: 0; color: var(--text-secondary); font-size: .75rem; }
