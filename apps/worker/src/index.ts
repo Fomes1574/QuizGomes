@@ -34,6 +34,7 @@ import {
   themeRejectionSchema,
   themeSubmissionSchema,
 } from './http/schemas.js';
+import { AuditLogRepository } from './repositories/audit-log-repository.js';
 import { MissionRepository } from './repositories/mission-repository.js';
 import { QuestionEditorialRepository } from './repositories/question-editorial-repository.js';
 import { QuestionRepository } from './repositories/question-repository.js';
@@ -507,6 +508,38 @@ async function adminCategoryUpdateRoute(request: Request, env: Env, categoryId: 
   const category = await new ThemeRepository(env.CORE_DB).updateCategory({ id: categoryId, ...parsed.data });
   await auditLog(env, profile.userId, 'UPDATE_CATEGORY', 'category', categoryId, { status: category.status });
   return json({ category });
+}
+
+async function adminUsersRoute(request: Request, env: Env, url: URL): Promise<Response> {
+  if (request.method !== 'GET') throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Método não permitido.');
+  const identity = await requireUser(request, env);
+  await requireAdmin(identity, env);
+  const search = (url.searchParams.get('search') ?? '').trim().slice(0, 80);
+  const cursor = url.searchParams.get('cursor');
+  return json(await new UserRepository(env.CORE_DB).listForAdmin({ cursor, search }));
+}
+
+async function adminUserRoleRoute(request: Request, env: Env, targetUserId: string): Promise<Response> {
+  if (request.method !== 'POST' && request.method !== 'DELETE') {
+    throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Método não permitido.');
+  }
+  const identity = await requireUser(request, env);
+  await requireAdmin(identity, env);
+  const profile = await new UserRepository(env.CORE_DB).findByFirebaseUid(identity.uid);
+  if (profile === null) throw new ApiError(409, 'PROFILE_REQUIRED', 'Conclua seu perfil.');
+  const users = new UserRepository(env.CORE_DB);
+  const granted = request.method === 'POST';
+  await users.setAdminRole(targetUserId, granted, profile.userId);
+  await auditLog(env, profile.userId, granted ? 'GRANT_ADMIN_ROLE' : 'REVOKE_ADMIN_ROLE', 'user', targetUserId, {});
+  return json({ ok: true });
+}
+
+async function adminAuditLogRoute(request: Request, env: Env, url: URL): Promise<Response> {
+  if (request.method !== 'GET') throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Método não permitido.');
+  const identity = await requireUser(request, env);
+  await requireAdmin(identity, env);
+  const cursor = url.searchParams.get('cursor');
+  return json(await new AuditLogRepository(env.CORE_DB).list({ cursor }));
 }
 
 /**
@@ -1447,6 +1480,11 @@ async function apiRoute(request: Request, env: Env, url: URL, context: Execution
   if (url.pathname === '/api/admin/themes') return adminThemesRoute(request, env, url);
   if (url.pathname === '/api/admin/reports') return adminReportsRoute(request, env, url);
   if (url.pathname === '/api/admin/categories') return adminCategoriesRoute(request, env);
+  if (url.pathname === '/api/admin/users') return adminUsersRoute(request, env, url);
+  if (url.pathname === '/api/admin/audit-logs') return adminAuditLogRoute(request, env, url);
+
+  const adminUserRoleMatch = /^\/api\/admin\/users\/([a-f0-9-]{36})\/roles\/admin$/i.exec(url.pathname);
+  if (adminUserRoleMatch?.[1] !== undefined) return adminUserRoleRoute(request, env, adminUserRoleMatch[1]);
 
   const adminReportResolveMatch = /^\/api\/admin\/reports\/([a-f0-9-]{36})\/resolve$/i.exec(url.pathname);
   if (adminReportResolveMatch?.[1] !== undefined) {

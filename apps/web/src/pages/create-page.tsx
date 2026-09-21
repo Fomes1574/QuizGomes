@@ -8,6 +8,8 @@ import type { AdminQuestionReportEntry, AdminThemeSummary, Category, ThemeSummar
 import { DIFFICULTY_LABEL } from '../lib/challenges.js';
 import { REPORT_REASON_LABEL } from '../lib/reports.js';
 import type { ThemeArtworkDraft } from '../components/theme-artwork-editor.js';
+import { AdminAuditLogPanel, AdminUsersPanel } from './admin-directory-panels.js';
+import { AdminCategoriesPanel, AdminQuestionEditorialPanel, AdminThemeModerationPanel } from './admin-editorial-panels.js';
 
 const ThemeArtworkEditor = lazy(() => import('../components/theme-artwork-editor.js'));
 
@@ -145,8 +147,13 @@ export function CreatePage() {
           <Button disabled={saving || profile === null} type="submit">{saving ? 'Enviando…' : 'Enviar para revisão'}</Button>
         </form>
       )}
+      {role === 'ADMIN' ? <AdminCategoriesPanel getToken={getToken} /> : null}
+      {role === 'ADMIN' ? <AdminThemeModerationPanel getToken={getToken} /> : null}
       {role === 'ADMIN' ? <AdminThemeArtworkManager getToken={getToken} refreshKey={adminRefreshKey} /> : null}
+      {role === 'ADMIN' ? <AdminQuestionEditorialPanel getToken={getToken} /> : null}
       {role === 'ADMIN' ? <AdminReportsPanel getToken={getToken} /> : null}
+      {role === 'ADMIN' ? <AdminUsersPanel getToken={getToken} /> : null}
+      {role === 'ADMIN' ? <AdminAuditLogPanel getToken={getToken} /> : null}
     </section>
   );
 }
@@ -215,7 +222,14 @@ function AdminThemeArtworkManager({
       const token = await getToken();
       if (token === null) throw new Error('Sua sessão expirou. Entre novamente.');
       const updated = await persistArtwork(selected, draft, getToken, token);
-      const withStatus: AdminThemeSummary = { ...updated, status: selected.status };
+      const withStatus: AdminThemeSummary = {
+        ...updated,
+        createdByUserId: selected.createdByUserId,
+        origin: selected.origin,
+        rejectionNote: selected.rejectionNote,
+        revision: selected.revision,
+        status: selected.status,
+      };
       setThemes((current) => current.map((theme) => theme.id === withStatus.id ? withStatus : theme));
       setDraft(draftFromArtwork(withStatus.artwork));
       setMessage({ kind: 'success', text: `Arte de “${withStatus.name}” atualizada.` });

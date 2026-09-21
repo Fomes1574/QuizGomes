@@ -19,7 +19,82 @@ export interface ThemeSummary {
 }
 
 export interface AdminThemeSummary extends ThemeSummary {
+  createdByUserId: string | null;
+  origin: 'OFFICIAL' | 'USER';
+  rejectionNote: string | null;
+  revision: number;
   status: 'ACTIVE' | 'DISABLED' | 'PENDING' | 'REJECTED';
+}
+
+export interface CategoryAdmin {
+  id: string;
+  name: string;
+  revision: number;
+  slug: string;
+  sortOrder: number;
+  status: 'ACTIVE' | 'DISABLED';
+}
+
+export interface QuestionSourceInput {
+  kind: 'BOOK' | 'OTHER' | 'PRIMARY' | 'WEB';
+  title?: string;
+  url: string;
+}
+
+export interface EditorialQuestionSource extends QuestionSourceInput {
+  id: string;
+}
+
+export interface EditorialQuestion {
+  activeSlot: number | null;
+  correctOption: number;
+  createdAt: string;
+  createdByUserId: string | null;
+  difficulty: 'EASY' | 'HARD' | 'MEDIUM';
+  id: string;
+  options: readonly [string, string, string, string];
+  poolId: string;
+  prompt: string;
+  replacesQuestionId: string | null;
+  resolutionNote: string | null;
+  resolvedAt: string | null;
+  resolvedByUserId: string | null;
+  sources: EditorialQuestionSource[];
+  status: 'ACTIVE' | 'DISABLED' | 'IN_REVIEW' | 'PENDING' | 'REJECTED';
+  themeId: string;
+}
+
+export interface EditorialQuestionPage {
+  nextCursor: string | null;
+  questions: EditorialQuestion[];
+}
+
+export interface AdminUserRecord {
+  createdAt: string;
+  displayName: string;
+  publicId: string;
+  role: 'ADMIN' | 'PLAYER';
+  userId: string;
+}
+
+export interface AdminUserPage {
+  nextCursor: string | null;
+  users: AdminUserRecord[];
+}
+
+export interface AuditLogEntry {
+  action: string;
+  actorDisplayName: string | null;
+  createdAt: string;
+  entityId: string | null;
+  entityType: string;
+  id: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface AuditLogPage {
+  entries: AuditLogEntry[];
+  nextCursor: string | null;
 }
 
 export interface LeaderboardEntry {

@@ -347,6 +347,21 @@ h1, h2, h3, .brand-lockup__name, .hero-stat strong, .level-card > strong, .count
 .report-card__sources small { color: var(--text-secondary); }
 .report-card__actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .report-card__actions .button { flex: 1 1 auto; }
+.admin-panel { display: grid; gap: 16px; padding: 24px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-sm); }
+.admin-panel__form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; }
+.admin-panel__form .field { flex: 1 1 140px; }
+.admin-panel__option-row { display: flex; align-items: center; gap: 10px; }
+.admin-panel__option-row input { flex: 1; }
+.admin-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.admin-list__row { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--background-subtle); font-size: .78rem; }
+.admin-list__row--audit { grid-template-columns: 1fr auto auto; }
+.admin-list__row--audit time { color: var(--text-secondary); font-size: .68rem; white-space: nowrap; }
+.admin-card-list { display: grid; gap: 14px; }
+.admin-card { display: grid; gap: 10px; padding: 16px; border: 1px solid var(--border); border-radius: 16px; background: var(--background-subtle); }
+.admin-card > header { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.admin-card > header small { color: var(--text-secondary); font-size: .68rem; }
+.admin-card__actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.admin-card__actions .button { flex: 1 1 auto; }
 .theme-artwork-editor { display: grid; gap: 16px; min-width: 0; padding: 18px; border: 1px solid var(--border); border-radius: 18px; }
 .theme-artwork-editor > legend { padding: 0 7px; font-size: .8rem; font-weight: 750; }
 .theme-artwork-editor__modes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }

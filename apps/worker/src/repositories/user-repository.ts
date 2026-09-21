@@ -22,6 +22,19 @@ export interface BestThemeRecord {
   slug: string;
 }
 
+export interface AdminUserRecord {
+  createdAt: string;
+  displayName: string;
+  publicId: string;
+  role: 'ADMIN' | 'PLAYER';
+  userId: string;
+}
+
+export interface AdminUserPage {
+  nextCursor: string | null;
+  users: AdminUserRecord[];
+}
+
 interface UserProfileRow {
   avatar_key: string;
   custom_avatar_version: number | null;
@@ -226,5 +239,70 @@ export class UserRepository {
     await this.db.prepare(
       "INSERT OR IGNORE INTO user_roles (user_id, role) VALUES (?1, 'ADMIN')",
     ).bind(userId).run();
+  }
+
+  /** Busca por ID público/nome, paginada por (created_at, id): nunca trunca silenciosamente além da página. */
+  async listForAdmin(input: { cursor?: string | null; search?: string }): Promise<AdminUserPage> {
+    const search = (input.search ?? '').trim();
+    const pageSize = 50;
+    const decoded = input.cursor == null ? null : decodeUserCursor(input.cursor);
+    const binds: unknown[] = [search, escapedLike(search)];
+    let cursorClause = '';
+    if (decoded !== null) {
+      cursorClause = 'AND (u.created_at < ?3 OR (u.created_at = ?3 AND u.id < ?4))';
+      binds.push(decoded.createdAt, decoded.id);
+    }
+    const result = await this.db.prepare(
+      `SELECT u.id AS user_id, u.created_at, p.public_id, p.display_name,
+              EXISTS(SELECT 1 FROM user_roles r WHERE r.user_id = u.id AND r.role = 'ADMIN') AS is_admin
+         FROM users u
+         JOIN user_profiles p ON p.user_id = u.id
+        WHERE u.disabled_at IS NULL
+          AND (?1 = '' OR p.public_id LIKE ?2 ESCAPE '\\' COLLATE NOCASE OR p.display_name LIKE ?2 ESCAPE '\\' COLLATE NOCASE)
+          ${cursorClause}
+        ORDER BY u.created_at DESC, u.id DESC
+        LIMIT ${pageSize + 1}`,
+    ).bind(...binds).all<{
+      created_at: string; display_name: string; is_admin: number; public_id: string; user_id: string;
+    }>();
+    const rows = result.results.slice(0, pageSize);
+    const last = rows.at(-1);
+    const nextCursor = result.results.length > pageSize && last !== undefined
+      ? encodeUserCursor(last.created_at, last.user_id)
+      : null;
+    return {
+      nextCursor,
+      users: rows.map((row) => ({
+        createdAt: row.created_at, displayName: row.display_name, publicId: row.public_id,
+        role: row.is_admin === 1 ? 'ADMIN' : 'PLAYER', userId: row.user_id,
+      })),
+    };
+  }
+
+  async setAdminRole(userId: string, granted: boolean, actorUserId: string): Promise<void> {
+    if (granted) {
+      await this.db.prepare(
+        'INSERT OR IGNORE INTO user_roles (user_id, role, granted_by_user_id) VALUES (?1, \'ADMIN\', ?2)',
+      ).bind(userId, actorUserId).run();
+      return;
+    }
+    await this.db.prepare("DELETE FROM user_roles WHERE user_id = ?1 AND role = 'ADMIN'").bind(userId).run();
+  }
+}
+
+function escapedLike(search: string): string {
+  return `%${search.replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_')}%`;
+}
+
+function encodeUserCursor(createdAt: string, id: string): string {
+  return btoa(JSON.stringify([createdAt, id]));
+}
+
+function decodeUserCursor(cursor: string): { createdAt: string; id: string } | null {
+  try {
+    const [createdAt, id] = JSON.parse(atob(cursor)) as [string, string];
+    return typeof createdAt === 'string' && typeof id === 'string' ? { createdAt, id } : null;
+  } catch {
+    return null;
   }
 }

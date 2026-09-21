@@ -56,8 +56,11 @@ describe('painel administrativo de denúncias', () => {
     mocks.apiRequest.mockReset();
     mocks.apiRequest.mockImplementation((path: string) => {
       if (path === '/api/categories') return Promise.resolve({ categories: [] });
+      if (path === '/api/admin/categories') return Promise.resolve({ categories: [] });
       if (path.startsWith('/api/admin/themes')) return Promise.resolve({ themes: [] });
       if (path.startsWith('/api/admin/reports?')) return Promise.resolve({ nextCursor: null, reports: [reportEntry] });
+      if (path.startsWith('/api/admin/users')) return Promise.resolve({ nextCursor: null, users: [] });
+      if (path.startsWith('/api/admin/audit-logs')) return Promise.resolve({ entries: [], nextCursor: null });
       return Promise.resolve({ ok: true });
     });
     mocks.currentAuth = mocks.adminAuth;
@@ -84,9 +87,15 @@ describe('painel administrativo de denúncias', () => {
   it('trocar a aba de status busca a fila correspondente', async () => {
     render(<CreatePage />);
     await screen.findByText('Qual é a capital?');
-    mocks.apiRequest.mockImplementation((path: string) => (
-      path.startsWith('/api/admin/reports?') ? Promise.resolve({ nextCursor: null, reports: [] }) : Promise.resolve({ ok: true })
-    ));
+    mocks.apiRequest.mockImplementation((path: string) => {
+      if (path === '/api/categories') return Promise.resolve({ categories: [] });
+      if (path === '/api/admin/categories') return Promise.resolve({ categories: [] });
+      if (path.startsWith('/api/admin/themes')) return Promise.resolve({ themes: [] });
+      if (path.startsWith('/api/admin/reports?')) return Promise.resolve({ nextCursor: null, reports: [] });
+      if (path.startsWith('/api/admin/users')) return Promise.resolve({ nextCursor: null, users: [] });
+      if (path.startsWith('/api/admin/audit-logs')) return Promise.resolve({ entries: [], nextCursor: null });
+      return Promise.resolve({ ok: true });
+    });
 
     fireEvent.click(screen.getByRole('tab', { name: 'Resolvidas' }));
 
@@ -101,11 +110,14 @@ describe('painel administrativo de denúncias', () => {
   it('resolver uma denúncia envia a nota e remove o card da fila', async () => {
     mocks.apiRequest.mockImplementation((path: string) => {
       if (path === '/api/categories') return Promise.resolve({ categories: [] });
+      if (path === '/api/admin/categories') return Promise.resolve({ categories: [] });
       if (path.startsWith('/api/admin/themes')) return Promise.resolve({ themes: [] });
       if (path.startsWith('/api/admin/reports?')) return Promise.resolve({ nextCursor: null, reports: [reportEntry] });
       if (path === '/api/admin/reports/report-1/resolve') {
         return Promise.resolve({ report: { ...reportEntry.report, status: 'RESOLVED' } });
       }
+      if (path.startsWith('/api/admin/users')) return Promise.resolve({ nextCursor: null, users: [] });
+      if (path.startsWith('/api/admin/audit-logs')) return Promise.resolve({ entries: [], nextCursor: null });
       return Promise.resolve({ ok: true });
     });
     render(<CreatePage />);
