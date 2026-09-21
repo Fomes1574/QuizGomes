@@ -15,6 +15,25 @@ import type { SocialUser } from '../lib/social.js';
 
 const AvatarEditor = lazy(() => import('../components/avatar-editor.js'));
 
+interface MissionSummary {
+  completedAt: string | null;
+  progress: number;
+  target: number;
+  type: 'ANSWER_QUESTIONS' | 'CORRECT_ANSWERS' | 'PLAY_MATCH';
+}
+
+interface StreakSummary {
+  bestStreak: number;
+  currentStreak: number;
+  themeName: string;
+}
+
+const MISSION_LABELS: Record<MissionSummary['type'], string> = {
+  ANSWER_QUESTIONS: 'Responda perguntas',
+  CORRECT_ANSWERS: 'Acerte perguntas',
+  PLAY_MATCH: 'Jogue uma partida válida',
+};
+
 export function ProfilePage() {
   const {
     error,
@@ -41,14 +60,29 @@ export function ProfilePage() {
   const [notificationBusy, setNotificationBusy] = useState(false);
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [bestTheme, setBestTheme] = useState<{ knowledge: number; name: string; rankedMatches: number; slug: string } | null>(null);
+  const [missions, setMissions] = useState<MissionSummary[]>([]);
+  const [activeStreak, setActiveStreak] = useState<StreakSummary | null>(null);
   const progress = levelProgress(profile?.totalXp ?? 0);
 
   useEffect(() => {
     if (profile === null) return;
     let active = true;
-    void apiRequest<{ bestTheme: typeof bestTheme }>('/api/profile/summary', { getToken })
-      .then((response) => { if (active) setBestTheme(response.bestTheme ?? null); })
-      .catch(() => { if (active) setBestTheme(null); });
+    void apiRequest<{ activeStreak: StreakSummary | null; bestTheme: typeof bestTheme; missions: MissionSummary[] }>(
+      '/api/profile/summary',
+      { getToken },
+    )
+      .then((response) => {
+        if (!active) return;
+        setBestTheme(response.bestTheme ?? null);
+        setMissions(response.missions ?? []);
+        setActiveStreak(response.activeStreak ?? null);
+      })
+      .catch(() => {
+        if (!active) return;
+        setBestTheme(null);
+        setMissions([]);
+        setActiveStreak(null);
+      });
     return () => { active = false; };
   }, [getToken, profile]);
 
@@ -134,6 +168,19 @@ export function ProfilePage() {
       <div className="profile-grid">
         <article className="level-card"><span>Nível</span><strong>{progress.level}</strong><div className="progress-track"><span style={{ transform: `scaleX(${progress.progress})` }} /></div><small>{progress.nextLevelXp === null ? 'MAX' : `${progress.currentLevelXp} / ${progress.nextLevelXp} XP`}</small></article>
         <article className="profile-card"><span className="eyebrow">Melhor tema</span>{bestTheme === null ? <p>Jogue sua primeira Ranqueada para preencher este espaço.</p> : <><h2>{bestTheme.name}</h2><RankBadge knowledge={bestTheme.knowledge} showKnowledge /><p>{bestTheme.rankedMatches} {bestTheme.rankedMatches === 1 ? 'partida Ranqueada' : 'partidas Ranqueadas'}</p></>}</article>
+        <article className="profile-card">
+          <span className="eyebrow">Missões de hoje</span>
+          <ul className="missions-list">
+            {missions.map((mission) => (
+              <li className="missions-list__item" data-done={mission.completedAt !== null} key={mission.type}>
+                <div className="missions-list__row"><span>{MISSION_LABELS[mission.type]}</span><span>{Math.min(mission.progress, mission.target)}/{mission.target}</span></div>
+                <div className="progress-track"><span style={{ transform: `scaleX(${mission.target === 0 ? 0 : Math.min(1, mission.progress / mission.target)})` }} /></div>
+              </li>
+            ))}
+            {missions.length === 0 && <li>Sem missões disponíveis hoje.</li>}
+          </ul>
+        </article>
+        <article className="profile-card"><span className="eyebrow">Sequência</span>{activeStreak === null ? <p>Jogue uma partida válida em qualquer tema para começar sua sequência.</p> : <><h2>{activeStreak.currentStreak} {activeStreak.currentStreak === 1 ? 'dia' : 'dias'}</h2><p>{activeStreak.themeName} · recorde de {activeStreak.bestStreak} {activeStreak.bestStreak === 1 ? 'dia' : 'dias'}</p></>}</article>
       </div>
       <section className="settings-card"><div><h2>Aparência</h2><p>A preferência acompanha este dispositivo.</p></div><div className="segmented" role="radiogroup" aria-label="Aparência">{(['light', 'dark', 'system'] as ThemeMode[]).map((value) => <button aria-checked={mode === value} className={mode === value ? 'segmented__active' : ''} key={value} onClick={() => setMode(value)} role="radio" type="button">{{ light: 'Claro', dark: 'Escuro', system: 'Sistema' }[value]}</button>)}</div></section>
       <section className="settings-card">

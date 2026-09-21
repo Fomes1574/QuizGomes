@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { discoveredCount, type ChallengeRecord, type FriendPresence } from '@quiz-gomes/domain';
+import { discoveredCount, utcDayKey, type ChallengeRecord, type FriendPresence } from '@quiz-gomes/domain';
 import { bootstrapAdminUids, hasAdminAccess, requireAdmin, requireUser } from './auth/authorize.js';
 import { ChallengeRoom } from './durable-objects/challenge-room.js';
 import { MatchRoom } from './durable-objects/match-room.js';
@@ -34,10 +34,12 @@ import {
   themeRejectionSchema,
   themeSubmissionSchema,
 } from './http/schemas.js';
+import { MissionRepository } from './repositories/mission-repository.js';
 import { QuestionEditorialRepository } from './repositories/question-editorial-repository.js';
 import { QuestionRepository } from './repositories/question-repository.js';
 import { PoolStateRepository } from './repositories/pool-state-repository.js';
 import { ReportRepository, type ReportRecord } from './repositories/report-repository.js';
+import { StreakRepository } from './repositories/streak-repository.js';
 import { ThemeRepository } from './repositories/theme-repository.js';
 import { UserRepository } from './repositories/user-repository.js';
 import { LiveMatchRepository, parseMatchResource } from './repositories/live-match-repository.js';
@@ -344,7 +346,12 @@ async function profileSummaryRoute(request: Request, env: Env): Promise<Response
   const repository = new UserRepository(env.CORE_DB);
   const profile = await repository.findByFirebaseUid(identity.uid);
   if (profile === null) throw new ApiError(404, 'PROFILE_NOT_FOUND', 'Perfil ainda não criado.');
-  return json({ bestTheme: await repository.bestTheme(profile.userId) });
+  const dayKey = utcDayKey(Date.now());
+  return json({
+    activeStreak: await new StreakRepository(env.CORE_DB).activeStreakWithTheme(profile.userId),
+    bestTheme: await repository.bestTheme(profile.userId),
+    missions: await new MissionRepository(env.CORE_DB).listForDay(profile.userId, dayKey),
+  });
 }
 
 async function profileAvatarRoute(request: Request, env: Env): Promise<Response> {

@@ -146,6 +146,22 @@ describe('M11 — streak por usuário+tema', () => {
     // Tema B tem current=2 > tema A com current=1: B vence.
     expect(await streaks.activeStreak(user.id)).toMatchObject({ currentStreak: 2, themeId: themeIdB });
   });
+
+  it('activeStreakWithTheme traz nome/slug do tema para exibição, sem quebrar quando não há streak', async () => {
+    const { users, themeSlug } = await fixture(1);
+    const user = userAt(users, 0);
+    const themeId = await themeIdOf(themeSlug);
+    const streaks = new StreakRepository(env.CORE_DB);
+
+    expect(await streaks.activeStreakWithTheme(user.id)).toBeNull();
+
+    const themeRow = await env.CORE_DB.prepare('SELECT name FROM themes WHERE id = ?1')
+      .bind(themeId).first<{ name: string }>();
+    await streaks.advance(user.id, themeId, '2026-05-10');
+    expect(await streaks.activeStreakWithTheme(user.id)).toEqual({
+      bestStreak: 1, currentStreak: 1, lastActiveDay: '2026-05-10', themeId, themeName: themeRow?.name, themeSlug,
+    });
+  });
 });
 
 describe('M11 — recordValidPlay (serviço best-effort de progressão)', () => {

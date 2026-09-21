@@ -56,7 +56,7 @@ describe('Perfil — privacidade e notificações opcionais', () => {
     mocks.notificationState = 'prompt';
     mocks.pushConfigured = true;
     mocks.apiRequest.mockImplementation((path: string) => {
-      if (path === '/api/profile/summary') return Promise.resolve({ bestTheme: null });
+      if (path === '/api/profile/summary') return Promise.resolve({ activeStreak: null, bestTheme: null, missions: [] });
       if (path === '/api/social/blocks') return Promise.resolve({ users: [{
         customAvatarUrl: '/api/avatars/blocked/v1.webp',
         displayName: 'Pessoa Bloqueada',
@@ -106,5 +106,51 @@ describe('Perfil — privacidade e notificações opcionais', () => {
     render(<ProfilePage />);
     expect(screen.getByText('Notificações ainda não configuradas')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Ativar notificações' })).not.toBeInTheDocument();
+  });
+});
+
+describe('M11 — missões e streak no Perfil', () => {
+  beforeEach(() => {
+    mocks.apiRequest.mockReset();
+    mocks.notificationState = 'prompt';
+    mocks.pushConfigured = true;
+  });
+
+  afterEach(() => cleanup());
+
+  it('exibe progresso das três missões do dia e a sequência ativa', async () => {
+    mocks.apiRequest.mockImplementation((path: string) => {
+      if (path === '/api/profile/summary') return Promise.resolve({
+        activeStreak: { bestStreak: 4, currentStreak: 3, themeName: 'Geografia' },
+        bestTheme: null,
+        missions: [
+          { completedAt: null, progress: 0, target: 1, type: 'PLAY_MATCH' },
+          { completedAt: null, progress: 5, target: 8, type: 'ANSWER_QUESTIONS' },
+          { completedAt: '2026-01-01T00:00:00.000Z', progress: 5, target: 5, type: 'CORRECT_ANSWERS' },
+        ],
+      });
+      return Promise.resolve({ ok: true });
+    });
+    render(<ProfilePage />);
+
+    expect(await screen.findByText('Jogue uma partida válida')).toBeInTheDocument();
+    expect(screen.getByText('0/1')).toBeInTheDocument();
+    expect(screen.getByText('Responda perguntas')).toBeInTheDocument();
+    expect(screen.getByText('5/8')).toBeInTheDocument();
+    expect(screen.getByText('Acerte perguntas')).toBeInTheDocument();
+    expect(screen.getByText('5/5')).toBeInTheDocument();
+    expect(screen.getByText('3 dias')).toBeInTheDocument();
+    expect(screen.getByText('Geografia · recorde de 4 dias')).toBeInTheDocument();
+  });
+
+  it('sem streak ativa e sem missões, mostra os estados vazios', async () => {
+    mocks.apiRequest.mockImplementation((path: string) => {
+      if (path === '/api/profile/summary') return Promise.resolve({ activeStreak: null, bestTheme: null, missions: [] });
+      return Promise.resolve({ ok: true });
+    });
+    render(<ProfilePage />);
+
+    expect(await screen.findByText('Sem missões disponíveis hoje.')).toBeInTheDocument();
+    expect(screen.getByText('Jogue uma partida válida em qualquer tema para começar sua sequência.')).toBeInTheDocument();
   });
 });
