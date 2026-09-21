@@ -191,6 +191,20 @@ As respostas corretas do dataset seguem o ciclo A/B/C/D pelo slot: 1=A, 2=B, 3=C
 
 A limpeza já está preparada em `apps/worker/maintenance/synthetic-smoke-test`, mas não faz parte do pipeline e não deve ser executada antes da autorização posterior do proprietário. Quando promovida a migrations novas, ela remove apenas o conteúdo marcado e preserva todo histórico de usuário/partida por meio de tombstones desativados quando houver referências.
 
+## 7. Smoke físico pendente — M11 (editorial/missões/streak/perfil/paginação) e M12 (auditoria)
+
+Nenhum destes itens foi executado fisicamente nesta entrega; ficam pendentes de confirmação do proprietário no hostname implantado, além da regressão completa do M8–M10 já registrada acima.
+
+1. logado como ADMIN, abra **Criar**: crie uma categoria, edite nome/ordem/status, aprove/rejeite um tema PENDING (proposto por outra conta) com nota de rejeição, edite um tema USER como o próprio OWNER e confirme que a edição de um tema OFFICIAL só é possível como ADMIN;
+2. no mesmo painel, crie uma pergunta nova para um tema (4 alternativas distintas, 1 fonte) e confirme que ela nasce **Em revisão** e não aparece em partida até ser aprovada; aprove e confirme que ela passa a ser sorteável; desative-a e confirme que some do sorteio sem quebrar a densidade dos slots restantes;
+3. importe um lote pequeno via JSON e via CSV (inclua uma linha inválida de propósito) e confirme o diagnóstico por linha sem importação parcial;
+4. conceda e revogue ADMIN para uma conta de teste em **Usuários e papéis**, e confirme a entrada correspondente em **Trilha de auditoria**;
+5. jogue uma partida Casual/Ranqueada válida até o fim e confirme, no Perfil, que a missão "Jogue uma partida válida" completa, "Responda perguntas"/"Acerte perguntas" avançam, e o streak do tema mostra 1/1; jogue de novo no mesmo dia e confirme que nada duplica; force um dia sem jogar e confirme que o streak atual zera sem alterar o recorde;
+6. confirme no Perfil que partidas Ranqueadas totais (vitórias/derrotas/empates) e a média por categoria aparecem corretamente após pelo menos uma Ranqueada concluída em dois temas da mesma categoria;
+7. bloqueie mais de 50 contas de teste (ou confirme via D1 direto) e no Perfil → Privacidade confirme que "Carregar mais" traz o restante sem duplicar nem perder a primeira página; repita o mesmo para pedidos de amizade pendentes recebidos/enviados na tela Social;
+8. tente propor 6 temas em menos de uma hora com a mesma conta e confirme que a sexta tentativa é recusada com uma mensagem amigável, sem quebrar a interface;
+9. confirme `npm audit --omit=dev` limpo no ambiente de deploy e que os cabeçalhos de segurança (CSP, HSTS, X-Content-Type-Options, Referrer-Policy, Permissions-Policy) chegam em uma resposta real do hostname implantado.
+
 ## Rollback
 
 - código: implantar um commit anterior validado;

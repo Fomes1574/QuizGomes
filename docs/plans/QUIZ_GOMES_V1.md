@@ -18,26 +18,38 @@ e de smokes; quando divergirem, não voltam a ser regra.
 - Desafios entre amigos são sempre Casual. DIRECT dura 30 s; ASYNC não expira;
   por dupla coexistem no máximo um ASYNC vivo e um DIRECT vivo. Reconexão abaixo
   de 7 s retoma; em 7 s ou mais a partida fica `VOID`.
-- M11 e M12 estão **autorizados e em andamento**, mas não concluídos. O checkpoint
-  `43d5f44` corrigiu nível real, melhor tema real, disponibilidade DIRECT apenas
-  ONLINE, limpeza de mutes e intenção pós-login de consumo único.
-- Reports de perguntas implementados e auditados: denúncia discreta durante a
-  partida e revisão pós-partida, prova servidor de entrega por usuário/rodada
-  (não apenas o conjunto selado), idempotência, rate limit técnico e moderação
-  ADMIN paginada com contexto, fontes HTTP(S) seguras e estatísticas existentes.
-  Core `0010` (denúncias) + `0011` (recibos de entrega), ambos forward-only.
-- Próximo escopo: missões/streak, estatísticas idempotentes, pipeline
-  editorial/admin (propor tema/OWNER, CRUD de pergunta com versionamento),
-  paginação segura restante e hardening/E2E. Não declarar V1 finalizada nem
-  smoke físico sem execução do proprietário.
+- M11 está **CONCLUÍDO**: pipeline editorial completo (categorias, moderação de
+  tema com concessão de OWNER, CRUD/versionamento de pergunta com fontes,
+  import JSON+CSV diagnosticado), estatísticas de pergunta idempotentes,
+  missões diárias e streak por tema orientados a evento autoritativo, Perfil
+  real (nível/XP, melhor tema, Conhecimento, partidas, missões/streak, média
+  ordinal por categoria), superfícies ADMIN na Web (categorias, moderação de
+  tema, perguntas, usuários/papéis, auditoria) e a auditoria de paginação
+  restante (bloqueados e pedidos pendentes, antes truncados em 100 sem
+  cursor — corrigido).
+- M12 foi tratado como **auditoria pontual, não a suíte E2E completa** pedida
+  originalmente: não existe `test:e2e` nem `check:full` cobrindo os fluxos
+  ponta a ponta (auth, onboarding, catálogo, Casual/Ranqueada, Social,
+  matchmaking, DIRECT/ASYNC, reconexão, reports, missões/streak,
+  admin/moderação/import) descritos no pedido original. O que foi feito:
+  cabeçalhos de segurança/CORS/no-store já existiam e foram confirmados
+  aplicados a toda rota nova; `npm audit --omit=dev` limpo; scan manual de
+  segredos no diff sem achados; limite técnico novo contra rajada de proposta
+  de tema (não existia, análogo ao de desafios/denúncias); migrations
+  validadas (banco vazio, upgrade `0003→…→0012` Core e `0002→…→0005`
+  Questions, rollback). Não auditados nesta passada: multi-aba/multi-
+  dispositivo, offline/reload/retry, restauração de sessão Firebase,
+  atualização de PWA fora de partida, orçamento de imagem, hibernação de DO e
+  a11y ponta a ponta das novas telas além dos padrões já reaproveitados
+  (rótulos, `role`, foco). Ver seção de entrega do relatório desta sessão.
 - R2 continua sem provisionamento e sem custo. O código/documentação deve manter
   somente `ImageStorage` intercambiável, chaves opacas e proibir imagens que não
   possam ser realmente servidas pelo backend ativo.
-- Auditoria de fechamento em andamento: a importação passou a rejeitar `image_key`
-  sem backend servível; continuam pendentes, sem redução de escopo, pipeline M11
-  completo, estatísticas idempotentes, missões/streak, paginação restante, E2E e
-  smoke físico M12. Conteúdo editorial real exige fontes verificáveis e revisão
-  humana — o dataset `SYNTHETIC_SMOKE_TEST` não é catálogo de produção.
+- Nenhum smoke físico foi executado nesta sessão. O checklist específico de
+  M11/M12 está em `docs/DEPLOYMENT.md` §7, além da regressão física do
+  M8–M10 já pendente de longa data. Conteúdo editorial real exige fontes
+  verificáveis e revisão humana — o dataset `SYNTHETIC_SMOKE_TEST` não é
+  catálogo de produção.
 
 ## Histórico de progresso
 
@@ -1184,6 +1196,76 @@ descritos no relatório de entrega.
   são buscadas apenas durante refresh disparado por montagem, evento social,
   foco/reconexão ou ação real.
 
+### 2026-09-21 — M11 finalizado (missões/streak, Perfil real, ADMIN web, paginação) e M12 como auditoria pontual
+
+Retomou o pipeline editorial de M11 (categorias, moderação de tema, CRUD/
+versionamento de pergunta, import JSON+CSV, estatísticas idempotentes)
+já concluído em sessão anterior e fechou o restante do milestone:
+
+- **Missões diárias e streak.** `MissionRepository`/`StreakRepository` sobre
+  `CORE_DB` aplicam as funções puras de domínio já testadas isoladamente
+  (`advanceMissionProgress`/`advanceThemeStreak`). As 3 missões do dia nascem
+  sob demanda (`INSERT OR IGNORE`); progresso nunca regride nem reabre missão
+  completa. Streak usa `INSERT ... ON CONFLICT ... DO UPDATE ... WHERE`
+  guardado pelo `last_active_day` lido como CAS. `recordValidPlay`
+  (progression-service) é chamado best-effort a partir dos dois únicos pontos
+  autoritativos de "partida válida": `MatchRoom.persistFinalized` (só quando
+  `FINISHED`, nunca `VOID`) e `ChallengeRoom.trySeal` (só quando
+  `outcome === 'APPLIED'`, nunca uma selagem perdedora). Nenhuma lógica FROZEN
+  foi alterada — só uma chamada adicional no fim do fluxo já existente.
+- **Perfil real.** `GET /api/profile/summary` passou a devolver, além do
+  melhor tema já existente: as missões do dia, o streak ativo com nome/tema
+  (`StreakRepository.activeStreakWithTheme`, fallback determinístico por
+  maior `current_streak`), partidas Ranqueadas totais
+  (`UserRepository.matchSummary`, soma de `theme_rankings`) e a média ordinal
+  por categoria (`UserRepository.categoryAverages`, reaproveitando a função
+  pura `categoryAverage` do domínio — já testada, nunca antes ligada a nenhum
+  endpoint — cap em Desafiante I, sem efeito competitivo, só temas com
+  Ranqueada). O Perfil ganhou os cards correspondentes.
+- **Superfícies ADMIN na Web.** Dentro de `CreatePage`, seguindo o padrão já
+  usado por Denúncias e Arte dos temas: categorias (CRUD com CAS),
+  moderação de tema (aprovar/rejeitar/desativar com nota), perguntas por
+  tema (abas por status, aprovar/rejeitar/desativar, formulário de criação),
+  usuários e papéis (busca paginada, conceder/revogar ADMIN — `UserRepository`
+  e rotas novas) e trilha de auditoria (leitura paginada de `audit_logs` —
+  `AuditLogRepository`, novo).
+- **Auditoria de paginação restante.** `blockedUsers` e os pedidos pendentes
+  (`incoming`/`outgoing`) tinham `LIMIT 100` fixo sem cursor — ao contrário de
+  amizades (`FRIEND_LIMIT`), nenhum dos dois tem cap de quantidade; acima de
+  100, o restante ficava simplesmente invisível, sem poder desbloquear nem
+  responder. Ambos agora paginam por cursor (`created_at` + chave de
+  desempate, página de 50); Social e Perfil ganharam "Carregar mais" nas três
+  listas. `/api/admin/themes` teve o teto elevado de 100 para 500 como
+  mitigação — não é paginação de verdade, fica registrado como lacuna
+  conhecida.
+- **M12 tratado como auditoria pontual**, não a suíte E2E completa
+  (`test:e2e`/`check:full`) pedida originalmente — essa suíte não existe.
+  Confirmado: cabeçalhos de segurança/CORS/`no-store` já cobrem toda rota
+  nova (infraestrutura de milestone anterior, sem alteração necessária);
+  `npm audit --omit=dev` limpo; scan manual de segredos no diff sem achados.
+  Corrigido: proposta de tema (`POST /api/themes`) não tinha nenhum limite
+  técnico, ao contrário de desafios/denúncias — adicionado 5/hora por
+  usuário. Esse mesmo trabalho revelou um bug de formato: comparar
+  `CURRENT_TIMESTAMP` nativo do SQLite (`"YYYY-MM-DD HH:MM:SS"`) contra um
+  ISO string gerado em JS (`"...T...Z"`) nunca bate na comparação
+  lexicográfica — corrigido com `datetime('now', ...)` no próprio SQL, e
+  capturado por um teste de regressão antes de ir para produção. Não
+  auditados nesta passada: multi-aba/dispositivo, offline/reload/retry,
+  restauração de sessão Firebase, atualização de PWA fora de partida,
+  orçamento de imagem, hibernação de DO, e a11y ponta a ponta das telas
+  novas além dos padrões já reaproveitados.
+
+Testes novos: 9 no domínio (missões/streak), ~30 no Worker (missões/streak,
+diretório ADMIN/auditoria, resumo de Perfil, paginação social, limite de
+propostas de tema) e ~20 na Web (painéis ADMIN, Perfil, Social). Validação
+completa a cada commit: `lint`, `typecheck`, `test:unit` (330+ testes),
+`test:worker` (165 testes), `test:migrations` (banco vazio e upgrade
+completo Core `0003→…→0012` e Questions `0002→…→0005`, incluindo rollback),
+`build` (domain + web + worker) e `npm audit --omit=dev` sem vulnerabilidades
+a cada etapa. Todos os commits foram publicados por fast-forward direto em
+`main`, sem PR. Nenhum smoke físico foi executado nem declarado — checklist
+específico em `docs/DEPLOYMENT.md` §7.
+
 ## Critério de saída desta execução
 
 - Milestones 8 e 8.5 aprovados fisicamente e congelados;
@@ -1193,4 +1275,9 @@ descritos no relatório de entrega.
 - push FCM opcional sem impedir amizades/bloqueios quando não configurado;
 - smoke físico do 9B APROVADO em 2026-09-11 e o milestone CONCLUÍDO/FROZEN; o smoke físico completo do 9A continua pendente até confirmação externa do proprietário;
 - Milestone 9C+M10 unificado (Desafios entre amigos) concluído e FROZEN após aprovação física do corrective #3; a regressão integral é obrigação do M12;
-- M11/M12 autorizados, ainda pendentes, sem preview de branch, sem R2 provisionado, billing ou produto pago.
+- M11 concluído (editorial/admin, estatísticas, missões/streak, Perfil real,
+  superfícies ADMIN web, paginação restante); M12 concluído como auditoria
+  pontual de segurança/resiliência/performance/a11y — não como a suíte E2E
+  `test:e2e`/`check:full` originalmente pedida, que não foi construída;
+  sem preview de branch, sem R2 provisionado, billing ou produto pago;
+  nenhum smoke físico executado — checklist em `docs/DEPLOYMENT.md` §7.
