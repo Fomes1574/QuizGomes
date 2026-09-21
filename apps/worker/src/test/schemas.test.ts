@@ -25,7 +25,7 @@ describe('schemas de entrada', () => {
     expect(importBatchSchema.safeParse({ questions: [{ ...valid.questions[0], options: ['A', 'A', 'C', 'D'] }] }).success).toBe(false);
   });
 
-  it('aplica limite rígido menor que 100 KB para imagem', () => {
+  it('recusa image_key enquanto não existe backend de imagens de pergunta servível', () => {
     const base = {
       correctOption: 0,
       difficulty: 'EASY',
@@ -34,8 +34,7 @@ describe('schemas de entrada', () => {
       sources: [{ url: 'fixture://local' }],
       themeId: 'theme-test',
     };
-    expect(importBatchSchema.safeParse({ questions: [{ ...base, image: { bytes: 102_399, key: 'x.webp', license: 'fixture' } }] }).success).toBe(true);
-    expect(importBatchSchema.safeParse({ questions: [{ ...base, image: { bytes: 102_400, key: 'x.webp', license: 'fixture' } }] }).success).toBe(false);
+    expect(importBatchSchema.safeParse({ questions: [{ ...base, image: { bytes: 10, key: 'x.webp', license: 'fixture' } }] }).success).toBe(false);
   });
 
   it('aceita somente as escolhas exclusivas e ícones internos da arte do tema', () => {

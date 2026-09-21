@@ -36,11 +36,6 @@ const sourceSchema = z.object({
 export const importedQuestionSchema = z.object({
   correctOption: z.number().int().min(0).max(3),
   difficulty: z.enum(['EASY', 'MEDIUM', 'HARD']),
-  image: z.object({
-    bytes: z.number().int().positive().max(102_399),
-    key: z.string().trim().min(1).max(256),
-    license: z.string().trim().min(1).max(256),
-  }).strict().optional(),
   options: z.tuple([
     z.string().trim().min(1).max(180),
     z.string().trim().min(1).max(180),

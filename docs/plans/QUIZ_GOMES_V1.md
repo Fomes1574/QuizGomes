@@ -33,6 +33,11 @@ e de smokes; quando divergirem, não voltam a ser regra.
 - R2 continua sem provisionamento e sem custo. O código/documentação deve manter
   somente `ImageStorage` intercambiável, chaves opacas e proibir imagens que não
   possam ser realmente servidas pelo backend ativo.
+- Auditoria de fechamento em andamento: a importação passou a rejeitar `image_key`
+  sem backend servível; continuam pendentes, sem redução de escopo, pipeline M11
+  completo, estatísticas idempotentes, missões/streak, paginação restante, E2E e
+  smoke físico M12. Conteúdo editorial real exige fontes verificáveis e revisão
+  humana — o dataset `SYNTHETIC_SMOKE_TEST` não é catálogo de produção.
 
 ## Histórico de progresso
 

@@ -133,7 +133,7 @@ npm run deploy:cloudflare -w @quiz-gomes/worker
 O primeiro comando aplica somente migrations pendentes:
 
 - `QUESTIONS_DB`: `0001_questions.sql`, `0002_synthetic_smoke_test.sql` e `0003_expand_synthetic_smoke_test.sql`;
-- `CORE_DB`: `0001_core.sql` até `0009_challenge_pair_limits_by_kind.sql`.
+- `CORE_DB`: `0001_core.sql` até `0011_question_report_views.sql`.
 
 Questions é aplicado primeiro para que o tema temporário só fique visível depois que seu pool estiver pronto. Wrangler registra o histórico em `d1_migrations`; retries não reaplicam versões concluídas. Se uma migration falhar, o D1 reverte integralmente aquela migration, preserva as anteriores e o deploy não começa. Arquivos já aplicados são imutáveis e qualquer correção posterior é forward-only. Uma migration que falhou e não foi registrada, como a primeira tentativa remota da `0004_theme_artwork.sql`, continua pendente e deve ser corrigida no próprio arquivo antes do retry — não recebe uma compensação vazia ou manual.
 
@@ -141,8 +141,8 @@ Questions é aplicado primeiro para que o tema temporário só fique visível de
 
 - lê e passa todas as migrations pelo splitter SQL exportado pelo Wrangler, incluindo o statement de tracking;
 - exige LF e bloqueia `CREATE TRIGGER`, pois compound statements continuam sujeitos a diferenças entre o splitter local e o parser multi-statement do endpoint D1 `/query` usado por migrations remotas;
-- aplica Core `0001–0009` e Questions `0001–0003` em bancos vazios e isolados;
-- prova os upgrades Core `0003→0004→0005→0006→0007→0008→0009` e Questions `0002→0003`, incluindo a passagem exata do pool sintético de 30 para 250 slots;
+- aplica Core `0001–0011` e Questions `0001–0003` em bancos vazios e isolados;
+- prova os upgrades Core `0003→0004→0005→0006→0007→0008→0009→0010→0011` e Questions `0002→0003`, incluindo a passagem exata do pool sintético de 30 para 250 slots;
 - valida pedidos cruzados, constraints direcionais de recusas/bloqueios e instalações FCM no schema social;
 - inspeciona colunas, índice e FK composta, e tenta estados inválidos de metadata/BLOB;
 - injeta uma migration temporária que falha depois de criar/escrever e comprova rollback de schema e de `d1_migrations`.
@@ -201,7 +201,7 @@ A limpeza já está preparada em `apps/worker/maintenance/synthetic-smoke-test`,
 
 ## R2
 
-Não há binding, bucket, script ou permissão de R2 neste deployment. A camada de imagens tem contrato abstrato e chaves opacas; conteúdo só pode apontar para imagem que o backend ativo realmente consiga servir. Quando R2 for autorizado, adicionar um adapter e configuração runtime separados, com validação de tamanho/tipo/licença e URLs públicas seguras/versionadas. Não mudar contratos HTTP/editoriais, não expor credenciais e não criar upload fictício antes disso.
+Não há binding, bucket, script ou permissão de R2 neste deployment. Perguntas importadas não aceitam `image_key` enquanto não existir um backend de imagens de pergunta realmente servível: a ausência de R2 nunca cria conteúdo fantasma. Quando R2 for autorizado, adicionar um adapter e configuração runtime separados, com validação de tamanho/tipo/licença e URLs públicas seguras/versionadas; só então o schema editorial poderá aceitar imagem. Não mudar contratos HTTP/editoriais, não expor credenciais e não criar upload fictício antes disso.
 
 ## Fontes oficiais consultadas
 

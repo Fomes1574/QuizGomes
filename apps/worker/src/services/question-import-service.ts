@@ -74,10 +74,10 @@ export class QuestionImportService {
       const questionId = crypto.randomUUID();
       statements.push(
         this.questionsDb.prepare(
-          `INSERT INTO questions (
+           `INSERT INTO questions (
              id, pool_id, prompt, option_a, option_b, option_c, option_d, correct_option,
-             content_hash, status, image_key, image_bytes, image_license, created_by_user_id
-           ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'IN_REVIEW', ?10, ?11, ?12, ?13)`,
+             content_hash, status, created_by_user_id
+           ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'IN_REVIEW', ?10)`,
         ).bind(
           questionId,
           targetPoolId,
@@ -85,9 +85,6 @@ export class QuestionImportService {
           ...question.options,
           question.correctOption,
           hashes[index],
-          question.image?.key ?? null,
-          question.image?.bytes ?? null,
-          question.image?.license ?? null,
           actorUserId,
         ),
       );
