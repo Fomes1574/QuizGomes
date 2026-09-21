@@ -38,6 +38,11 @@ export async function readBytes(request: Request, maxBytes: number, tooLargeErro
   return data.buffer;
 }
 
+export async function readText(request: Request, maxBytes: number): Promise<string> {
+  const data = await readBytes(request, maxBytes);
+  return new TextDecoder('utf-8', { fatal: true }).decode(data);
+}
+
 export async function readJson(request: Request): Promise<unknown> {
   const length = Number(request.headers.get('Content-Length') ?? 0);
   if (Number.isFinite(length) && length > MAX_JSON_BYTES) {

@@ -9,7 +9,7 @@ import { SocialRealtimeHub } from './durable-objects/social-realtime-hub.js';
 import { TicketBroker } from './durable-objects/ticket-broker.js';
 import type { Env } from './env.js';
 import { ApiError } from './http/api-error.js';
-import { readBytes, readJson } from './http/body.js';
+import { readBytes, readJson, readText } from './http/body.js';
 import {
   apiErrorResponse,
   applyCors,
@@ -44,6 +44,7 @@ import { LiveMatchRepository, parseMatchResource } from './repositories/live-mat
 import { ChallengeRepository } from './repositories/challenge-repository.js';
 import { SocialRepository } from './repositories/social-repository.js';
 import { QuestionImportService } from './services/question-import-service.js';
+import { parseQuestionsCsv } from './services/question-csv.js';
 import { DirectChallengeService } from './services/direct-challenge-service.js';
 import { SocialPushService } from './services/social-push-service.js';
 import { inspectWebp, THEME_ARTWORK_MAX_BYTES } from './storage/webp.js';
@@ -395,17 +396,34 @@ async function customAvatarRoute(
   return new Response(request.method === 'HEAD' ? null : avatar.data, { headers });
 }
 
+const CSV_IMPORT_MAX_BYTES = 256 * 1024;
+
 async function adminImportRoute(request: Request, env: Env): Promise<Response> {
   if (request.method !== 'POST') throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Método não permitido.');
   const identity = await requireUser(request, env);
   await requireAdmin(identity, env);
   const profile = await new UserRepository(env.CORE_DB).findByFirebaseUid(identity.uid);
   if (profile === null) throw new ApiError(409, 'PROFILE_REQUIRED', 'Conclua seu perfil.');
-  const parsed = importBatchSchema.safeParse(await readJson(request));
-  if (!parsed.success) throw validationError(parsed.error);
+  const contentType = request.headers.get('Content-Type')?.split(';', 1)[0]?.trim().toLowerCase() ?? '';
+  const isCsv = contentType === 'text/csv';
+
+  let importedQuestions;
+  if (isCsv) {
+    const text = await readText(request, CSV_IMPORT_MAX_BYTES);
+    const { diagnostics, questions: parsedQuestions } = parseQuestionsCsv(text);
+    if (diagnostics.length > 0) {
+      throw new ApiError(400, 'CSV_VALIDATION_ERROR', 'Revise as linhas indicadas do CSV.', { diagnostics });
+    }
+    importedQuestions = parsedQuestions;
+  } else {
+    const parsed = importBatchSchema.safeParse(await readJson(request));
+    if (!parsed.success) throw validationError(parsed.error);
+    importedQuestions = parsed.data.questions;
+  }
+
   const idempotencyKey = request.headers.get('Idempotency-Key') ?? '';
   const result = await new QuestionImportService(env.CORE_DB, env.QUESTIONS_DB)
-    .import(profile.userId, idempotencyKey, parsed.data.questions);
+    .import(profile.userId, idempotencyKey, importedQuestions);
   return json(result, { status: result.status === 'APPLIED' ? 201 : 200 });
 }
 
