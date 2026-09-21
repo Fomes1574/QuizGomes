@@ -19,6 +19,7 @@ import {
 import { ChallengeRepository } from '../repositories/challenge-repository.js';
 import { notifyChallengeUpdated } from '../services/challenge-notifier.js';
 import { recordQuestionAnswers } from '../services/question-statistics-service.js';
+import { recordValidPlay } from '../services/progression-service.js';
 
 interface RoomAttachment {
   seat: LiveSeat;
@@ -507,7 +508,33 @@ export class MatchRoom {
     }
     await this.reconcileDirectChallenge(state.matchId);
     await this.recordMatchStatistics(state.matchId);
+    await this.recordMatchProgress(state, summary);
     await this.finishPresenceCleanup();
+  }
+
+  /**
+   * Missões e streak só avançam para uma partida genuinamente `FINISHED` —
+   * nunca `VOID` — e leem as respostas de volta de `match_answers`, com a
+   * mesma idempotência por retry que as estatísticas de pergunta já têm.
+   */
+  private async recordMatchProgress(state: LiveMatchState, summary: FinalizedLiveMatch): Promise<void> {
+    if (summary.status !== 'FINISHED') return;
+    try {
+      const rows = await this.env.CORE_DB.prepare(
+        `SELECT user_id, COUNT(*) AS total_answers, SUM(is_correct) AS correct_answers
+           FROM match_answers WHERE match_id = ?1 GROUP BY user_id`,
+      ).bind(state.matchId).all<{ correct_answers: number; total_answers: number; user_id: string }>();
+      const nowMs = Date.now();
+      await Promise.all(rows.results.map((row) => recordValidPlay(this.env.CORE_DB, {
+        correctAnswers: row.correct_answers,
+        nowMs,
+        themeId: state.themeId,
+        totalAnswers: row.total_answers,
+        userId: row.user_id,
+      })));
+    } catch {
+      console.error(JSON.stringify({ code: 'PROGRESSION_RECORD_FAILED', event: 'match_progress', matchId: state.matchId }));
+    }
   }
 
   /**

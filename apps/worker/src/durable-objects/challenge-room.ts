@@ -17,6 +17,7 @@ import { ChallengeRepository, type ChallengeWriteOutcome } from '../repositories
 import { recordReportView } from '../repositories/report-view-repository.js';
 import { notifyChallengeReadyForSecond, notifyChallengeUpdated } from '../services/challenge-notifier.js';
 import { recordQuestionAnswers } from '../services/question-statistics-service.js';
+import { recordValidPlay } from '../services/progression-service.js';
 
 /**
  * Sala de uma metade do desafio assíncrono.
@@ -510,6 +511,15 @@ export class ChallengeRoom {
           userId: statsUserId,
         }];
       }));
+      // Cada metade selada de verdade já é uma partida válida para quem a jogou,
+      // mesmo que o adversário ainda não tenha selado a dele.
+      await recordValidPlay(this.env.CORE_DB, {
+        correctAnswers: sealed.filter((answer) => answer.correct).length,
+        nowMs: Date.now(),
+        themeId: challenge.themeId,
+        totalAnswers: sealed.length,
+        userId: statsUserId,
+      });
     }
     const finalized = state.phase === 'FINALIZING' ? markAsyncHalfFinalized(state) : state;
     await this.ctx.storage.put(STATE_KEY, finalized);

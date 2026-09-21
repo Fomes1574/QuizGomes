@@ -398,6 +398,17 @@ describe('Milestone 8 no runtime Workers simulado', () => {
       cancelledBy: { displayName: 'precancel Jogador 1', seat: 1 },
       voidReason: 'CANCELLED',
     });
+
+    // M11 — uma partida VOID nunca avança missões nem streak, mesmo com jogadores reais.
+    const dayKey = new Date().toISOString().slice(0, 10);
+    for (const userId of fixture.userIds) {
+      expect(await env.CORE_DB.prepare(
+        'SELECT COUNT(*) AS total FROM user_daily_missions WHERE user_id = ?1 AND day_key = ?2 AND progress > 0',
+      ).bind(userId, dayKey).first()).toEqual({ total: 0 });
+      expect(await env.CORE_DB.prepare(
+        'SELECT COUNT(*) AS total FROM user_theme_streaks WHERE user_id = ?1 AND theme_id = ?2',
+      ).bind(userId, fixture.themeId).first()).toEqual({ total: 0 });
+    }
   });
 
   it('emite SEARCHING autoritativo e MATCH_FOUND individual sem resposta nem pergunta futura', async () => {
@@ -745,6 +756,27 @@ describe('Milestone 8 no runtime Workers simulado', () => {
     expect(await env.QUESTIONS_DB.prepare(
       "SELECT COUNT(*) AS total FROM question_statistics_ledger WHERE context_kind = 'MATCH' AND context_id = ?1",
     ).bind(roomId).first()).toEqual({ total: 10 });
+
+    // M11 — missões/streak: partida FINISHED avança missão "1 partida válida"
+    // (completa para os dois) e "respostas"/"acertos" a partir de match_answers
+    // já persistido (5 rodadas contadas para cada um, só a rodada 1 foi acerto/erro real).
+    const dayKey = new Date().toISOString().slice(0, 10);
+    for (const [userId, expectedCorrect] of [[fixture.userIds[0], 1], [fixture.userIds[1], 0]] as const) {
+      const missions = await env.CORE_DB.prepare(
+        `SELECT mission_type, progress, target, completed_at IS NOT NULL AS completed
+           FROM user_daily_missions WHERE user_id = ?1 AND day_key = ?2 ORDER BY mission_type`,
+      ).bind(userId, dayKey).all<{ completed: number; mission_type: string; progress: number; target: number }>();
+      expect(missions.results).toEqual([
+        { completed: 0, mission_type: 'ANSWER_QUESTIONS', progress: 5, target: 8 },
+        { completed: expectedCorrect >= 5 ? 1 : 0, mission_type: 'CORRECT_ANSWERS', progress: expectedCorrect, target: 5 },
+        { completed: 1, mission_type: 'PLAY_MATCH', progress: 1, target: 1 },
+      ]);
+      expect(await env.CORE_DB.prepare(
+        'SELECT current_streak, best_streak, last_active_day FROM user_theme_streaks WHERE user_id = ?1 AND theme_id = ?2',
+      ).bind(userId, fixture.themeId).first()).toEqual({
+        best_streak: 1, current_streak: 1, last_active_day: dayKey,
+      });
+    }
 
     for (const userId of fixture.userIds) {
       const row = await env.CORE_DB.prepare(

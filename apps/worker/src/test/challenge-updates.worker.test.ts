@@ -264,6 +264,27 @@ describe('M9C+M10 — Social converge por evento, sem polling', () => {
       "SELECT COUNT(*) AS total FROM question_statistics_ledger WHERE context_kind = 'CHALLENGE' AND context_id = ?1",
     ).bind(challengeId).first<{ total: number }>();
     expect(ledgerTotal?.total).toBe(10);
+
+    // M11 — cada selagem ASYNC registra missão/streak só do jogador que selou:
+    // primeiro acertou 4/5, segundo acertou 5/5 (satura a missão de acertos).
+    const themeId = await themeIdOf(themeSlug);
+    const dayKey = new Date().toISOString().slice(0, 10);
+    for (const [userId, correct] of [[first.id, 4], [second.id, 5]] as const) {
+      const missions = await env.CORE_DB.prepare(
+        `SELECT mission_type, progress, target, completed_at IS NOT NULL AS completed
+           FROM user_daily_missions WHERE user_id = ?1 AND day_key = ?2 ORDER BY mission_type`,
+      ).bind(userId, dayKey).all<{ completed: number; mission_type: string; progress: number; target: number }>();
+      expect(missions.results).toEqual([
+        { completed: 0, mission_type: 'ANSWER_QUESTIONS', progress: 5, target: 8 },
+        { completed: correct >= 5 ? 1 : 0, mission_type: 'CORRECT_ANSWERS', progress: correct, target: 5 },
+        { completed: 1, mission_type: 'PLAY_MATCH', progress: 1, target: 1 },
+      ]);
+      expect(await env.CORE_DB.prepare(
+        'SELECT current_streak, best_streak, last_active_day FROM user_theme_streaks WHERE user_id = ?1 AND theme_id = ?2',
+      ).bind(userId, themeId).first()).toEqual({
+        best_streak: 1, current_streak: 1, last_active_day: dayKey,
+      });
+    }
   });
 
   it('"Cancelar e voltar" na metade assíncrona encerra o desafio e avisa os dois lados', async () => {
@@ -380,6 +401,14 @@ describe('M9C+M10 — Social converge por evento, sem polling', () => {
     expect(await env.QUESTIONS_DB.prepare(
       "SELECT COUNT(*) AS total FROM question_statistics_ledger WHERE context_kind = 'CHALLENGE' AND context_id = ?1",
     ).bind(challengeId).first()).toEqual({ total: 0 });
+    // Nem missão/streak: a selagem perdedora nunca chega a outcome === 'APPLIED'.
+    const dayKey = new Date().toISOString().slice(0, 10);
+    expect(await env.CORE_DB.prepare(
+      'SELECT COUNT(*) AS total FROM user_daily_missions WHERE user_id = ?1 AND day_key = ?2 AND progress > 0',
+    ).bind(first.id, dayKey).first()).toEqual({ total: 0 });
+    expect(await env.CORE_DB.prepare(
+      'SELECT COUNT(*) AS total FROM user_theme_streaks WHERE user_id = ?1',
+    ).bind(first.id).first()).toEqual({ total: 0 });
 
     // Selar de novo (retry do alarme) continua sem efeito colateral.
     await runInDurableObject(stub, async (instance) => {
