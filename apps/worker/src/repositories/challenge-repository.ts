@@ -21,6 +21,8 @@ import {
 import { ApiError } from '../http/api-error.js';
 import { QuestionRepository } from './question-repository.js';
 import { QuestionSelectionService } from '../services/question-selection-service.js';
+import { recordValidPlay } from '../services/progression-service.js';
+import { recordQuestionAnswers } from '../services/question-statistics-service.js';
 import { customAvatarUrl } from '../storage/custom-avatar.js';
 
 const LIVE_STATUS_LIST = LIVE_CHALLENGE_STATUSES.map((status) => `'${status}'`).join(', ');
@@ -489,10 +491,15 @@ export class ChallengeRepository {
   }
 
   /**
-   * Sela a metade de um jogador e avança o desafio, tudo em um único batch.
+   * Sela a metade de um jogador e avança o desafio (status + respostas), tudo
+   * em um único batch. Idempotente: reexecutar não duplica respostas, porque a
+   * inserção ignora conflito e a transição exige o estado de origem exato.
    *
-   * Idempotente: reexecutar não duplica respostas nem aplica XP duas vezes, porque
-   * a inserção ignora conflito e a transição exige o estado de origem exato.
+   * XP, estatística e progressão NÃO são aplicados aqui — ver
+   * `recordHalfEffects`/`applyCompletionXp`, chamados à parte pelo mesmo
+   * chamador a cada retorno `APPLIED`/`ALREADY_APPLIED`, de forma idempotente
+   * e retomável mesmo que esta transição e aqueles efeitos não caibam na
+   * mesma escrita atômica.
    *
    * Retorna o desfecho em vez de `void`: quem chama (a sala do DO) só pode
    * anunciar um terminal para o jogador quando a resposta é `APPLIED` ou
@@ -503,13 +510,10 @@ export class ChallengeRepository {
   async sealHalf(input: {
     answers: readonly SealedRoundAnswer[];
     challengeId: string;
-    difficulty: Difficulty;
     isSecondPlayer: boolean;
-    opponentScore: number;
     userId: string;
   }): Promise<ChallengeWriteOutcome> {
     const now = this.clock().toISOString();
-    const score = input.answers.reduce((total, answer) => total + answer.score, 0);
     const statements: D1PreparedStatement[] = input.answers.map((answer, index) => this.db.prepare(
       `INSERT OR IGNORE INTO challenge_answers
          (challenge_id, round_number, user_id, selected_option, remaining_ms, is_correct, score, answered_at)
@@ -540,9 +544,9 @@ export class ChallengeRepository {
       return 'NOT_APPLICABLE';
     }
 
-    // Desafio entre amigos é sempre Casual: Conhecimento nunca muda, só XP de vitória.
-    const result = score === input.opponentScore ? 'DRAW' : score > input.opponentScore ? 'WIN' : 'LOSS';
-    const xpDelta = xpAward(input.difficulty, result);
+    // Desafio entre amigos é sempre Casual: Conhecimento nunca muda, só XP de vitória —
+    // e o XP em si é aplicado à parte por `applyCompletionXp`, de forma idempotente
+    // e retomável (ver ali). Esta transição só grava o resultado (status + respostas).
     statements.push(this.db.prepare(
       `UPDATE challenges SET status = 'COMPLETED', updated_at = ?1, revision = revision + 1
         WHERE id = ?2 AND status = 'SECOND_PLAYER_ACTIVE'`,
@@ -554,7 +558,6 @@ export class ChallengeRepository {
       await this.discardResidualHalf(input.challengeId, input.userId);
       return 'NOT_APPLICABLE';
     }
-    await this.awardChallengeXp(input.challengeId, input.difficulty, score, input.opponentScore, input.userId, xpDelta);
     return 'APPLIED';
   }
 
@@ -565,32 +568,101 @@ export class ChallengeRepository {
   }
 
   /**
-   * XP de desafio concluído, para os dois jogadores. O ledger por partida garante
-   * que uma reexecução não pague duas vezes.
+   * Efeitos pós-conclusão de UMA metade selada: estatística de pergunta e
+   * progressão (missão "1 partida válida" + streak do tema).
+   *
+   * Chamado de novo a cada `trySeal` — inclusive quando `sealHalf` já retornou
+   * `ALREADY_APPLIED` — para que uma falha entre a transição e estes efeitos
+   * seja retomável sem duplicar nada:
+   * - estatística já tem seu próprio ledger (`question_statistics_ledger`,
+   *   em QUESTIONS_DB) e pode ser chamada quantas vezes for preciso;
+   * - progressão não é idempotente por conta própria (chamar duas vezes soma
+   *   progresso duas vezes), então `challenge_progression_ledger` é o gatilho:
+   *   só a chamada que efetivamente insere a linha nova executa o efeito.
+   *
+   * Lê de `challenge_answers`/`challenge_questions` (D1, nunca apagados para
+   * um desafio COMPLETED) em vez do estado em memória do DO, então funciona
+   * igual numa selagem nova ou numa retomada bem depois, mesmo sem o DO.
    */
-  private async awardChallengeXp(
-    challengeId: string,
-    difficulty: Difficulty,
-    secondScore: number,
-    firstScore: number,
-    secondUserId: string,
-    secondXp: number,
-  ): Promise<void> {
+  async recordHalfEffects(challengeId: string, userId: string, questionsDb: D1Database): Promise<void> {
     const challenge = await this.byId(challengeId);
     if (challenge === null) return;
-    const firstResult = firstScore === secondScore ? 'DRAW' : firstScore > secondScore ? 'WIN' : 'LOSS';
+    const sealed = await this.sealedHalf(challengeId, userId);
+    if (sealed.length === 0) return;
+    const questions = await this.questionSet(challengeId);
+    await recordQuestionAnswers(questionsDb, sealed.flatMap((answer, index) => {
+      const questionId = questions[index]?.id;
+      return questionId === undefined ? [] : [{
+        contextId: challengeId,
+        contextKind: 'CHALLENGE' as const,
+        correct: answer.correct,
+        questionId,
+        remainingMs: answer.remainingMs,
+        roundNumber: index + 1,
+        selectedOption: answer.selectedOption,
+        userId,
+      }];
+    }));
+    const ledgerInsert = await this.db.prepare(
+      'INSERT OR IGNORE INTO challenge_progression_ledger (challenge_id, user_id) VALUES (?1, ?2)',
+    ).bind(challengeId, userId).run();
+    if ((ledgerInsert.meta.changes ?? 0) !== 1) return;
+    await recordValidPlay(this.db, {
+      correctAnswers: sealed.filter((answer) => answer.correct).length,
+      nowMs: this.clock().getTime(),
+      themeId: challenge.themeId,
+      totalAnswers: sealed.length,
+      userId,
+    });
+  }
+
+  /**
+   * XP de desafio COMPLETED, para os dois jogadores, recalculado a partir das
+   * respostas já persistidas (nunca do estado em memória do DO).
+   *
+   * Mesmo padrão de `question_statistics_ledger`: um `INSERT OR IGNORE` em
+   * `challenge_xp_ledger` é o gatilho — só quem de fato insere a linha nova
+   * aplica o XP a `user_profiles`, e a linha final marca `applied = 1`. Uma
+   * chamada repetida (retry após falha entre a transição e o XP, ou depois de
+   * `sealHalf` já ter devolvido `ALREADY_APPLIED`) sempre converge sem pagar
+   * duas vezes; se o desafio ainda não está COMPLETED, é um no-op seguro.
+   */
+  async applyCompletionXp(challengeId: string): Promise<void> {
+    const challenge = await this.byId(challengeId);
+    if (challenge === null || challenge.status !== 'COMPLETED') return;
+    const scores = await this.db.prepare(
+      'SELECT user_id, SUM(score) AS score FROM challenge_answers WHERE challenge_id = ?1 GROUP BY user_id',
+    ).bind(challengeId).all<{ score: number; user_id: string }>();
+    const scoreByUser = new Map(scores.results.map((row) => [row.user_id, row.score]));
+    const firstScore = scoreByUser.get(challenge.firstPlayerUserId) ?? 0;
+    const secondScore = scoreByUser.get(challenge.secondPlayerUserId) ?? 0;
+    const resultFor = (mine: number, theirs: number): 'DRAW' | 'LOSS' | 'WIN' => (
+      mine === theirs ? 'DRAW' : mine > theirs ? 'WIN' : 'LOSS'
+    );
     const awards: Array<[string, number]> = [
-      [challenge.firstPlayerUserId, xpAward(difficulty, firstResult)],
-      [secondUserId, secondXp],
+      [challenge.firstPlayerUserId, xpAward(challenge.difficulty, resultFor(firstScore, secondScore))],
+      [challenge.secondPlayerUserId, xpAward(challenge.difficulty, resultFor(secondScore, firstScore))],
     ];
-    // Empate paga zero aos dois: sem escrita nenhuma, e sem batch vazio.
+    // Empate paga zero aos dois: sem linha de ledger nenhuma, e sem batch vazio.
     const payable = awards.filter(([, xp]) => xp > 0);
     if (payable.length === 0) return;
-    await this.db.batch(payable.map(([userId, xp]) => this.db.prepare(
-      `UPDATE user_profiles
-          SET total_xp = MIN(?1, total_xp + ?2), updated_at = CURRENT_TIMESTAMP
-        WHERE user_id = ?3`,
-    ).bind(TOTAL_XP_TO_MAX_LEVEL, xp, userId)));
+    const ledgerResults = await this.db.batch(payable.map(([userId, xp]) => this.db.prepare(
+      'INSERT OR IGNORE INTO challenge_xp_ledger (challenge_id, user_id, xp_delta) VALUES (?1, ?2, ?3)',
+    ).bind(challengeId, userId, xp)));
+    const fresh = payable.filter((_pair, index) => (ledgerResults[index]?.meta.changes ?? 0) === 1);
+    if (fresh.length === 0) return;
+    const now = this.clock().toISOString();
+    await this.db.batch(fresh.flatMap(([userId, xp]) => [
+      this.db.prepare(
+        `UPDATE user_profiles
+            SET total_xp = MIN(?1, total_xp + ?2), updated_at = CURRENT_TIMESTAMP
+          WHERE user_id = ?3`,
+      ).bind(TOTAL_XP_TO_MAX_LEVEL, xp, userId),
+      this.db.prepare(
+        `UPDATE challenge_xp_ledger SET applied = 1, applied_at = ?1
+          WHERE challenge_id = ?2 AND user_id = ?3 AND applied = 0`,
+      ).bind(now, challengeId, userId),
+    ]));
   }
 
   /**

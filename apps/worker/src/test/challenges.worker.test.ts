@@ -15,6 +15,21 @@ function fakeContext(): ExecutionContext {
   return { waitUntil(promise: Promise<unknown>) { void promise; } } as unknown as ExecutionContext;
 }
 
+/**
+ * Mesma coisa que `fakeContext()`, mas coleta os `waitUntil` em vez de
+ * dispará-los sem esperar — necessário quando o próprio teste dispara duas
+ * chamadas de verdade em corrida: sem isso, o trabalho de fundo (aviso Social)
+ * do perdedor continuaria em voo depois do teste terminar e podia colidir com
+ * o próximo teste, que roda no mesmo ambiente Miniflare (`--no-isolate`).
+ */
+function collectingContext(): { context: ExecutionContext; settle: () => Promise<void> } {
+  const pending: Array<Promise<unknown>> = [];
+  const context = {
+    waitUntil(promise: Promise<unknown>) { pending.push(promise); },
+  } as unknown as ExecutionContext;
+  return { context, settle: async () => { await Promise.allSettled(pending); } };
+}
+
 async function presenceOf(uid: string): Promise<{ activity: string; resource: string | null }> {
   const response = await env.PRESENCE_HUB.get(env.PRESENCE_HUB.idFromName(uid))
     .fetch('https://presence.internal/state');
@@ -471,13 +486,19 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
       correct: score > 0, remainingMs: score > 0 ? (score - 10) * 1_000 : 0, score, selectedOption: index % 4,
     }));
     await repository.sealHalf({
-      answers: firstHalf, challengeId: created.challengeId, difficulty: 'EASY',
-      isSecondPlayer: false, opponentScore: 0, userId: first.id,
+      answers: firstHalf, challengeId: created.challengeId,
+      isSecondPlayer: false, userId: first.id,
     });
     expect(await repository.byId(created.challengeId)).toMatchObject({ status: 'WAITING_FOR_SECOND' });
     expect(await repository.sealedHalf(created.challengeId, first.id)).toEqual(firstHalf);
     // O segundo jogador ainda não selou nada.
     expect(await repository.sealedHalf(created.challengeId, second.id)).toEqual([]);
+    // Efeitos da primeira metade (estatística/progressão) são chamados como o DO faria,
+    // antes da conclusão — não pagam XP ainda, pois o desafio não está COMPLETED.
+    await repository.recordHalfEffects(created.challengeId, first.id, env.QUESTIONS_DB);
+    await repository.applyCompletionXp(created.challengeId);
+    expect(await env.CORE_DB.prepare('SELECT total_xp FROM user_profiles WHERE user_id = ?1')
+      .bind(first.id).first()).toEqual({ total_xp: 0 });
 
     await env.CORE_DB.prepare("UPDATE challenges SET status = 'SECOND_PLAYER_ACTIVE' WHERE id = ?1")
       .bind(created.challengeId).run();
@@ -485,9 +506,11 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
       correct: score > 0, remainingMs: score > 0 ? (score - 10) * 1_000 : 0, score, selectedOption: index % 4,
     }));
     await repository.sealHalf({
-      answers: secondHalf, challengeId: created.challengeId, difficulty: 'EASY',
-      isSecondPlayer: true, opponentScore: 64, userId: second.id,
+      answers: secondHalf, challengeId: created.challengeId,
+      isSecondPlayer: true, userId: second.id,
     });
+    await repository.recordHalfEffects(created.challengeId, second.id, env.QUESTIONS_DB);
+    await repository.applyCompletionXp(created.challengeId);
 
     expect(await repository.byId(created.challengeId)).toMatchObject({ status: 'COMPLETED' });
     // 64 do primeiro contra 60 do segundo: vitória do primeiro, +10 XP de Fácil.
@@ -498,16 +521,23 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
     expect(byUser.get(first.id)).toBe(10);
     expect(byUser.get(second.id)).toBe(0);
 
-    // Reexecutar não duplica resposta nem paga XP duas vezes.
+    // Reexecutar sealHalf, recordHalfEffects e applyCompletionXp (simulando um retry
+    // após falha) não duplica resposta, progressão nem paga XP duas vezes.
     await repository.sealHalf({
-      answers: secondHalf, challengeId: created.challengeId, difficulty: 'EASY',
-      isSecondPlayer: true, opponentScore: 64, userId: second.id,
+      answers: secondHalf, challengeId: created.challengeId,
+      isSecondPlayer: true, userId: second.id,
     });
+    await repository.recordHalfEffects(created.challengeId, second.id, env.QUESTIONS_DB);
+    await repository.recordHalfEffects(created.challengeId, first.id, env.QUESTIONS_DB);
+    await repository.applyCompletionXp(created.challengeId);
+    await repository.applyCompletionXp(created.challengeId);
     expect(await env.CORE_DB.prepare(
       'SELECT COUNT(*) AS total FROM challenge_answers WHERE challenge_id = ?1',
     ).bind(created.challengeId).first()).toEqual({ total: 10 });
     expect(await env.CORE_DB.prepare('SELECT total_xp FROM user_profiles WHERE user_id = ?1')
       .bind(first.id).first()).toEqual({ total_xp: 10 });
+    expect(await env.CORE_DB.prepare('SELECT total_xp FROM user_profiles WHERE user_id = ?1')
+      .bind(second.id).first()).toEqual({ total_xp: 0 });
   });
 
   it('empate no assíncrono não paga XP a ninguém e Conhecimento nunca muda', async () => {
@@ -526,15 +556,18 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
       correct: score > 0, remainingMs: score > 0 ? (score - 10) * 1_000 : 0, score, selectedOption: index % 4,
     }));
     await repository.sealHalf({
-      answers: half, challengeId: created.challengeId, difficulty: 'EASY',
-      isSecondPlayer: false, opponentScore: 0, userId: first.id,
+      answers: half, challengeId: created.challengeId,
+      isSecondPlayer: false, userId: first.id,
     });
     await env.CORE_DB.prepare("UPDATE challenges SET status = 'SECOND_PLAYER_ACTIVE' WHERE id = ?1")
       .bind(created.challengeId).run();
     await repository.sealHalf({
-      answers: half, challengeId: created.challengeId, difficulty: 'EASY',
-      isSecondPlayer: true, opponentScore: 20, userId: second.id,
+      answers: half, challengeId: created.challengeId,
+      isSecondPlayer: true, userId: second.id,
     });
+    await repository.recordHalfEffects(created.challengeId, first.id, env.QUESTIONS_DB);
+    await repository.recordHalfEffects(created.challengeId, second.id, env.QUESTIONS_DB);
+    await repository.applyCompletionXp(created.challengeId);
 
     expect(await repository.byId(created.challengeId)).toMatchObject({ status: 'COMPLETED' });
     const xp = await env.CORE_DB.prepare(
@@ -567,6 +600,83 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
     expect(await env.CORE_DB.prepare(
       'SELECT SUM(total_xp) AS total FROM user_profiles WHERE user_id IN (?1, ?2)',
     ).bind(first.id, second.id).first<{ total: number }>()).toEqual({ total: 0 });
+  });
+
+  it('retomar efeitos pós-conclusão depois de uma falha simulada nunca duplica estatística, missão, streak ou XP', async () => {
+    const { themeSlug, users } = await fixture(2);
+    const first = userAt(users, 0);
+    const second = userAt(users, 1);
+    await befriend(first, second);
+    const repository = new ChallengeRepository(env.CORE_DB);
+    const themeId = await themeIdOf(themeSlug);
+    const created = await repository.create({
+      actorUserId: first.id, difficulty: 'EASY', kind: 'ASYNC',
+      targetPresence: 'OFFLINE', targetUserId: second.id, themeId,
+    });
+    await repository.sealQuestionSet(created.challengeId, themeId, 'EASY', env.QUESTIONS_DB);
+    const winningHalf = [20, 18, 0, 15, 11].map((score, index) => ({
+      correct: score > 0, remainingMs: score > 0 ? (score - 10) * 1_000 : 0, score, selectedOption: index % 4,
+    }));
+    const losingHalf = [0, 0, 0, 0, 0].map((score, index) => ({
+      correct: score > 0, remainingMs: 0, score, selectedOption: index % 4,
+    }));
+    await repository.sealHalf({
+      answers: winningHalf, challengeId: created.challengeId, isSecondPlayer: false, userId: first.id,
+    });
+    await env.CORE_DB.prepare("UPDATE challenges SET status = 'SECOND_PLAYER_ACTIVE' WHERE id = ?1")
+      .bind(created.challengeId).run();
+    await repository.sealHalf({
+      answers: losingHalf, challengeId: created.challengeId, isSecondPlayer: true, userId: second.id,
+    });
+
+    // `COMPLETED` já foi persistido por `sealHalf`, mas simula-se aqui uma falha
+    // logo em seguida: efeitos pós-conclusão (estatística, missão, streak, XP)
+    // nunca chegaram a rodar — exatamente a janela que a corretiva cobre.
+    expect(await repository.byId(created.challengeId)).toMatchObject({ status: 'COMPLETED' });
+    expect(await env.CORE_DB.prepare(
+      'SELECT SUM(total_xp) AS total FROM user_profiles WHERE user_id IN (?1, ?2)',
+    ).bind(first.id, second.id).first<{ total: number }>()).toEqual({ total: 0 });
+
+    // Retry (o alarme do DO tentando de novo): os efeitos agora rodam.
+    await repository.recordHalfEffects(created.challengeId, first.id, env.QUESTIONS_DB);
+    await repository.recordHalfEffects(created.challengeId, second.id, env.QUESTIONS_DB);
+    await repository.applyCompletionXp(created.challengeId);
+
+    const dayKey = new Date().toISOString().slice(0, 10);
+    const missionsBefore = await env.CORE_DB.prepare(
+      'SELECT progress FROM user_daily_missions WHERE user_id = ?1 AND day_key = ?2 AND mission_type = ?3',
+    ).bind(first.id, dayKey, 'ANSWER_QUESTIONS').first<{ progress: number }>();
+    expect(missionsBefore?.progress).toBe(5);
+    const streakBefore = await env.CORE_DB.prepare(
+      'SELECT current_streak FROM user_theme_streaks WHERE user_id = ?1 AND theme_id = ?2',
+    ).bind(first.id, themeId).first<{ current_streak: number }>();
+    expect(streakBefore?.current_streak).toBe(1);
+    const statsBefore = await env.QUESTIONS_DB.prepare(
+      "SELECT COUNT(*) AS total FROM question_statistics_ledger WHERE context_kind = 'CHALLENGE' AND context_id = ?1",
+    ).bind(created.challengeId).first<{ total: number }>();
+    expect(statsBefore?.total).toBe(10);
+    const xpBefore = await env.CORE_DB.prepare('SELECT total_xp FROM user_profiles WHERE user_id = ?1')
+      .bind(first.id).first<{ total_xp: number }>();
+    expect(xpBefore?.total_xp).toBeGreaterThan(0);
+
+    // Repetir a mesma retomada (segunda tentativa do alarme, ou uma corrida entre
+    // duas retomadas) nunca soma progresso, streak, estatística ou XP de novo.
+    await repository.recordHalfEffects(created.challengeId, first.id, env.QUESTIONS_DB);
+    await repository.recordHalfEffects(created.challengeId, second.id, env.QUESTIONS_DB);
+    await repository.applyCompletionXp(created.challengeId);
+    await repository.applyCompletionXp(created.challengeId);
+
+    expect(await env.CORE_DB.prepare(
+      'SELECT progress FROM user_daily_missions WHERE user_id = ?1 AND day_key = ?2 AND mission_type = ?3',
+    ).bind(first.id, dayKey, 'ANSWER_QUESTIONS').first()).toEqual(missionsBefore);
+    expect(await env.CORE_DB.prepare(
+      'SELECT current_streak FROM user_theme_streaks WHERE user_id = ?1 AND theme_id = ?2',
+    ).bind(first.id, themeId).first()).toEqual(streakBefore);
+    expect(await env.QUESTIONS_DB.prepare(
+      "SELECT COUNT(*) AS total FROM question_statistics_ledger WHERE context_kind = 'CHALLENGE' AND context_id = ?1",
+    ).bind(created.challengeId).first()).toEqual(statsBefore);
+    expect(await env.CORE_DB.prepare('SELECT total_xp FROM user_profiles WHERE user_id = ?1')
+      .bind(first.id).first()).toEqual(xpBefore);
   });
 
   it('aceite em duplicidade (double tap / outra aba) converge para a mesma sala DIRECT', async () => {
@@ -739,6 +849,227 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
 
     expect(await env.CORE_DB.prepare('SELECT kind FROM matches WHERE id = ?1').bind(roomId).first())
       .toEqual({ kind: 'DIRECT_LIVE' });
+  });
+
+  it('convite DIRECT pendente nunca é anulado pela reconciliação antes dos 30 s, em nenhum instante', async () => {
+    // matchId ainda é null (PENDING_DIRECT): a graça de 7 s nunca se aplica aqui,
+    // só a expiração de 30 s de `expireStaleDirect`. Cobre 7 s, logo após 7 s e o
+    // limiar de 29.999 s, sempre sobrevivendo e aceitando normalmente.
+    for (const elapsedMs of [7_000, 7_001, 29_999]) {
+      const { themeSlug, users } = await fixture(2);
+      const first = userAt(users, 0);
+      const second = userAt(users, 1);
+      await befriend(first, second);
+      const challenges = new ChallengeRepository(env.CORE_DB);
+      const userRepository = new UserRepository(env.CORE_DB);
+      const themeId = await themeIdOf(themeSlug);
+      const created = await challenges.create({
+        actorUserId: first.id, difficulty: 'EASY', kind: 'DIRECT',
+        targetPresence: 'ONLINE', targetUserId: second.id, themeId,
+      });
+      await env.CORE_DB.prepare('UPDATE challenges SET updated_at = ?1 WHERE id = ?2')
+        .bind(new Date(Date.now() - elapsedMs).toISOString(), created.challengeId).run();
+
+      await reconcileChallengeLifecycle(env, fakeContext(), challenges, second.id);
+      // matchId continua null (nenhuma sala nasceu à toa): a reconciliação nunca
+      // chama o MatchRoom para um convite ainda pendente.
+      expect(await challenges.byId(created.challengeId), `elapsed=${elapsedMs}`)
+        .toMatchObject({ matchId: null, status: 'PENDING_DIRECT' });
+
+      const response = await acceptChallenge(env, fakeContext(), challenges, userRepository, second.id, created.challengeId);
+      expect(response.status, `elapsed=${elapsedMs}`).toBe(200);
+      expect(await challenges.byId(created.challengeId), `elapsed=${elapsedMs}`).toMatchObject({ status: 'ACTIVE' });
+    }
+  });
+
+  it('convite cruzado DIRECT aceito depois dos 7 s continua abrindo a sala normalmente', async () => {
+    const { themeSlug, users } = await fixture(2);
+    const first = userAt(users, 0);
+    const second = userAt(users, 1);
+    await befriend(first, second);
+    const challenges = new ChallengeRepository(env.CORE_DB);
+    const userRepository = new UserRepository(env.CORE_DB);
+    const themeId = await themeIdOf(themeSlug);
+    const created = await challenges.create({
+      actorUserId: first.id, difficulty: 'EASY', kind: 'DIRECT',
+      targetPresence: 'ONLINE', targetUserId: second.id, themeId,
+    });
+    // Convite parado há mais de 7 s, ainda bem dentro dos 30 s.
+    await env.CORE_DB.prepare('UPDATE challenges SET updated_at = ?1 WHERE id = ?2')
+      .bind(new Date(Date.now() - 10_000).toISOString(), created.challengeId).run();
+
+    // O convidado consulta a lista (roda a reconciliação) antes de desafiar de volta.
+    await reconcileChallengeLifecycle(env, fakeContext(), challenges, second.id);
+    expect(await challenges.byId(created.challengeId)).toMatchObject({ status: 'PENDING_DIRECT' });
+
+    // O convite cruzado (B desafia A de volta) reconhece o existente como aceite.
+    const crossed = await challenges.create({
+      actorUserId: second.id, difficulty: 'EASY', kind: 'DIRECT',
+      targetPresence: 'ONLINE', targetUserId: first.id, themeId,
+    });
+    expect(crossed.crossAccepted).toBe(true);
+    expect(crossed.challengeId).toBe(created.challengeId);
+
+    const response = await acceptChallenge(env, fakeContext(), challenges, userRepository, second.id, created.challengeId);
+    expect(response.status).toBe(200);
+    const { roomId } = await response.json<{ roomId: string }>();
+    expect(await challenges.byId(created.challengeId)).toMatchObject({ matchId: roomId, status: 'ACTIVE' });
+    expect(await env.CORE_DB.prepare('SELECT COUNT(*) AS total FROM matches WHERE id = ?1')
+      .bind(roomId).first()).toEqual({ total: 1 });
+  });
+
+  it('ASYNC nunca vira VOID por estar MISSING, em nenhum dos dois lados, por mais que passe dos 7 s', async () => {
+    const { themeSlug, users } = await fixture(2);
+    const first = userAt(users, 0);
+    const second = userAt(users, 1);
+    await befriend(first, second);
+    const challenges = new ChallengeRepository(env.CORE_DB);
+    const themeId = await themeIdOf(themeSlug);
+    const created = await challenges.create({
+      actorUserId: first.id, difficulty: 'EASY', kind: 'ASYNC',
+      targetPresence: 'OFFLINE', targetUserId: second.id, themeId,
+    });
+    await challenges.sealQuestionSet(created.challengeId, themeId, 'EASY', env.QUESTIONS_DB);
+
+    // Metade do primeiro jamais aberta, muito além de 7 s — continua jogável.
+    await env.CORE_DB.prepare("UPDATE challenges SET updated_at = '2000-01-01T00:00:00.000Z' WHERE id = ?1")
+      .bind(created.challengeId).run();
+    await reconcileChallengeLifecycle(env, fakeContext(), challenges, first.id);
+    expect(await challenges.byId(created.challengeId)).toMatchObject({ status: 'FIRST_PLAYER_ACTIVE' });
+
+    // Segundo jogador aceita e também nunca abre a própria metade — mesma garantia.
+    await env.CORE_DB.prepare(
+      "UPDATE challenges SET status = 'SECOND_PLAYER_ACTIVE', updated_at = '2000-01-01T00:00:00.000Z' WHERE id = ?1",
+    ).bind(created.challengeId).run();
+    await reconcileChallengeLifecycle(env, fakeContext(), challenges, second.id);
+    expect(await challenges.byId(created.challengeId)).toMatchObject({ status: 'SECOND_PLAYER_ACTIVE' });
+  });
+
+  it('reconciliação nunca toca WAITING_FOR_SECOND: nem DO, nem chamada desnecessária, nem VOID', async () => {
+    const { themeSlug, users } = await fixture(2);
+    const first = userAt(users, 0);
+    const second = userAt(users, 1);
+    await befriend(first, second);
+    const challenges = new ChallengeRepository(env.CORE_DB);
+    const themeId = await themeIdOf(themeSlug);
+    const created = await challenges.create({
+      actorUserId: first.id, difficulty: 'EASY', kind: 'ASYNC',
+      targetPresence: 'OFFLINE', targetUserId: second.id, themeId,
+    });
+    // Simula a primeira metade já selada (estado real de WAITING_FOR_SECOND),
+    // parada há muito tempo — nem DIRECT (matchId nulo) nem FIRST/SECOND_PLAYER_ACTIVE:
+    // a reconciliação não tem ramo nenhum para este status, então é sempre no-op.
+    await env.CORE_DB.prepare(
+      "UPDATE challenges SET status = 'WAITING_FOR_SECOND', updated_at = '2000-01-01T00:00:00.000Z' WHERE id = ?1",
+    ).bind(created.challengeId).run();
+
+    await reconcileChallengeLifecycle(env, fakeContext(), challenges, second.id);
+    expect(await challenges.byId(created.challengeId)).toMatchObject({ status: 'WAITING_FOR_SECOND' });
+  });
+
+  it('cancelamento que vence a corrida antes do CAS de aceite bloqueia o aceite e não cria sala', async () => {
+    for (const action of ['CANCEL', 'DECLINE'] as const) {
+      const { themeSlug, users } = await fixture(2);
+      const first = userAt(users, 0);
+      const second = userAt(users, 1);
+      await befriend(first, second);
+      const challenges = new ChallengeRepository(env.CORE_DB);
+      const userRepository = new UserRepository(env.CORE_DB);
+      const themeId = await themeIdOf(themeSlug);
+      const created = await challenges.create({
+        actorUserId: first.id, difficulty: 'EASY', kind: 'DIRECT',
+        targetPresence: 'ONLINE', targetUserId: second.id, themeId,
+      });
+      const record = await challenges.byId(created.challengeId);
+      if (record === null) throw new Error('Convite ausente.');
+      const actorUserId = action === 'CANCEL' ? first.id : second.id;
+      expect(await challenges.applyAction(record, { actorUserId, type: action }), action).toBe(true);
+
+      await expect(
+        acceptChallenge(env, fakeContext(), challenges, userRepository, second.id, created.challengeId),
+        action,
+      ).rejects.toMatchObject({ code: 'CHALLENGE_ALREADY_SETTLED', status: 409 });
+      // matchId continua null: o aceite bloqueado nunca chega a reservar sala.
+      expect(await challenges.byId(created.challengeId), action)
+        .toMatchObject({ matchId: null, status: action === 'CANCEL' ? 'CANCELLED' : 'DECLINED' });
+    }
+  });
+
+  it('depois do CAS de aceite (PREPARING com sala viva), cancelar ou recusar concorrente nunca encerra a tentativa', async () => {
+    for (const action of ['CANCEL', 'DECLINE'] as const) {
+      const { themeSlug, users } = await fixture(2);
+      const first = userAt(users, 0);
+      const second = userAt(users, 1);
+      await befriend(first, second);
+      const challenges = new ChallengeRepository(env.CORE_DB);
+      const themeId = await themeIdOf(themeSlug);
+      const created = await challenges.create({
+        actorUserId: first.id, difficulty: 'EASY', kind: 'DIRECT',
+        targetPresence: 'ONLINE', targetUserId: second.id, themeId,
+      });
+      const pending = await challenges.byId(created.challengeId);
+      if (pending === null) throw new Error('Convite ausente.');
+      // Reproduz exatamente o instante em que o CAS de aceite já venceu (PENDING_DIRECT
+      // -> PREPARING com roomId persistido), antes da segunda escrita que leva a ACTIVE —
+      // a mesma janela em que uma ação concorrente só pode ler o estado já comprometido.
+      const started = await new DirectChallengeService(env).start(pending, [first.uid, second.uid], crypto.randomUUID());
+      await env.CORE_DB.prepare(
+        `UPDATE challenges SET status = 'PREPARING', match_id = ?1, updated_at = ?2, revision = revision + 1
+          WHERE id = ?3 AND revision = ?4`,
+      ).bind(started.roomId, new Date().toISOString(), created.challengeId, pending.revision).run();
+
+      const committed = await challenges.byId(created.challengeId);
+      if (committed === null) throw new Error('Convite ausente.');
+      const actorUserId = action === 'CANCEL' ? first.id : second.id;
+      await expect(
+        challenges.applyAction(committed, { actorUserId, type: action }),
+        action,
+      ).rejects.toMatchObject({ code: 'CHALLENGE_ALREADY_STARTED' });
+
+      // A tentativa segue viva: nem status nem a sala já reservada foram tocados.
+      expect(await challenges.byId(created.challengeId), action)
+        .toMatchObject({ matchId: started.roomId, status: 'PREPARING' });
+      expect(await env.CORE_DB.prepare('SELECT COUNT(*) AS total FROM matches WHERE id = ?1')
+        .bind(started.roomId).first(), action).toEqual({ total: 1 });
+    }
+  });
+
+  it('corrida real entre aceitar e cancelar converge para exatamente um resultado, nunca os dois', async () => {
+    const { themeSlug, users } = await fixture(2);
+    const first = userAt(users, 0);
+    const second = userAt(users, 1);
+    await befriend(first, second);
+    const challenges = new ChallengeRepository(env.CORE_DB);
+    const userRepository = new UserRepository(env.CORE_DB);
+    const themeId = await themeIdOf(themeSlug);
+    const created = await challenges.create({
+      actorUserId: first.id, difficulty: 'EASY', kind: 'DIRECT',
+      targetPresence: 'ONLINE', targetUserId: second.id, themeId,
+    });
+    const record = await challenges.byId(created.challengeId);
+    if (record === null) throw new Error('Convite ausente.');
+
+    const { context, settle } = collectingContext();
+    const [acceptOutcome, cancelOutcome] = await Promise.allSettled([
+      acceptChallenge(env, context, challenges, userRepository, second.id, created.challengeId),
+      challenges.applyAction(record, { actorUserId: first.id, type: 'CANCEL' }),
+    ]);
+    // O aviso Social do lado vencedor não pode ficar em voo depois deste teste:
+    // o mesmo ambiente Miniflare (`--no-isolate`) é reaproveitado pelo próximo.
+    await settle();
+
+    const finalState = await challenges.byId(created.challengeId);
+    if (finalState === null) throw new Error('Convite ausente.');
+    if (finalState.status === 'CANCELLED') {
+      // O cancelamento venceu: o aceite nunca chega a reservar nenhuma sala.
+      expect(cancelOutcome).toMatchObject({ status: 'fulfilled', value: true });
+      expect(finalState.matchId).toBeNull();
+    } else {
+      // O aceite venceu: nunca sobra CANCELLED convivendo com uma sala viva.
+      expect(['ACTIVE', 'PREPARING']).toContain(finalState.status);
+      expect(acceptOutcome.status).toBe('fulfilled');
+      if (cancelOutcome.status === 'fulfilled') expect(cancelOutcome.value).toBe(false);
+    }
   });
 
   it('pagina desafios vivos além de 50 por cursor, sem esconder nenhum silenciosamente', async () => {

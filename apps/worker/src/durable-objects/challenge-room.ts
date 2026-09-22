@@ -16,8 +16,6 @@ import type { Env } from '../env.js';
 import { ChallengeRepository, type ChallengeWriteOutcome } from '../repositories/challenge-repository.js';
 import { recordReportView } from '../repositories/report-view-repository.js';
 import { notifyChallengeReadyForSecond, notifyChallengeUpdated } from '../services/challenge-notifier.js';
-import { recordQuestionAnswers } from '../services/question-statistics-service.js';
-import { recordValidPlay } from '../services/progression-service.js';
 
 /**
  * Sala de uma metade do desafio assíncrono.
@@ -483,9 +481,7 @@ export class ChallengeRoom {
       outcome = await challenges.sealHalf({
         answers: sealed,
         challengeId: state.challengeId,
-        difficulty: state.difficulty,
         isSecondPlayer,
-        opponentScore,
         userId: isSecondPlayer ? challenge.secondPlayerUserId : challenge.firstPlayerUserId,
       });
     } catch {
@@ -496,34 +492,30 @@ export class ChallengeRoom {
       await this.ctx.storage.delete(SEALED_KEY);
       return;
     }
-    if (outcome === 'APPLIED') {
-      const statsUserId = isSecondPlayer ? challenge.secondPlayerUserId : challenge.firstPlayerUserId;
-      await recordQuestionAnswers(this.env.QUESTIONS_DB, sealed.flatMap((answer, index) => {
-        const questionId = state.questions[index]?.id;
-        return questionId === undefined ? [] : [{
-          contextId: state.challengeId,
-          contextKind: 'CHALLENGE' as const,
-          correct: answer.correct,
-          questionId,
-          remainingMs: answer.remainingMs,
-          roundNumber: index + 1,
-          selectedOption: answer.selectedOption,
-          userId: statsUserId,
-        }];
-      }));
-      // Cada metade selada de verdade já é uma partida válida para quem a jogou,
-      // mesmo que o adversário ainda não tenha selado a dele.
-      await recordValidPlay(this.env.CORE_DB, {
-        correctAnswers: sealed.filter((answer) => answer.correct).length,
-        nowMs: Date.now(),
-        themeId: challenge.themeId,
-        totalAnswers: sealed.length,
-        userId: statsUserId,
-      });
+
+    // Estatística, missão/streak e XP são retomados aqui em TODO retorno
+    // COMPLETED/WAITING_FOR_SECOND — fresco (`APPLIED`) ou retry
+    // (`ALREADY_APPLIED`) — porque cada um tem seu próprio ledger por
+    // challenge+usuário e nunca duplica. Uma falha aqui nunca desfaz nem
+    // atrasa o resultado já persistido por `sealHalf`: só agenda um novo
+    // alarme para tentar de novo, sem bloquear o anúncio abaixo.
+    const statsUserId = isSecondPlayer ? challenge.secondPlayerUserId : challenge.firstPlayerUserId;
+    let effectsApplied = true;
+    try {
+      await challenges.recordHalfEffects(state.challengeId, statsUserId, this.env.QUESTIONS_DB);
+      await challenges.applyCompletionXp(state.challengeId);
+    } catch {
+      effectsApplied = false;
+      console.error(JSON.stringify({ code: 'CHALLENGE_COMPLETION_EFFECTS_FAILED', challengeId: state.challengeId }));
     }
+
     const finalized = state.phase === 'FINALIZING' ? markAsyncHalfFinalized(state) : state;
     await this.ctx.storage.put(STATE_KEY, finalized);
-    await this.ctx.storage.delete(SEALED_KEY);
+    if (effectsApplied) {
+      await this.ctx.storage.delete(SEALED_KEY);
+    } else {
+      await this.ctx.storage.setAlarm(Date.now() + FINALIZATION_RETRY_MS);
+    }
     // A lista de desafios dos dois lados converge sem polling e sem reload.
     await notifyChallengeUpdated(this.env, state.challengeId, [
       challenge.firstPlayerUserId,

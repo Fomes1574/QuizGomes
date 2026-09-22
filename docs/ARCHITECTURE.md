@@ -2,8 +2,11 @@
 
 > Regras vigentes: EASY/MEDIUM/HARD = 5/8/12; 10 s por pergunta; seleção uniforme
 > sem histórico entre partidas e sem repetição somente dentro da partida. DIRECT é
-> Casual e expira em 30 s; ASYNC é Casual, não expira e pode coexistir com um DIRECT
-> vivo da mesma dupla. Reconexão abaixo de 7 s retoma; a partir de 7 s anula.
+> Casual e expira em 30 s — só o convite `PENDING_DIRECT` ainda não aceito, nunca
+> a sala já reservada; ASYNC é Casual, nunca expira (uma metade `MISSING`, ainda
+> não aberta, é normal e pode durar indefinidamente) e pode coexistir com um DIRECT
+> vivo da mesma dupla. A graça de 7 s do M8 é exclusiva de reconexão de uma partida
+> ou metade JÁ iniciada; não é TTL de criação, aceite nem abertura.
 
 ## Visão geral
 
@@ -107,10 +110,11 @@ dificuldade e modalidade; desconexão, abandono iniciado e demais voids não mud
 - `active_match_players.user_id` exclusivo impede o mesmo usuário em duas partidas, inclusive as vindas de desafio entre amigos.
 - Índice único parcial em `challenges(pair_low_id, pair_high_id)` sobre os estados vivos impede dois desafios ativos na mesma dupla; a primeira reserva persistida vence a corrida e define o primeiro jogador.
 - Toda transição de desafio usa CAS na revisão lida, então retry, double tap e multi-aba não reaplicam nada.
-- `ChallengeRoom` hospeda uma metade do desafio assíncrono. Existe porque a metade solo exige detecção autoritativa de desconexão com a graça de 7 s do M8, que HTTP puro não observa e que o `MatchRoom` — máquina de dois assentos e FROZEN — só aceitaria forjando um segundo assento. Scoring, timer, graça e resolução vêm do domínio compartilhado, não são recriados.
+- `ChallengeRoom` hospeda uma metade do desafio assíncrono. Existe porque a metade JÁ ABERTA exige detecção autoritativa de desconexão com a graça de 7 s do M8, que HTTP puro não observa e que o `MatchRoom` — máquina de dois assentos e FROZEN — só aceitaria forjando um segundo assento. Essa mesma graça nunca serve de prazo para abrir a metade: enquanto `MISSING` (nunca aberta), o `ChallengeRoom` pode ficar assim indefinidamente sem ser anulado. Scoring, timer, graça e resolução vêm do domínio compartilhado, não são recriados.
 - O conjunto do desafio assíncrono é selado uma única vez em `challenge_questions` e serve os dois jogadores; a metade do primeiro só é revelada ao segundo rodada a rodada, depois que ele resolve cada uma.
 - `matches.result_version` e chave única no ledger impedem resultado duplicado.
-- Finalização usa um batch transacional: trava estado final e grava ledger, ranking, XP, respostas, histórico do pool e liberação dos locks; retries observam o resultado já aplicado.
+- Finalização de partida (`MatchRoom`) usa um batch transacional: trava estado final e grava ledger, ranking, XP, respostas, histórico do pool e liberação dos locks; retries observam o resultado já aplicado.
+- Conclusão de desafio DIRECT/ASYNC (`ChallengeRoom`) separa a transição `COMPLETED` (CAS atômico em `sealHalf`) dos efeitos pós-conclusão: `challenge_xp_ledger` e `challenge_progression_ledger` são gatilhos por challenge+usuário, os mesmos aplicados por `result_version`/`question_statistics_ledger`. Uma falha entre a transição e os efeitos nunca perde XP, missão ou streak — o alarme do DO tenta de novo a qualquer momento, recalculando a partir de `challenge_answers` (nunca apagado para um desafio `COMPLETED`), e cada tentativa repetida é um no-op seguro.
 - Requests mutáveis aceitam `Idempotency-Key` quando repetição de rede é provável.
 - Slots do pool são alterados por swap com o último slot na mesma transação.
 - Estado usuário+pool usa versão otimista para evitar perda concorrente.

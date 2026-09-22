@@ -204,6 +204,16 @@ describe('cancelamento, recusa e fim de relacionamento', () => {
     expect(() => transitionChallenge(pending, { type: 'EXPIRE' }, NOW + 29_999)).toThrow(/ainda está válido/);
   });
 
+  it('DIRECT já aceito (PREPARING) nunca é cancelado, recusado ou encerrado por relacionamento', () => {
+    const accepted = challenge({ kind: 'DIRECT', status: 'PREPARING' });
+    expect(() => transitionChallenge(accepted, { actorUserId: 'user-a', type: 'CANCEL' }, NOW))
+      .toThrow(/já começou/);
+    expect(() => transitionChallenge(accepted, { actorUserId: 'user-b', type: 'DECLINE' }, NOW))
+      .toThrow(/já começou/);
+    expect(() => transitionChallenge(accepted, { type: 'RELATIONSHIP_ENDED' }, NOW))
+      .toThrow(/já começou/);
+  });
+
   it('nenhuma ação reabre um desafio já encerrado', () => {
     for (const status of ['CANCELLED', 'DECLINED', 'EXPIRED', 'VOID', 'COMPLETED'] as const) {
       expect(() => transitionChallenge(challenge({ status }), { actorUserId: 'user-a', type: 'CANCEL' }, NOW))

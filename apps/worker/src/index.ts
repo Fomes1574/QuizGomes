@@ -993,14 +993,11 @@ export async function reconcileChallengeLifecycle(
   await Promise.all((await challenges.liveLifecycleForUser(userId)).map(async (challenge) => {
     let changed = false;
     if (challenge.kind === 'DIRECT') {
-      if (challenge.matchId === null) {
-        if (nowMs - challenge.updatedAtMs >= CHALLENGE_INITIAL_GRACE_MS) {
-          changed = await challenges.voidOrphanedLive(
-            challenge,
-            nowMs - CHALLENGE_INITIAL_GRACE_MS,
-          );
-        }
-      } else {
+      // matchId === null é sempre PENDING_DIRECT — o convite ainda não foi
+      // aceito. A graça de 7 s é só para reconexão de sala já iniciada; um
+      // convite pendente só expira pelos 30 s de `expireStaleDirect` acima,
+      // nunca aqui. Sem chamada ao DO nesse caso.
+      if (challenge.matchId !== null) {
         let phase: string | null = null;
         try {
           const response = await env.MATCH_ROOM
@@ -1032,22 +1029,20 @@ export async function reconcileChallengeLifecycle(
         if (!changed) changed = await challenges.reconcileDirectMatch(challenge);
       }
     } else if (challenge.status === 'FIRST_PLAYER_ACTIVE' || challenge.status === 'SECOND_PLAYER_ACTIVE') {
+      // ASYNC nunca expira. `MISSING` só significa que este jogador ainda não
+      // abriu a própria metade — normal e pode durar indefinidamente; nunca é
+      // um sinal de abandono. A graça de 7 s é exclusiva de reconexão de uma
+      // metade JÁ aberta (o próprio ChallengeRoom aplica isso via seu deadline
+      // interno quando o socket cai); ela nunca serve de TTL de criação/aceite.
+      // Chamar o DO aqui só recupera uma metade travada em FINALIZING/VOID —
+      // uma reserva sem sala nunca é anulada por isto.
       const seat = challenge.status === 'FIRST_PLAYER_ACTIVE' ? 'FIRST' : 'SECOND';
-      let phase: string | null = null;
       try {
-        const response = await env.CHALLENGE_ROOM
+        await env.CHALLENGE_ROOM
           .get(env.CHALLENGE_ROOM.idFromName(`${challenge.id}:${seat}`))
           .fetch('https://challenge.internal/reconcile', { method: 'POST' });
-        if (response.ok) phase = (await response.json<{ phase?: string }>()).phase ?? null;
       } catch {
-        // A próxima operação real tenta de novo; o fallback abaixo só toca em
-        // reserva velha cujo DO não existe, nunca em uma metade reconectável.
-      }
-      if (phase === 'MISSING' && nowMs - challenge.updatedAtMs >= CHALLENGE_INITIAL_GRACE_MS) {
-        changed = await challenges.voidOrphanedLive(
-          challenge,
-          nowMs - CHALLENGE_INITIAL_GRACE_MS,
-        );
+        // A próxima operação real tenta de novo.
       }
     }
     if (changed) {

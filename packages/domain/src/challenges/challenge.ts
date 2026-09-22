@@ -187,6 +187,18 @@ export function secondPlayerStarted(status: ChallengeStatus): boolean {
 }
 
 /**
+ * O convite DIRECT já foi aceito (CAS PENDING_DIRECT → PREPARING com sala
+ * reservada) ou o segundo jogador já começou? A partir daqui cancelar, recusar
+ * ou desfazer relacionamento nunca mais encerram a tentativa — o aceite já
+ * venceu a corrida, e uma ação concorrente só pode ter lido o estado antes ou
+ * depois do CAS, nunca "durante": ou ela perde por revisão desatualizada, ou
+ * ela lê PREPARING/ACTIVE/SECOND_PLAYER_ACTIVE e é barrada aqui.
+ */
+function challengeCommitted(status: ChallengeStatus): boolean {
+  return status === 'PREPARING' || secondPlayerStarted(status);
+}
+
+/**
  * Transição autoritativa e determinística de cancelamento, recusa, expiração e fim
  * de relacionamento. O cancelamento tem precedência enquanto o início definitivo do
  * segundo jogador ainda não foi consumado.
@@ -208,8 +220,8 @@ export function transitionChallenge(
   }
 
   if (action.type === 'RELATIONSHIP_ENDED') {
-    // Partida já iniciada nunca é cancelada por desfazer amizade ou bloqueio.
-    if (secondPlayerStarted(challenge.status) || challenge.status === 'PREPARING') {
+    // Partida já iniciada (ou já aceita) nunca é cancelada por desfazer amizade ou bloqueio.
+    if (challengeCommitted(challenge.status)) {
       throw new ChallengeRuleError('CHALLENGE_ALREADY_STARTED', 'A partida já começou.');
     }
     return { cleanupPayload: true, status: 'CANCELLED' };
@@ -217,7 +229,7 @@ export function transitionChallenge(
 
   assertActor(challenge, action.actorUserId);
 
-  if (secondPlayerStarted(challenge.status)) {
+  if (challengeCommitted(challenge.status)) {
     throw new ChallengeRuleError('CHALLENGE_ALREADY_STARTED', 'A partida já começou.');
   }
 
