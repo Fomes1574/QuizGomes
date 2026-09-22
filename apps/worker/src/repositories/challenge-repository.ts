@@ -1,4 +1,5 @@
 import {
+  DAILY_MISSION_DEFINITIONS,
   challengePair,
   decideChallengeCreation,
   directChallengeExpiresAt,
@@ -6,6 +7,7 @@ import {
   questionsForDifficulty,
   transitionChallenge,
   xpAward,
+  utcDayKey,
   ChallengeRuleError,
   LIVE_CHALLENGE_STATUSES,
   TOTAL_XP_TO_MAX_LEVEL,
@@ -21,8 +23,8 @@ import {
 import { ApiError } from '../http/api-error.js';
 import { QuestionRepository } from './question-repository.js';
 import { QuestionSelectionService } from '../services/question-selection-service.js';
-import { recordValidPlay } from '../services/progression-service.js';
 import { recordQuestionAnswers } from '../services/question-statistics-service.js';
+import { StreakRepository } from './streak-repository.js';
 import { customAvatarUrl } from '../storage/custom-avatar.js';
 
 const LIVE_STATUS_LIST = LIVE_CHALLENGE_STATUSES.map((status) => `'${status}'`).join(', ');
@@ -590,7 +592,7 @@ export class ChallengeRepository {
     const sealed = await this.sealedHalf(challengeId, userId);
     if (sealed.length === 0) return;
     const questions = await this.questionSet(challengeId);
-    await recordQuestionAnswers(questionsDb, sealed.flatMap((answer, index) => {
+    const statisticsRecorded = await recordQuestionAnswers(questionsDb, sealed.flatMap((answer, index) => {
       const questionId = questions[index]?.id;
       return questionId === undefined ? [] : [{
         contextId: challengeId,
@@ -603,17 +605,53 @@ export class ChallengeRepository {
         userId,
       }];
     }));
-    const ledgerInsert = await this.db.prepare(
-      'INSERT OR IGNORE INTO challenge_progression_ledger (challenge_id, user_id) VALUES (?1, ?2)',
+    if (!statisticsRecorded) throw new Error('Estatísticas de pergunta pendentes.');
+
+    const now = this.clock();
+    const dayKey = utcDayKey(now.getTime());
+    await this.db.prepare(
+      `INSERT OR IGNORE INTO challenge_progression_ledger (challenge_id, user_id, applied)
+       VALUES (?1, ?2, 0)`,
     ).bind(challengeId, userId).run();
-    if ((ledgerInsert.meta.changes ?? 0) !== 1) return;
-    await recordValidPlay(this.db, {
-      correctAnswers: sealed.filter((answer) => answer.correct).length,
-      nowMs: this.clock().getTime(),
-      themeId: challenge.themeId,
-      totalAnswers: sealed.length,
-      userId,
-    });
+    const pending = await this.db.prepare(
+      'SELECT applied FROM challenge_progression_ledger WHERE challenge_id = ?1 AND user_id = ?2',
+    ).bind(challengeId, userId).first<{ applied: number }>();
+    if (pending?.applied !== 0) return;
+
+    // Streak é idempotente pelo dia; se a queda ocorrer antes do batch das
+    // missões, a retomada preserva o mesmo dia em vez de contar duas vezes.
+    await new StreakRepository(this.db).advance(userId, challenge.themeId, dayKey);
+    const correctAnswers = sealed.filter((answer) => answer.correct).length;
+    const increments: Record<string, number> = {
+      ANSWER_QUESTIONS: sealed.length,
+      CORRECT_ANSWERS: correctAnswers,
+      PLAY_MATCH: 1,
+    };
+    const nowIso = now.toISOString();
+    const statements: D1PreparedStatement[] = [
+      ...DAILY_MISSION_DEFINITIONS.map((definition) => this.db.prepare(
+        `INSERT OR IGNORE INTO user_daily_missions (user_id, day_key, mission_type, target)
+         VALUES (?1, ?2, ?3, ?4)`,
+      ).bind(userId, dayKey, definition.type, definition.target)),
+      ...DAILY_MISSION_DEFINITIONS.map((definition) => this.db.prepare(
+        `UPDATE user_daily_missions
+            SET progress = MIN(target, progress + ?1),
+                completed_at = CASE
+                  WHEN completed_at IS NULL AND MIN(target, progress + ?1) >= target THEN ?2
+                  ELSE completed_at
+                END
+          WHERE user_id = ?3 AND day_key = ?4 AND mission_type = ?5
+            AND EXISTS (
+              SELECT 1 FROM challenge_progression_ledger
+               WHERE challenge_id = ?6 AND user_id = ?3 AND applied = 0
+            )`,
+      ).bind(increments[definition.type] ?? 0, nowIso, userId, dayKey, definition.type, challengeId)),
+      this.db.prepare(
+        `UPDATE challenge_progression_ledger SET applied = 1, applied_at = ?1
+          WHERE challenge_id = ?2 AND user_id = ?3 AND applied = 0`,
+      ).bind(nowIso, challengeId, userId),
+    ];
+    await this.db.batch(statements);
   }
 
   /**
@@ -646,13 +684,16 @@ export class ChallengeRepository {
     // Empate paga zero aos dois: sem linha de ledger nenhuma, e sem batch vazio.
     const payable = awards.filter(([, xp]) => xp > 0);
     if (payable.length === 0) return;
-    const ledgerResults = await this.db.batch(payable.map(([userId, xp]) => this.db.prepare(
+    await this.db.batch(payable.map(([userId, xp]) => this.db.prepare(
       'INSERT OR IGNORE INTO challenge_xp_ledger (challenge_id, user_id, xp_delta) VALUES (?1, ?2, ?3)',
     ).bind(challengeId, userId, xp)));
-    const fresh = payable.filter((_pair, index) => (ledgerResults[index]?.meta.changes ?? 0) === 1);
-    if (fresh.length === 0) return;
+    const pending = await this.db.prepare(
+      `SELECT user_id, xp_delta FROM challenge_xp_ledger
+        WHERE challenge_id = ?1 AND applied = 0`,
+    ).bind(challengeId).all<{ user_id: string; xp_delta: number }>();
+    if (pending.results.length === 0) return;
     const now = this.clock().toISOString();
-    await this.db.batch(fresh.flatMap(([userId, xp]) => [
+    await this.db.batch(pending.results.flatMap(({ user_id: userId, xp_delta: xp }) => [
       this.db.prepare(
         `UPDATE user_profiles
             SET total_xp = MIN(?1, total_xp + ?2), updated_at = CURRENT_TIMESTAMP

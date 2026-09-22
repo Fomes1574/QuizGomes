@@ -637,6 +637,13 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
       'SELECT SUM(total_xp) AS total FROM user_profiles WHERE user_id IN (?1, ?2)',
     ).bind(first.id, second.id).first<{ total: number }>()).toEqual({ total: 0 });
 
+    // Simula queda depois de criar o recibo de XP do vencedor e antes de o
+    // batch que atualiza user_profiles/`applied` concluir.
+    await env.CORE_DB.prepare(
+      `INSERT INTO challenge_xp_ledger (challenge_id, user_id, xp_delta, applied)
+       VALUES (?1, ?2, 10, 0)`,
+    ).bind(created.challengeId, first.id).run();
+
     // Retry (o alarme do DO tentando de novo): os efeitos agora rodam.
     await repository.recordHalfEffects(created.challengeId, first.id, env.QUESTIONS_DB);
     await repository.recordHalfEffects(created.challengeId, second.id, env.QUESTIONS_DB);

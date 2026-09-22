@@ -1301,14 +1301,21 @@ vazado para estados que nunca deveriam expirar por ela.
   = `PREPARING` OU `secondPlayerStarted`), usado nos três casos. Uma corrida
   ANTES do CAS (cancelamento vence primeiro) já era resolvida corretamente
   pelo CAS por revisão — não precisou de mudança.
+- **Aceite DIRECT duplicado durante inicialização.** Dois aceites/retries do
+  mesmo `roomId` podiam atravessar o primeiro `await` de `MatchRoom.initialize`
+  antes de a sala ser gravada no storage; o segundo encontrava o lock D1 do
+  primeiro e recebia `PLAYER_BUSY`. Corrigido com uma única promessa de
+  inicialização compartilhada por instância: ambas as requisições convergem
+  para a mesma sala, sem nova reserva, polling ou nova regra de jogo.
 - **XP/estatística/progressão não resumíveis.** `sealHalf` gravava
   `COMPLETED` e pagava XP na mesma chamada; uma falha entre os dois passos
   perdia XP para sempre, sem nenhum jeito de tentar de novo. Migration
   `0013_challenge_completion_ledger.sql` cria `challenge_xp_ledger` e
   `challenge_progression_ledger` — mesmo desenho de `result_ledger`/
-  `question_statistics_ledger` já usados pelo `MatchRoom`: um `INSERT OR
-  IGNORE` por challenge+usuário é o gatilho, recalculado a qualquer momento a
-  partir de `challenge_answers` (nunca apagado para um desafio `COMPLETED`).
+  `question_statistics_ledger` já usados pelo `MatchRoom`. A corretiva
+  forward-only `0014` Core e `0006` Questions acrescenta o marcador `applied`:
+  entradas pendentes são retomadas e o incremento/recibo final é um batch
+  atômico, sem pagar ou progredir duas vezes.
   `sealHalf` agora só faz a transição; `recordHalfEffects`/
   `applyCompletionXp`, novos métodos puros de repositório, aplicam
   estatística/missão/streak/XP e são chamados de novo a cada `trySeal` —
@@ -1340,8 +1347,8 @@ assíncrono e entrega realtime de `CHALLENGE_UPDATED`. Validação completa:
 `lint`, `typecheck` (domain+web+worker), `test:unit` (333 testes),
 `test:worker` (173 testes, incluindo 3 execuções consecutivas do arquivo de
 desafios para descartar flakiness), `test:migrations` (banco vazio e upgrade
-completo Core `0003→…→0013` e Questions `0002→…→0005`, incluindo o novo
-upgrade `0012→0013` e rollback), `build` (domain + web + worker) e `npm audit
+completo Core `0003→…→0014` e Questions `0002→…→0006`, incluindo os upgrades
+`0012→0013→0014` e `0005→0006`, além de rollback), `build` (domain + web + worker) e `npm audit
 --omit=dev` sem vulnerabilidades. Scan manual do diff sem segredos. Commit
 único publicado por fast-forward direto em `main`, sem PR. Nenhum smoke
 físico foi executado nem declarado.

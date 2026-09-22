@@ -259,8 +259,8 @@ function assertFinalSchema(scenario) {
 
   const appliedMigrations = query(scenario, 'SELECT name FROM d1_migrations ORDER BY id');
   assert(
-    appliedMigrations.at(-1)?.name === '0013_challenge_completion_ledger.sql',
-    `${scenario.name}: 0013 do ledger de conclusão de desafio não foi registrada como última migration`,
+    appliedMigrations.at(-1)?.name === '0014_challenge_progression_retry.sql',
+    `${scenario.name}: 0014 da retomada de progressão não foi registrada como última migration`,
   );
   const upgradedTheme = query(scenario, `
     SELECT artwork_kind, artwork_icon_key, artwork_version, active_question_count
@@ -874,7 +874,7 @@ async function assertRollback(scenario) {
 }
 
 /** @param {MigrationScenario} scenario @param {string} [expectedLastMigration] */
-function assertFinalQuestionDataset(scenario, expectedLastMigration = '0005_question_statistics_ledger.sql') {
+function assertFinalQuestionDataset(scenario, expectedLastMigration = '0006_question_statistics_retry.sql') {
   const appliedMigrations = query(scenario, 'SELECT name FROM d1_migrations ORDER BY id');
   assert(
     appliedMigrations.at(-1)?.name === expectedLastMigration,
@@ -968,6 +968,10 @@ try {
     migrationNames.includes('0013_challenge_completion_ledger.sql'),
     'Migration Core 0013 do ledger de conclusão de desafio ausente',
   );
+  assert(
+    migrationNames.includes('0014_challenge_progression_retry.sql'),
+    'Migration Core 0014 de retomada da progressão ausente',
+  );
   assert(questionMigrationNames.includes('0003_expand_synthetic_smoke_test.sql'), 'Migration Questions 0003 ausente');
   assert(
     questionMigrationNames.includes('0004_question_editorial_versioning.sql'),
@@ -976,6 +980,10 @@ try {
   assert(
     questionMigrationNames.includes('0005_question_statistics_ledger.sql'),
     'Migration Questions 0005 do ledger de estatísticas ausente',
+  );
+  assert(
+    questionMigrationNames.includes('0006_question_statistics_retry.sql'),
+    'Migration Questions 0006 de retomada das estatísticas ausente',
   );
 
   await assertRemoteParser(coreSourceMigrationsDirectory, migrationNames);
@@ -1007,6 +1015,7 @@ try {
       '0011_question_report_views.sql',
       '0012_editorial_missions_streak.sql',
       '0013_challenge_completion_ledger.sql',
+      '0014_challenge_progression_retry.sql',
     ].includes(name)),
   );
   console.log('Validando upgrade D1 exato de 0003 para 0004...');
@@ -1111,6 +1120,12 @@ try {
     join(upgradeDatabase.migrationsDirectory, '0013_challenge_completion_ledger.sql'),
   );
   applyMigrations(upgradeDatabase);
+  console.log('Validando upgrade D1 atual exato de 0013 para 0014 retomada de progressão...');
+  await copyFile(
+    join(coreSourceMigrationsDirectory, '0014_challenge_progression_retry.sql'),
+    join(upgradeDatabase.migrationsDirectory, '0014_challenge_progression_retry.sql'),
+  );
+  applyMigrations(upgradeDatabase);
   assertFinalSchema(upgradeDatabase);
   assertChallengeCompletionLedgerInvariants(upgradeDatabase);
   console.log('Validando rollback transacional de migration com erro...');
@@ -1134,6 +1149,7 @@ try {
       '0003_expand_synthetic_smoke_test.sql',
       '0004_question_editorial_versioning.sql',
       '0005_question_statistics_ledger.sql',
+      '0006_question_statistics_retry.sql',
     ].includes(name)),
     {
       binding: 'QUESTIONS_DB',
@@ -1178,10 +1194,17 @@ try {
     join(upgradeQuestions.migrationsDirectory, '0005_question_statistics_ledger.sql'),
   );
   applyMigrations(upgradeQuestions);
-  assertFinalQuestionDataset(upgradeQuestions);
+  assertFinalQuestionDataset(upgradeQuestions, '0005_question_statistics_ledger.sql');
+  console.log('Validando upgrade Questions D1 exato de 0005 para 0006 retomada de estatísticas...');
+  await copyFile(
+    join(questionSourceMigrationsDirectory, '0006_question_statistics_retry.sql'),
+    join(upgradeQuestions.migrationsDirectory, '0006_question_statistics_retry.sql'),
+  );
+  applyMigrations(upgradeQuestions);
+  assertFinalQuestionDataset(upgradeQuestions, '0006_question_statistics_retry.sql');
   assertQuestionStatisticsInvariants(upgradeQuestions);
 
-  console.log('Migrations D1 aprovadas: parser Wrangler, bancos vazios, upgrades Core 0003→0004→0005→0006→0007→0008→0009→0010→0011→0012→0013 e Questions 0002→0003→0004→0005, invariantes sociais, de desafio, de ledger de conclusão, de denúncia e editoriais, rollback e schemas finais.');
+  console.log('Migrations D1 aprovadas: parser Wrangler, bancos vazios, upgrades Core 0003→0004→0005→0006→0007→0008→0009→0010→0011→0012→0013→0014 e Questions 0002→0003→0004→0005→0006, invariantes sociais, de desafio, de ledger de conclusão, de denúncia e editoriais, rollback e schemas finais.');
 } finally {
   await rm(temporaryRoot, { force: true, recursive: true });
 }

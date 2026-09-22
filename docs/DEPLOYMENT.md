@@ -132,8 +132,8 @@ npm run deploy:cloudflare -w @quiz-gomes/worker
 
 O primeiro comando aplica somente migrations pendentes:
 
-- `QUESTIONS_DB`: `0001_questions.sql` até `0005_question_statistics_ledger.sql`;
-- `CORE_DB`: `0001_core.sql` até `0013_challenge_completion_ledger.sql`.
+- `QUESTIONS_DB`: `0001_questions.sql` até `0006_question_statistics_retry.sql`;
+- `CORE_DB`: `0001_core.sql` até `0014_challenge_progression_retry.sql`.
 
 Questions é aplicado primeiro para que o tema temporário só fique visível depois que seu pool estiver pronto. Wrangler registra o histórico em `d1_migrations`; retries não reaplicam versões concluídas. Se uma migration falhar, o D1 reverte integralmente aquela migration, preserva as anteriores e o deploy não começa. Arquivos já aplicados são imutáveis e qualquer correção posterior é forward-only. Uma migration que falhou e não foi registrada, como a primeira tentativa remota da `0004_theme_artwork.sql`, continua pendente e deve ser corrigida no próprio arquivo antes do retry — não recebe uma compensação vazia ou manual.
 
@@ -141,8 +141,8 @@ Questions é aplicado primeiro para que o tema temporário só fique visível de
 
 - lê e passa todas as migrations pelo splitter SQL exportado pelo Wrangler, incluindo o statement de tracking;
 - exige LF e bloqueia `CREATE TRIGGER`, pois compound statements continuam sujeitos a diferenças entre o splitter local e o parser multi-statement do endpoint D1 `/query` usado por migrations remotas;
-- aplica Core `0001–0013` e Questions `0001–0005` em bancos vazios e isolados;
-- prova os upgrades Core `0003→0004→0005→0006→0007→0008→0009→0010→0011→0012→0013` e Questions `0002→0003→0004→0005`, incluindo a passagem exata do pool sintético de 30 para 250 slots;
+- aplica Core `0001–0014` e Questions `0001–0006` em bancos vazios e isolados;
+- prova os upgrades Core `0003→0004→0005→0006→0007→0008→0009→0010→0011→0012→0013→0014` e Questions `0002→0003→0004→0005→0006`, incluindo a passagem exata do pool sintético de 30 para 250 slots;
 - valida pedidos cruzados, constraints direcionais de recusas/bloqueios e instalações FCM no schema social;
 - inspeciona colunas, índice e FK composta, e tenta estados inválidos de metadata/BLOB;
 - injeta uma migration temporária que falha depois de criar/escrever e comprova rollback de schema e de `d1_migrations`.

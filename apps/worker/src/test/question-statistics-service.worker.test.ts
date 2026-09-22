@@ -80,6 +80,29 @@ describe('M11 — registro idempotente de estatísticas de pergunta', () => {
     expect(ledgerCount?.total).toBe(1);
   });
 
+  it('retoma um recibo pendente sem duplicar o agregado', async () => {
+    const questionId = `stats-pending-${crypto.randomUUID()}`;
+    await seedQuestion(questionId);
+    const event: QuestionAnswerEvent = {
+      contextId: 'match-pending', contextKind: 'MATCH', correct: true, questionId,
+      remainingMs: 5_000, roundNumber: 1, selectedOption: 1, userId: 'user-a',
+    };
+    // Simula uma queda depois de criar o recibo e antes do batch agregado.
+    await env.QUESTIONS_DB.prepare(
+      `INSERT INTO question_statistics_ledger
+        (context_kind, context_id, round_number, user_id, question_id, applied)
+       VALUES (?1, ?2, ?3, ?4, ?5, 0)`,
+    ).bind(event.contextKind, event.contextId, event.roundNumber, event.userId, event.questionId).run();
+
+    await expect(recordQuestionAnswers(env.QUESTIONS_DB, [event])).resolves.toBe(true);
+    await expect(recordQuestionAnswers(env.QUESTIONS_DB, [event])).resolves.toBe(true);
+    expect(await statsOf(questionId)).toMatchObject({ answer_count: 1, use_count: 1 });
+    expect(await env.QUESTIONS_DB.prepare(
+      `SELECT applied FROM question_statistics_ledger
+        WHERE context_kind = ?1 AND context_id = ?2 AND round_number = ?3 AND user_id = ?4`,
+    ).bind(event.contextKind, event.contextId, event.roundNumber, event.userId).first()).toEqual({ applied: 1 });
+  });
+
   it('o mesmo usuário em rodadas diferentes, ou dois usuários na mesma rodada, contam separadamente', async () => {
     const questionId = `stats-rounds-${crypto.randomUUID()}`;
     await seedQuestion(questionId);
@@ -91,14 +114,14 @@ describe('M11 — registro idempotente de estatísticas de pergunta', () => {
     expect(await statsOf(questionId)).toMatchObject({ answer_count: 3, use_count: 3 });
   });
 
-  it('nunca lança: pool/tabela ausente é engolida como falha best-effort', async () => {
+  it('reporta false sem lançar quando a gravação best-effort falha', async () => {
     await expect(recordQuestionAnswers(env.QUESTIONS_DB, [{
       contextId: 'match-5', contextKind: 'MATCH', correct: true, questionId: 'pergunta-inexistente',
       remainingMs: 1_000, roundNumber: 1, selectedOption: 0, userId: 'user-a',
-    }])).resolves.toBeUndefined();
+    }])).resolves.toBe(false);
   });
 
   it('lista vazia é no-op sem tocar o banco', async () => {
-    await expect(recordQuestionAnswers(env.QUESTIONS_DB, [])).resolves.toBeUndefined();
+    await expect(recordQuestionAnswers(env.QUESTIONS_DB, [])).resolves.toBe(true);
   });
 });

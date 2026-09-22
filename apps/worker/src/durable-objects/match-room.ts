@@ -106,6 +106,12 @@ function parseClientMessage(message: string): ClientMessage | null {
 }
 
 export class MatchRoom {
+  // A primeira inicialização atravessa D1 e storage; dois aceites/retries para
+  // o MESMO roomId podem chegar nesse await antes de `ROOM_KEY` existir. Sem
+  // esta promessa compartilhada, o segundo request vê state nulo, bate no lock
+  // de jogador do primeiro e devolve PLAYER_BUSY apesar de ser a mesma sala.
+  private initializationInFlight: Promise<LiveMatchState> | null = null;
+
   constructor(
     private readonly ctx: DurableObjectState,
     private readonly env: Env,
@@ -227,30 +233,42 @@ export class MatchRoom {
       !Number.isFinite(input.createdAtMs)) {
       return Response.json({ error: 'invalid_initialization' }, { status: 400 });
     }
+    if (this.initializationInFlight !== null) {
+      try {
+        return this.initializationResponse(await this.initializationInFlight);
+      } catch (error) {
+        return this.initializationFailure(input.matchId, error);
+      }
+    }
     const repository = this.repository();
-    let state: LiveMatchState;
+    const initializeOnce = async (): Promise<LiveMatchState> => {
+      const state = await repository.initialize(input);
+      try {
+        await this.save(state);
+        await this.syncAlarm(state);
+        return state;
+      } catch (initializationError) {
+        const failed = transitionLiveMatch(state, { type: 'SYSTEM_FAILURE' }, Date.now()).state;
+        try {
+          await this.persistFinalized(failed, await repository.finalize(failed), false);
+        } catch (cleanupError) {
+          throw new AggregateError(
+            [initializationError, cleanupError],
+            'A sala falhou ao persistir e ao liberar sua inicialização.',
+            { cause: cleanupError },
+          );
+        }
+        throw initializationError;
+      }
+    };
+    this.initializationInFlight = initializeOnce();
     try {
-      state = await repository.initialize(input);
+      return this.initializationResponse(await this.initializationInFlight, 201);
     } catch (error) {
       return this.initializationFailure(input.matchId, error);
+    } finally {
+      this.initializationInFlight = null;
     }
-    try {
-      await this.save(state);
-      await this.syncAlarm(state);
-    } catch (initializationError) {
-      const failed = transitionLiveMatch(state, { type: 'SYSTEM_FAILURE' }, Date.now()).state;
-      try {
-        await this.persistFinalized(failed, await repository.finalize(failed), false);
-      } catch (cleanupError) {
-        throw new AggregateError(
-          [initializationError, cleanupError],
-          'A sala falhou ao persistir e ao liberar sua inicialização.',
-          { cause: cleanupError },
-        );
-      }
-      return this.initializationFailure(input.matchId, initializationError);
-    }
-    return this.initializationResponse(state, 201);
   }
 
   private initializationFailure(matchId: string, error: unknown): Response {

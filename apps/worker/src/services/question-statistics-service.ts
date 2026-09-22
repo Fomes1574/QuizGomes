@@ -26,19 +26,19 @@ export interface QuestionAnswerEvent {
 export async function recordQuestionAnswers(
   questionsDb: D1Database,
   events: readonly QuestionAnswerEvent[],
-): Promise<void> {
-  if (events.length === 0) return;
+): Promise<boolean> {
+  if (events.length === 0) return true;
   try {
-    const ledgerResults = await questionsDb.batch(events.map((event) => questionsDb.prepare(
+    await questionsDb.batch(events.map((event) => questionsDb.prepare(
       `INSERT OR IGNORE INTO question_statistics_ledger
-        (context_kind, context_id, round_number, user_id, question_id)
-       VALUES (?1, ?2, ?3, ?4, ?5)`,
+        (context_kind, context_id, round_number, user_id, question_id, applied)
+       VALUES (?1, ?2, ?3, ?4, ?5, 0)`,
     ).bind(event.contextKind, event.contextId, event.roundNumber, event.userId, event.questionId)));
-    const fresh = events.filter((_event, index) => (ledgerResults[index]?.meta.changes ?? 0) === 1);
-    if (fresh.length === 0) return;
 
+    // Todas as mutações do evento pendente e seu recibo final vivem no mesmo
+    // batch: retry após falha retoma `applied = 0`; retry após sucesso é no-op.
     const statements: D1PreparedStatement[] = [];
-    for (const event of fresh) {
+    for (const event of events) {
       statements.push(
         questionsDb.prepare('INSERT OR IGNORE INTO question_statistics (question_id) VALUES (?1)')
           .bind(event.questionId),
@@ -54,7 +54,12 @@ export async function recordQuestionAnswers(
               option_d_count = option_d_count + CASE WHEN ?4 = 3 THEN 1 ELSE 0 END,
               total_response_ms = total_response_ms + ?5,
               updated_at = CURRENT_TIMESTAMP
-            WHERE question_id = ?6`,
+            WHERE question_id = ?6
+              AND EXISTS (
+                SELECT 1 FROM question_statistics_ledger
+                 WHERE context_kind = ?7 AND context_id = ?8 AND round_number = ?9
+                   AND user_id = ?10 AND question_id = ?6 AND applied = 0
+              )`,
         ).bind(
           event.selectedOption === null ? 0 : 1,
           event.correct ? 1 : 0,
@@ -62,11 +67,22 @@ export async function recordQuestionAnswers(
           event.selectedOption ?? -1,
           Math.max(0, QUESTION_DURATION_MS - event.remainingMs),
           event.questionId,
+          event.contextKind,
+          event.contextId,
+          event.roundNumber,
+          event.userId,
         ),
+        questionsDb.prepare(
+          `UPDATE question_statistics_ledger SET applied = 1
+            WHERE context_kind = ?1 AND context_id = ?2 AND round_number = ?3
+              AND user_id = ?4 AND question_id = ?5 AND applied = 0`,
+        ).bind(event.contextKind, event.contextId, event.roundNumber, event.userId, event.questionId),
       );
     }
     await questionsDb.batch(statements);
+    return true;
   } catch {
     console.error(JSON.stringify({ code: 'QUESTION_STATISTICS_RECORD_FAILED', event: 'question_statistics' }));
+    return false;
   }
 }
