@@ -20,6 +20,28 @@ describe('import CSV de perguntas', () => {
     expect(questions[1]?.sources).toEqual([{ kind: 'PRIMARY', url: 'https://fonte.test/b' }]);
   });
 
+  it('aceita lote sem fonte nem themeId quando o tema é escolhido no painel', () => {
+    const csv = [
+      'difficulty,prompt,optionA,optionB,optionC,optionD,correctOption',
+      'EASY,"Pergunta sem fonte?",A,B,C,D,1',
+    ].join('\n');
+    const { diagnostics, questions } = parseQuestionsCsv(csv, 'tema-escolhido');
+    expect(diagnostics).toEqual([]);
+    expect(questions).toEqual([expect.objectContaining({
+      correctOption: 1, difficulty: 'EASY', sources: [], themeId: 'tema-escolhido',
+    })]);
+  });
+
+  it('usa o tema escolhido no painel mesmo se o CSV trouxer outro themeId', () => {
+    const csv = [
+      HEADER,
+      'tema-errado,EASY,"Pergunta no tema correto?",A,B,C,D,0,,,',
+    ].join('\n');
+    const { diagnostics, questions } = parseQuestionsCsv(csv, 'tema-selecionado');
+    expect(diagnostics).toEqual([]);
+    expect(questions[0]).toMatchObject({ sources: [], themeId: 'tema-selecionado' });
+  });
+
   it('recusa CSV sem cabeçalho esperado', () => {
     const csv = 'a,b,c\n1,2,3';
     const { diagnostics, questions } = parseQuestionsCsv(csv);

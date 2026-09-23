@@ -1,9 +1,9 @@
 import { importedQuestionSchema, type ImportedQuestion } from '../http/schemas.js';
 
-const CSV_COLUMNS = [
-  'themeId', 'difficulty', 'prompt', 'optionA', 'optionB', 'optionC', 'optionD',
-  'correctOption', 'sourceUrl', 'sourceTitle', 'sourceKind',
+const REQUIRED_CSV_COLUMNS = [
+  'difficulty', 'prompt', 'optionA', 'optionB', 'optionC', 'optionD', 'correctOption',
 ] as const;
+type CsvColumn = (typeof REQUIRED_CSV_COLUMNS)[number] | 'themeId' | 'sourceUrl' | 'sourceTitle' | 'sourceKind';
 
 const MAX_CSV_ROWS = 100;
 
@@ -54,13 +54,19 @@ function parseCsvTable(text: string): string[][] {
  * de conteúdo — a chamada decide que uma lista de diagnósticos não-vazia
  * significa "não importar nada" (sem importação parcial).
  */
-export function parseQuestionsCsv(text: string): { diagnostics: CsvRowDiagnostic[]; questions: ImportedQuestion[] } {
+export function parseQuestionsCsv(
+  text: string,
+  defaultThemeId?: string,
+): { diagnostics: CsvRowDiagnostic[]; questions: ImportedQuestion[] } {
   const table = parseCsvTable(text.trim());
   if (table.length === 0) return { diagnostics: [{ messages: ['O arquivo CSV está vazio.'], row: 0 }], questions: [] };
   const [header, ...dataRows] = table;
   if (header === undefined) return { diagnostics: [{ messages: ['O arquivo CSV está vazio.'], row: 0 }], questions: [] };
   const normalizedHeader = header.map((column) => column.trim());
-  const missingColumns = CSV_COLUMNS.filter((column) => !normalizedHeader.includes(column));
+  const requiredColumns = defaultThemeId === undefined
+    ? [...REQUIRED_CSV_COLUMNS, 'themeId']
+    : REQUIRED_CSV_COLUMNS;
+  const missingColumns = requiredColumns.filter((column) => !normalizedHeader.includes(column));
   if (missingColumns.length > 0) {
     return {
       diagnostics: [{ messages: [`Colunas ausentes no cabeçalho: ${missingColumns.join(', ')}.`], row: 1 }],
@@ -75,7 +81,7 @@ export function parseQuestionsCsv(text: string): { diagnostics: CsvRowDiagnostic
     };
   }
 
-  const columnIndex = (column: (typeof CSV_COLUMNS)[number]) => normalizedHeader.indexOf(column);
+  const columnIndex = (column: CsvColumn) => normalizedHeader.indexOf(column);
   const diagnostics: CsvRowDiagnostic[] = [];
   const questions: ImportedQuestion[] = [];
 
@@ -90,7 +96,10 @@ export function parseQuestionsCsv(text: string): { diagnostics: CsvRowDiagnostic
       return;
     }
     const correctOptionRaw = (cells[columnIndex('correctOption')] ?? '').trim();
+    const sourceUrl = (cells[columnIndex('sourceUrl')] ?? '').trim();
     const sourceTitle = (cells[columnIndex('sourceTitle')] ?? '').trim();
+    const sourceKindRaw = (cells[columnIndex('sourceKind')] ?? '').trim();
+    const sourceKind = sourceKindRaw.toUpperCase() || 'WEB';
     const candidate = {
       correctOption: Number(correctOptionRaw),
       difficulty: (cells[columnIndex('difficulty')] ?? '').trim().toUpperCase(),
@@ -101,12 +110,14 @@ export function parseQuestionsCsv(text: string): { diagnostics: CsvRowDiagnostic
         cells[columnIndex('optionD')] ?? '',
       ],
       prompt: (cells[columnIndex('prompt')] ?? '').trim(),
-      sources: [{
-        kind: (cells[columnIndex('sourceKind')] ?? 'WEB').trim().toUpperCase() || 'WEB',
-        ...(sourceTitle === '' ? {} : { title: sourceTitle }),
-        url: (cells[columnIndex('sourceUrl')] ?? '').trim(),
-      }],
-      themeId: (cells[columnIndex('themeId')] ?? '').trim(),
+      sources: sourceUrl === '' && sourceTitle === '' && sourceKindRaw === ''
+        ? []
+        : [{
+          kind: sourceKind,
+          ...(sourceTitle === '' ? {} : { title: sourceTitle }),
+          url: sourceUrl,
+        }],
+      themeId: defaultThemeId ?? (cells[columnIndex('themeId')] ?? '').trim(),
     };
     const parsed = importedQuestionSchema.safeParse(candidate);
     if (!parsed.success) {

@@ -34,6 +34,15 @@ describe('M11 — CRUD e versionamento de pergunta', () => {
     expect(activeCount?.total).toBe(0);
   });
 
+  it('permite criar pergunta sem fonte vinculada', async () => {
+    const questions = new QuestionEditorialRepository(env.QUESTIONS_DB);
+    const created = await questions.create({
+      ...questionInput(`theme-editorial-no-source-${crypto.randomUUID()}`, 'Pergunta sem fonte?', 'actor-1'),
+      sources: [],
+    });
+    expect((await questions.findForModeration(created.questionId))?.sources).toEqual([]);
+  });
+
   it('recusa conteúdo duplicado (mesmo tema+dificuldade+enunciado+alternativas)', async () => {
     const themeId = `theme-editorial-dup-${crypto.randomUUID()}`;
     const questions = new QuestionEditorialRepository(env.QUESTIONS_DB);

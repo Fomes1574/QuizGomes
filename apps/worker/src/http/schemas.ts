@@ -72,7 +72,9 @@ export const importedQuestionSchema = z.object({
     z.string().trim().min(1).max(180),
   ]),
   prompt: z.string().trim().min(1).max(360),
-  sources: z.array(sourceSchema).min(1).max(5),
+  // Fontes podem ser vinculadas para referência editorial, mas não bloqueiam
+  // conteúdo confirmado que será revisado pela administração.
+  sources: z.array(sourceSchema).max(5).default([]),
   themeId: z.string().trim().min(1).max(128),
 }).strict().superRefine((question, context) => {
   const normalizedOptions = question.options.map((option) => option.normalize('NFKC').toLocaleLowerCase('pt-BR'));
@@ -109,7 +111,7 @@ export const questionEditorialSchema = z.object({
   difficulty: z.enum(['EASY', 'MEDIUM', 'HARD']),
   options: questionOptionsTuple,
   prompt: z.string().trim().min(1).max(360),
-  sources: z.array(sourceSchema).min(1).max(5),
+  sources: z.array(sourceSchema).max(5).default([]),
 }).strict().superRefine(assertDistinctOptions);
 
 export type QuestionEditorialInput = z.infer<typeof questionEditorialSchema>;
@@ -118,7 +120,7 @@ export const questionEditSchema = z.object({
   correctOption: z.number().int().min(0).max(3),
   options: questionOptionsTuple,
   prompt: z.string().trim().min(1).max(360),
-  sources: z.array(sourceSchema).min(1).max(5),
+  sources: z.array(sourceSchema).max(5).default([]),
 }).strict().superRefine(assertDistinctOptions);
 
 export const questionRejectionSchema = z.object({

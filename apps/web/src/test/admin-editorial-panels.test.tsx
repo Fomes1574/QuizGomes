@@ -4,8 +4,12 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AdminCategoriesPanel, AdminQuestionEditorialPanel, AdminThemeModerationPanel } from '../pages/admin-editorial-panels.js';
 
-const mocks = vi.hoisted(() => ({ apiRequest: vi.fn(), getToken: vi.fn(() => Promise.resolve('synthetic-auth')) }));
-vi.mock('../lib/api.js', () => ({ apiRequest: mocks.apiRequest }));
+const mocks = vi.hoisted(() => ({ apiRequest: vi.fn(), apiUpload: vi.fn(), getToken: vi.fn(() => Promise.resolve('synthetic-auth')) }));
+vi.mock('../lib/api.js', () => ({
+  ClientApiError: class ClientApiError extends Error {},
+  apiRequest: mocks.apiRequest,
+  apiUpload: mocks.apiUpload,
+}));
 
 describe('AdminCategoriesPanel', () => {
   beforeEach(() => { mocks.apiRequest.mockReset(); });
@@ -62,7 +66,7 @@ describe('AdminThemeModerationPanel', () => {
 });
 
 describe('AdminQuestionEditorialPanel', () => {
-  beforeEach(() => { mocks.apiRequest.mockReset(); });
+  beforeEach(() => { mocks.apiRequest.mockReset(); mocks.apiUpload.mockReset(); });
   afterEach(cleanup);
 
   const theme = {
@@ -94,5 +98,30 @@ describe('AdminQuestionEditorialPanel', () => {
     await waitFor(() => expect(mocks.apiRequest).toHaveBeenCalledWith('/api/editorial/questions/question-1/approve', expect.objectContaining({
       body: {}, method: 'POST',
     })));
+  });
+
+  it('importa CSV para o tema selecionado com chave de idempotência', async () => {
+    mocks.apiRequest.mockImplementation((path: string) => {
+      if (path.startsWith('/api/admin/themes?')) return Promise.resolve({ themes: [theme] });
+      if (path.startsWith('/api/editorial/themes/theme-1/questions')) return Promise.resolve({ nextCursor: null, questions: [] });
+      return Promise.resolve({ ok: true });
+    });
+    mocks.apiUpload.mockResolvedValue({ imported: 1, status: 'APPLIED' });
+    render(<AdminQuestionEditorialPanel getToken={mocks.getToken} />);
+
+    fireEvent.change(screen.getByPlaceholderText('Buscar tema'), { target: { value: 'Tema' } });
+    await screen.findByRole('option', { name: 'Tema Um' });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Tema' }), { target: { value: 'theme-1' } });
+    await screen.findByText('Importar perguntas');
+
+    const file = new File(['difficulty,prompt,optionA,optionB,optionC,optionD,correctOption\nEASY,Pergunta?,A,B,C,D,0'], 'lote.csv', { type: 'text/csv' });
+    fireEvent.change(screen.getByLabelText('Arquivo CSV ou JSON'), { target: { files: [file] } });
+    fireEvent.click(screen.getByRole('button', { name: 'Importar para revisão' }));
+
+    await waitFor(() => expect(mocks.apiUpload).toHaveBeenCalledWith(
+      '/api/admin/questions/import?themeId=theme-1',
+      expect.objectContaining({ method: 'POST' }),
+    ));
+    expect(await screen.findByText('1 pergunta enviada para revisão.')).toBeInTheDocument();
   });
 });

@@ -8,6 +8,7 @@ Estas regras valem para toda alteração neste repositório.
 - Todo texto visível ao usuário deve estar em português do Brasil.
 - Fora da partida existem exatamente três destinos principais: Temas, Social e Perfil. A barra desaparece durante a partida. Criação pública fica desativada na V1; administração é uma rota separada, visível somente a ADMIN pelo Perfil.
 - Não criar subtemas. A hierarquia é Categoria → Tema → Dificuldade → Pergunta.
+- Fontes e evidências são opcionais na V1: podem ser registradas quando disponíveis, mas sua ausência não bloqueia revisão, importação ou publicação de uma pergunta.
 - Ranking e Conhecimento são por tema. Média de categoria é somente estatística.
 - Matchmaking público é apenas simultâneo. Assíncrono é apenas entre amigos.
 - Empates não têm desempate. Casual não altera Conhecimento.

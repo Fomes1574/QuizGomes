@@ -408,7 +408,26 @@ async function customAvatarRoute(
 
 const CSV_IMPORT_MAX_BYTES = 256 * 1024;
 
-async function adminImportRoute(request: Request, env: Env): Promise<Response> {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function applyDefaultThemeToImport(payload: unknown, defaultThemeId: string | undefined): unknown {
+  if (defaultThemeId === undefined || !isRecord(payload)) return payload;
+  const candidate = payload;
+  if (!Array.isArray(candidate.questions)) return payload;
+  const questions: unknown[] = candidate.questions;
+  return {
+    ...candidate,
+    questions: questions.map((question) => (
+      isRecord(question)
+        ? { ...question, themeId: defaultThemeId }
+        : question
+    )),
+  };
+}
+
+async function adminImportRoute(request: Request, env: Env, url: URL): Promise<Response> {
   if (request.method !== 'POST') throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Método não permitido.');
   const identity = await requireUser(request, env);
   await requireAdmin(identity, env);
@@ -416,17 +435,19 @@ async function adminImportRoute(request: Request, env: Env): Promise<Response> {
   if (profile === null) throw new ApiError(409, 'PROFILE_REQUIRED', 'Conclua seu perfil.');
   const contentType = request.headers.get('Content-Type')?.split(';', 1)[0]?.trim().toLowerCase() ?? '';
   const isCsv = contentType === 'text/csv';
+  const requestedThemeId = url.searchParams.get('themeId')?.trim();
+  const defaultThemeId = requestedThemeId === '' || requestedThemeId === undefined ? undefined : requestedThemeId;
 
   let importedQuestions;
   if (isCsv) {
     const text = await readText(request, CSV_IMPORT_MAX_BYTES);
-    const { diagnostics, questions: parsedQuestions } = parseQuestionsCsv(text);
+    const { diagnostics, questions: parsedQuestions } = parseQuestionsCsv(text, defaultThemeId);
     if (diagnostics.length > 0) {
       throw new ApiError(400, 'CSV_VALIDATION_ERROR', 'Revise as linhas indicadas do CSV.', { diagnostics });
     }
     importedQuestions = parsedQuestions;
   } else {
-    const parsed = importBatchSchema.safeParse(await readJson(request));
+    const parsed = importBatchSchema.safeParse(applyDefaultThemeToImport(await readJson(request), defaultThemeId));
     if (!parsed.success) throw validationError(parsed.error);
     importedQuestions = parsed.data.questions;
   }
@@ -1477,7 +1498,7 @@ async function apiRoute(request: Request, env: Env, url: URL, context: Execution
   if (url.pathname === '/api/realtime/tickets' && request.method === 'POST') return createRealtimeTicket(request, env);
   if (url.pathname.startsWith('/api/realtime/') && request.headers.get('Upgrade') !== null) return realtimeRoute(request, env, url);
   if (url.pathname === '/api/reports') return reportsRoute(request, env);
-  if (url.pathname === '/api/admin/questions/import') return adminImportRoute(request, env);
+  if (url.pathname === '/api/admin/questions/import') return adminImportRoute(request, env, url);
   if (url.pathname === '/api/admin/themes') return adminThemesRoute(request, env, url);
   if (url.pathname === '/api/admin/reports') return adminReportsRoute(request, env, url);
   if (url.pathname === '/api/admin/categories') return adminCategoriesRoute(request, env);

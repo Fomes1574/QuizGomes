@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Button } from '../components/button.js';
-import { apiRequest } from '../lib/api.js';
+import { ClientApiError, apiRequest, apiUpload } from '../lib/api.js';
 import { DIFFICULTY_LABEL } from '../lib/challenges.js';
 import type {
   AdminThemeSummary, CategoryAdmin, EditorialQuestion, EditorialQuestionPage, QuestionSourceInput,
@@ -210,6 +210,34 @@ const QUESTION_STATUS_LABEL: Record<EditorialQuestion['status'], string> = {
 };
 const QUESTION_STATUS_TABS: EditorialQuestion['status'][] = ['IN_REVIEW', 'ACTIVE', 'REJECTED', 'DISABLED'];
 const EMPTY_SOURCE: QuestionSourceInput = { kind: 'WEB', title: '', url: '' };
+const CSV_IMPORT_TEMPLATE = [
+  'difficulty,prompt,optionA,optionB,optionC,optionD,correctOption',
+  'EASY,"Exemplo de pergunta?",Alternativa A,Alternativa B,Alternativa C,Alternativa D,0',
+].join('\n');
+
+function importErrorText(error: unknown): string {
+  if (error instanceof ClientApiError && Array.isArray(error.details)) {
+    const diagnostics = error.details
+      .filter((detail): detail is { messages?: unknown; row?: unknown } => typeof detail === 'object' && detail !== null)
+      .slice(0, 3)
+      .map((detail) => {
+        const messages = Array.isArray(detail.messages) ? detail.messages.filter((message): message is string => typeof message === 'string').join(' ') : '';
+        return `Linha ${typeof detail.row === 'number' ? detail.row : '?'}: ${messages}`;
+      })
+      .filter((detail) => detail !== '');
+    if (diagnostics.length > 0) return `${error.message} ${diagnostics.join(' ')}`;
+  }
+  return errorText(error, 'Não foi possível importar o lote.');
+}
+
+function downloadCsvTemplate(): void {
+  const href = URL.createObjectURL(new Blob([CSV_IMPORT_TEMPLATE], { type: 'text/csv;charset=utf-8' }));
+  const link = document.createElement('a');
+  link.download = 'modelo-perguntas.csv';
+  link.href = href;
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(href), 0);
+}
 
 function emptyDraft(): {
   correctOption: number; difficulty: 'EASY' | 'HARD' | 'MEDIUM'; options: [string, string, string, string];
@@ -229,6 +257,9 @@ export function AdminQuestionEditorialPanel({ getToken }: { getToken: GetToken }
   const [busyId, setBusyId] = useState<string | null>(null);
   const [draft, setDraft] = useState(emptyDraft());
   const [creating, setCreating] = useState(false);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importFileKey, setImportFileKey] = useState(0);
+  const [importing, setImporting] = useState(false);
 
   useEffect(() => {
     const delay = window.setTimeout(() => {
@@ -310,6 +341,41 @@ export function AdminQuestionEditorialPanel({ getToken }: { getToken: GetToken }
     }
   }
 
+  async function importQuestions() {
+    if (themeId === '' || importFile === null) return;
+    if (importFile.size > 256 * 1024) {
+      setMessage({ kind: 'error', text: 'O lote deve ter no máximo 256 KB.' });
+      return;
+    }
+    setImporting(true);
+    setMessage(null);
+    try {
+      const importPath = `/api/admin/questions/import?themeId=${encodeURIComponent(themeId)}`;
+      const headers = { 'Idempotency-Key': crypto.randomUUID() };
+      const isCsv = importFile.name.toLowerCase().endsWith('.csv') || importFile.type === 'text/csv';
+      let result: { imported: number; status: 'ALREADY_APPLIED' | 'APPLIED' };
+      if (isCsv) {
+        result = await apiUpload(importPath, {
+          body: new Blob([await importFile.text()], { type: 'text/csv' }), getToken, headers, method: 'POST',
+        });
+      } else {
+        const parsedFile = JSON.parse(await importFile.text()) as unknown;
+        result = await apiRequest(importPath, {
+          body: Array.isArray(parsedFile) ? { questions: parsedFile } : parsedFile,
+          getToken, headers, method: 'POST',
+        });
+      }
+      setImportFile(null);
+      setImportFileKey((current) => current + 1);
+      setMessage({ kind: 'success', text: result.status === 'ALREADY_APPLIED' ? 'Este lote já havia sido importado.' : `${result.imported} ${result.imported === 1 ? 'pergunta enviada' : 'perguntas enviadas'} para revisão.` });
+      if (status === 'IN_REVIEW') loadQuestions(themeId, status, null, true);
+    } catch (importError) {
+      setMessage({ kind: 'error', text: importErrorText(importError) });
+    } finally {
+      setImporting(false);
+    }
+  }
+
   return (
     <section className="admin-panel" aria-labelledby="admin-question-editorial-title">
       <div className="section-heading"><div><span className="eyebrow">Administração</span><h2 id="admin-question-editorial-title">Perguntas por tema</h2></div></div>
@@ -358,6 +424,18 @@ export function AdminQuestionEditorialPanel({ getToken }: { getToken: GetToken }
               {loading ? 'Carregando…' : 'Carregar mais'}
             </Button>
           )}
+          {message !== null && <p className={`form-message form-message--${message.kind}`} role="status">{message.text}</p>}
+          <section className="form-card" aria-labelledby="admin-question-import-title">
+            <h3 id="admin-question-import-title">Importar perguntas</h3>
+            <p>Envie CSV ou JSON com no máximo 100 perguntas. O tema selecionado acima é aplicado ao lote; fontes são opcionais.</p>
+            <label className="field"><span>Arquivo CSV ou JSON</span><input accept=".csv,application/json,text/csv" key={importFileKey} onChange={(event) => setImportFile(event.target.files?.[0] ?? null)} type="file" /></label>
+            <div className="admin-card__actions">
+              <Button onClick={downloadCsvTemplate} type="button" variant="ghost">Baixar modelo CSV</Button>
+              <Button disabled={importing || importFile === null} onClick={() => void importQuestions()} type="button">
+                {importing ? 'Importando…' : 'Importar para revisão'}
+              </Button>
+            </div>
+          </section>
           <form className="form-card" onSubmit={(event) => { event.preventDefault(); void createQuestion(); }}>
             <h3>Nova pergunta</h3>
             <label className="field"><span>Dificuldade</span><select onChange={(event) => setDraft((current) => ({ ...current, difficulty: event.target.value as typeof draft.difficulty }))} value={draft.difficulty}><option value="EASY">Fácil</option><option value="MEDIUM">Média</option><option value="HARD">Difícil</option></select></label>
@@ -373,14 +451,13 @@ export function AdminQuestionEditorialPanel({ getToken }: { getToken: GetToken }
             ))}
             {draft.sources.map((source, index) => (
               <div className="admin-panel__option-row" key={index}>
-                <input onChange={(event) => updateSource(index, { url: event.target.value })} placeholder="URL da fonte" value={source.url} />
+                <input aria-label={`URL da fonte opcional ${index + 1}`} onChange={(event) => updateSource(index, { url: event.target.value })} placeholder="URL da fonte (opcional)" value={source.url} />
                 <select onChange={(event) => updateSource(index, { kind: event.target.value as QuestionSourceInput['kind'] })} value={source.kind}>
                   <option value="PRIMARY">Primária</option><option value="WEB">Web</option><option value="BOOK">Livro</option><option value="OTHER">Outra</option>
                 </select>
               </div>
             ))}
-            <Button onClick={() => setDraft((current) => ({ ...current, sources: [...current.sources, { ...EMPTY_SOURCE }] }))} type="button" variant="ghost">Adicionar fonte</Button>
-            {message !== null && <p className={`form-message form-message--${message.kind}`} role="status">{message.text}</p>}
+            <Button onClick={() => setDraft((current) => ({ ...current, sources: [...current.sources, { ...EMPTY_SOURCE }] }))} type="button" variant="ghost">Adicionar fonte opcional</Button>
             <Button disabled={creating} type="submit">{creating ? 'Enviando…' : 'Enviar para revisão'}</Button>
           </form>
         </>

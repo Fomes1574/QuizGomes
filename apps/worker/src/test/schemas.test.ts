@@ -7,7 +7,7 @@ describe('schemas de entrada', () => {
     expect(profileInputSchema.safeParse({ displayName: 'M', role: 'ADMIN' }).success).toBe(false);
   });
 
-  it('exige quatro alternativas, uma correta e fontes', () => {
+  it('exige quatro alternativas e uma correta; fontes são opcionais', () => {
     const valid = {
       questions: [{
         correctOption: 0,
@@ -20,7 +20,8 @@ describe('schemas de entrada', () => {
     };
     expect(importBatchSchema.safeParse(valid).success).toBe(true);
     expect(importBatchSchema.safeParse({ questions: [{ ...valid.questions[0], options: ['A', 'B', 'C'] }] }).success).toBe(false);
-    expect(importBatchSchema.safeParse({ questions: [{ ...valid.questions[0], sources: [] }] }).success).toBe(false);
+    expect(importBatchSchema.safeParse({ questions: [{ ...valid.questions[0], sources: [] }] }).success).toBe(true);
+    expect(importBatchSchema.safeParse({ questions: [{ ...valid.questions[0], sources: undefined }] }).success).toBe(true);
     expect(importBatchSchema.safeParse({ questions: [{ ...valid.questions[0], correctOption: 4 }] }).success).toBe(false);
     expect(importBatchSchema.safeParse({ questions: [{ ...valid.questions[0], options: ['A', 'A', 'C', 'D'] }] }).success).toBe(false);
   });

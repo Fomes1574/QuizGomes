@@ -24,8 +24,8 @@ e de smokes; quando divergirem, não voltam a ser regra.
   e nunca é usada como prazo de criação, aceite ou abertura (corrigido em
   2026-09-22, ver diário).
 - M11 está **CONCLUÍDO**: pipeline editorial completo (categorias, moderação de
-  tema com concessão de OWNER, CRUD/versionamento de pergunta com fontes,
-  import JSON+CSV diagnosticado), estatísticas de pergunta idempotentes,
+  tema com concessão de OWNER, CRUD/versionamento de pergunta com fontes
+  opcionais, import CSV/JSON diagnosticado diretamente no painel ADMIN), estatísticas de pergunta idempotentes,
   missões diárias e streak por tema orientados a evento autoritativo, Perfil
   real (nível/XP, melhor tema, Conhecimento, partidas, missões/streak, média
   ordinal por categoria), superfícies ADMIN na Web (categorias, moderação de
@@ -52,9 +52,9 @@ e de smokes; quando divergirem, não voltam a ser regra.
   possam ser realmente servidas pelo backend ativo.
 - Nenhum smoke físico foi executado nesta sessão. O checklist específico de
   M11/M12 está em `docs/DEPLOYMENT.md` §7, além da regressão física do
-  M8–M10 já pendente de longa data. Conteúdo editorial real exige fontes
-  verificáveis e revisão humana — o dataset `SYNTHETIC_SMOKE_TEST` não é
-  catálogo de produção.
+  M8–M10 já pendente de longa data. Conteúdo editorial real passa por revisão
+  humana; fontes são opcionais por decisão do proprietário e o dataset
+  `SYNTHETIC_SMOKE_TEST` não é catálogo de produção.
 
 ## Histórico de progresso
 
