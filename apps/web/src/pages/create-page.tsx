@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState, type FormEvent } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import type { ReportStatus, ThemeArtwork } from '@quiz-gomes/domain';
 import { Button } from '../components/button.js';
 import { ThemeArtwork as ThemeArtworkPreview } from '../components/theme-artwork.js';
@@ -68,18 +68,24 @@ export function CreatePage({ adminOnly = false }: { adminOnly?: boolean }) {
   const [description, setDescription] = useState('');
   const [categoryId, setCategoryId] = useState('');
   const [creationArtwork, setCreationArtwork] = useState<ThemeArtworkDraft>({ kind: 'NONE' });
-  const [adminRefreshKey, setAdminRefreshKey] = useState(0);
+  const [catalogRefreshKey, setCatalogRefreshKey] = useState(0);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ kind: 'error' | 'success'; text: string } | null>(null);
+
+  const refreshCatalog = useCallback(() => {
+    setCatalogRefreshKey((current) => current + 1);
+  }, []);
 
   useEffect(() => {
     void apiRequest<{ categories: Category[] }>('/api/categories')
       .then((result) => {
         setCategories(result.categories);
-        setCategoryId((current) => current || result.categories[0]?.id || '');
+        setCategoryId((current) => result.categories.some((category) => category.id === current)
+          ? current
+          : result.categories[0]?.id || '');
       })
       .catch(() => setMessage({ kind: 'error', text: 'Não foi possível carregar as categorias.' }));
-  }, []);
+  }, [catalogRefreshKey]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -103,13 +109,13 @@ export function CreatePage({ adminOnly = false }: { adminOnly?: boolean }) {
       setName('');
       setDescription('');
       setCreationArtwork({ kind: 'NONE' });
-      setAdminRefreshKey((current) => current + 1);
+      refreshCatalog();
     } catch (submitError) {
       if (createdTheme !== null) {
         setName('');
         setDescription('');
         setCreationArtwork({ kind: 'NONE' });
-        setAdminRefreshKey((current) => current + 1);
+        refreshCatalog();
         setMessage({
           kind: 'error',
           text: `“${createdTheme.name}” foi criado, mas a arte não pôde ser salva. Use a seção Arte dos temas abaixo para concluir.`,
@@ -156,10 +162,10 @@ export function CreatePage({ adminOnly = false }: { adminOnly?: boolean }) {
           <Button disabled={saving || profile === null} type="submit">{saving ? 'Enviando…' : 'Enviar para revisão'}</Button>
         </form>
       )}
-      {role === 'ADMIN' ? <AdminCategoriesPanel getToken={getToken} /> : null}
-      {role === 'ADMIN' ? <AdminThemeModerationPanel getToken={getToken} /> : null}
-      {role === 'ADMIN' ? <AdminThemeArtworkManager getToken={getToken} refreshKey={adminRefreshKey} /> : null}
-      {role === 'ADMIN' ? <AdminQuestionEditorialPanel getToken={getToken} /> : null}
+      {role === 'ADMIN' ? <AdminCategoriesPanel getToken={getToken} onCatalogChanged={refreshCatalog} /> : null}
+      {role === 'ADMIN' ? <AdminThemeModerationPanel getToken={getToken} onCatalogChanged={refreshCatalog} refreshKey={catalogRefreshKey} /> : null}
+      {role === 'ADMIN' ? <AdminThemeArtworkManager getToken={getToken} refreshKey={catalogRefreshKey} /> : null}
+      {role === 'ADMIN' ? <AdminQuestionEditorialPanel getToken={getToken} refreshKey={catalogRefreshKey} /> : null}
       {role === 'ADMIN' ? <AdminReportsPanel getToken={getToken} /> : null}
       {role === 'ADMIN' ? <AdminUsersPanel getToken={getToken} /> : null}
       {role === 'ADMIN' ? <AdminAuditLogPanel getToken={getToken} /> : null}
@@ -181,7 +187,12 @@ function AdminThemeArtworkManager({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ kind: 'error' | 'success'; text: string } | null>(null);
+  const selectedIdRef = useRef(selectedId);
   const selected = themes.find((theme) => theme.id === selectedId) ?? null;
+
+  useEffect(() => {
+    selectedIdRef.current = selectedId;
+  }, [selectedId]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -199,7 +210,7 @@ function AdminThemeArtworkManager({
         });
       }).then((result) => {
         setThemes(result.themes);
-        const nextSelected = result.themes[0] ?? null;
+        const nextSelected = result.themes.find((theme) => theme.id === selectedIdRef.current) ?? result.themes[0] ?? null;
         setSelectedId(nextSelected?.id ?? '');
         setDraft(nextSelected === null ? { kind: 'NONE' } : draftFromArtwork(nextSelected.artwork));
         setMessage(null);

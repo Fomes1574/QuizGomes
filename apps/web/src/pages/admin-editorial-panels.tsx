@@ -12,7 +12,7 @@ function errorText(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
 
-export function AdminCategoriesPanel({ getToken }: { getToken: GetToken }) {
+export function AdminCategoriesPanel({ getToken, onCatalogChanged }: { getToken: GetToken; onCatalogChanged?: () => void }) {
   const [categories, setCategories] = useState<CategoryAdmin[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState<{ kind: 'error' | 'success'; text: string } | null>(null);
@@ -48,6 +48,7 @@ export function AdminCategoriesPanel({ getToken }: { getToken: GetToken }) {
       setSlug('');
       setSortOrder(0);
       setMessage({ kind: 'success', text: `Categoria “${result.category.name}” criada.` });
+      onCatalogChanged?.();
     } catch (createError) {
       setMessage({ kind: 'error', text: errorText(createError, 'Não foi possível criar a categoria.') });
     } finally {
@@ -67,6 +68,7 @@ export function AdminCategoriesPanel({ getToken }: { getToken: GetToken }) {
         method: 'PATCH',
       });
       setCategories((current) => current.map((item) => item.id === result.category.id ? result.category : item));
+      onCatalogChanged?.();
     } catch (saveError) {
       setMessage({ kind: 'error', text: errorText(saveError, 'Não foi possível salvar a categoria.') });
     } finally {
@@ -124,7 +126,15 @@ const THEME_STATUS_LABEL: Record<AdminThemeSummary['status'], string> = {
 };
 const THEME_STATUS_TABS: AdminThemeSummary['status'][] = ['PENDING', 'ACTIVE', 'REJECTED', 'DISABLED'];
 
-export function AdminThemeModerationPanel({ getToken }: { getToken: GetToken }) {
+export function AdminThemeModerationPanel({
+  getToken,
+  onCatalogChanged,
+  refreshKey = 0,
+}: {
+  getToken: GetToken;
+  onCatalogChanged?: () => void;
+  refreshKey?: number;
+}) {
   const [status, setStatus] = useState<AdminThemeSummary['status']>('PENDING');
   const [themes, setThemes] = useState<AdminThemeSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -145,7 +155,7 @@ export function AdminThemeModerationPanel({ getToken }: { getToken: GetToken }) 
     // Microtask para não chamar setState de forma síncrona no corpo do efeito.
     queueMicrotask(load);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- load é recriada a cada render; só getToken decide a busca.
-  }, [getToken]);
+  }, [getToken, refreshKey]);
 
   async function act(theme: AdminThemeSummary, action: 'approve' | 'deactivate' | 'reject') {
     setBusyId(theme.id);
@@ -156,6 +166,7 @@ export function AdminThemeModerationPanel({ getToken }: { getToken: GetToken }) 
         body, getToken, method: 'POST',
       });
       setThemes((current) => current.map((item) => item.id === result.theme.id ? result.theme : item));
+      onCatalogChanged?.();
     } catch (actError) {
       setMessage(errorText(actError, 'Não foi possível concluir a ação.'));
     } finally {
@@ -246,7 +257,7 @@ function emptyDraft(): {
   return { correctOption: 0, difficulty: 'EASY', options: ['', '', '', ''], prompt: '', sources: [{ ...EMPTY_SOURCE }] };
 }
 
-export function AdminQuestionEditorialPanel({ getToken }: { getToken: GetToken }) {
+export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getToken: GetToken; refreshKey?: number }) {
   const [themeSearch, setThemeSearch] = useState('');
   const [themeOptions, setThemeOptions] = useState<AdminThemeSummary[]>([]);
   const [themeId, setThemeId] = useState('');
@@ -268,7 +279,7 @@ export function AdminQuestionEditorialPanel({ getToken }: { getToken: GetToken }
         .catch(() => setThemeOptions([]));
     }, 180);
     return () => window.clearTimeout(delay);
-  }, [getToken, themeSearch]);
+  }, [getToken, refreshKey, themeSearch]);
 
   function loadQuestions(themeId_: string, status_: EditorialQuestion['status'], cursor: string | null, replace: boolean) {
     if (themeId_ === '') return;

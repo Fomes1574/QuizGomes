@@ -50,6 +50,12 @@ e de smokes; quando divergirem, não voltam a ser regra.
 - R2 continua sem provisionamento e sem custo. O código/documentação deve manter
   somente `ImageStorage` intercambiável, chaves opacas e proibir imagens que não
   possam ser realmente servidas pelo backend ativo.
+- A revisão administrativa de 2026-09-23 mantém categorias e temas sincronizados
+  na própria tela: criar, aprovar, desativar ou editar uma categoria atualiza os
+  seletores dependentes sem F5; criar/aprovar tema atualiza arte e editorial sem
+  perder a seleção atual. A validação de arte aceita WebP estático reencodado pelo
+  navegador com perfil ICC técnico, mas continua recusando EXIF, XMP, animação e
+  chunks desconhecidos. Nenhum smoke físico desta corretiva foi declarado.
 - Nenhum smoke físico foi executado nesta sessão. O checklist específico de
   M11/M12 está em `docs/DEPLOYMENT.md` §7, além da regressão física do
   M8–M10 já pendente de longa data. Conteúdo editorial real passa por revisão
@@ -57,6 +63,11 @@ e de smokes; quando divergirem, não voltam a ser regra.
   `SYNTHETIC_SMOKE_TEST` não é catálogo de produção.
 
 ## Histórico de progresso
+
+- [x] 2026-09-23 — corretiva ADMIN: sincronização local de catálogo sem F5 e
+  compatibilidade segura de arte WebP reencodada pelo navegador (perfil ICC
+  técnico permitido; EXIF/XMP/animação/chunks desconhecidos bloqueados), coberta
+  por testes unitários/Worker e build; smoke físico pendente.
 
 - [x] 2026-08-10 — prompt mestre consolidado em documentação persistente.
 - [x] 2026-08-10 — repositório remoto identificado (`Fomes1574/QuizGomes`) e constatado vazio.

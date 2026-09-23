@@ -16,6 +16,7 @@ describe('AdminCategoriesPanel', () => {
   afterEach(cleanup);
 
   it('lista categorias existentes e cria uma nova', async () => {
+    const onCatalogChanged = vi.fn();
     mocks.apiRequest.mockImplementation((path: string, options?: { method?: string }) => {
       if (path === '/api/admin/categories' && (options?.method ?? 'GET') === 'GET') {
         return Promise.resolve({ categories: [{ id: 'cat-1', name: 'Esportes', revision: 1, slug: 'esportes', sortOrder: 0, status: 'ACTIVE' }] });
@@ -25,7 +26,7 @@ describe('AdminCategoriesPanel', () => {
       }
       return Promise.resolve({ ok: true });
     });
-    render(<AdminCategoriesPanel getToken={mocks.getToken} />);
+    render(<AdminCategoriesPanel getToken={mocks.getToken} onCatalogChanged={onCatalogChanged} />);
     expect(await screen.findByDisplayValue('Esportes')).toBeInTheDocument();
 
     fireEvent.change(screen.getAllByRole('textbox')[0]!, { target: { value: 'Ciência' } });
@@ -36,6 +37,7 @@ describe('AdminCategoriesPanel', () => {
       body: { name: 'Ciência', slug: 'ciencia', sortOrder: 0 }, method: 'POST',
     })));
     expect(await screen.findByDisplayValue('Ciência')).toBeInTheDocument();
+    expect(onCatalogChanged).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -50,18 +52,20 @@ describe('AdminThemeModerationPanel', () => {
   };
 
   it('mostra temas pendentes e aprova com a revisão esperada', async () => {
+    const onCatalogChanged = vi.fn();
     mocks.apiRequest.mockImplementation((path: string, options?: { method?: string }) => {
       if (path === '/api/admin/themes' && (options?.method ?? 'GET') === 'GET') return Promise.resolve({ themes: [pendingTheme] });
       if (path === '/api/admin/themes/theme-1/approve') return Promise.resolve({ theme: { ...pendingTheme, revision: 2, status: 'ACTIVE' } });
       return Promise.resolve({ ok: true });
     });
-    render(<AdminThemeModerationPanel getToken={mocks.getToken} />);
+    render(<AdminThemeModerationPanel getToken={mocks.getToken} onCatalogChanged={onCatalogChanged} />);
     expect(await screen.findByText('Tema Proposto')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Aprovar' }));
     await waitFor(() => expect(mocks.apiRequest).toHaveBeenCalledWith('/api/admin/themes/theme-1/approve', expect.objectContaining({
       body: { expectedRevision: 1 }, method: 'POST',
     })));
+    expect(onCatalogChanged).toHaveBeenCalledTimes(1);
   });
 });
 

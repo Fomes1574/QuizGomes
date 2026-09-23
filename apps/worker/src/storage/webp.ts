@@ -7,6 +7,14 @@ export interface WebpInspection {
   width: number;
 }
 
+// VP8X feature flags, in the low byte defined by RFC 9649.  EXIF/XMP and
+// animation remain intentionally unsupported for theme artwork.  ICCP is a
+// colour profile, not user-authored image metadata, and is emitted by some
+// browser WebP encoders after a canvas re-encode.
+const VP8X_ALPHA_FLAG = 0x10;
+const VP8X_ICCP_FLAG = 0x20;
+const VP8X_ALLOWED_FLAGS = VP8X_ALPHA_FLAG | VP8X_ICCP_FLAG;
+
 function fourCc(bytes: Uint8Array, offset: number): string {
   return String.fromCharCode(bytes[offset] ?? 0, bytes[offset + 1] ?? 0, bytes[offset + 2] ?? 0, bytes[offset + 3] ?? 0);
 }
@@ -46,8 +54,10 @@ export function inspectWebp(data: ArrayBuffer): WebpInspection | null {
   if (view.getUint32(4, true) + 8 !== data.byteLength) return null;
 
   let canvas: WebpInspection | null = null;
+  let canvasFlags: number | null = null;
   let encoded: WebpInspection | null = null;
   let alphaChunk = false;
+  let iccpChunk = false;
   let foundImageChunks = 0;
   let offset = 12;
   while (offset + 8 <= bytes.length) {
@@ -56,10 +66,27 @@ export function inspectWebp(data: ArrayBuffer): WebpInspection | null {
     const payload = offset + 8;
     const end = payload + size;
     if (end > bytes.length) return null;
-    if (!['ALPH', 'VP8 ', 'VP8L', 'VP8X'].includes(kind)) return null;
+    if (!['ALPH', 'ICCP', 'VP8 ', 'VP8L', 'VP8X'].includes(kind)) return null;
     if (kind === 'VP8X') {
-      if (canvas !== null || size !== 10 || ((bytes[payload] ?? 0) & ~0x10) !== 0) return null;
+      const flags = bytes[payload] ?? 0;
+      if (
+        canvas !== null
+        || alphaChunk
+        || foundImageChunks > 0
+        || size !== 10
+        || (flags & ~VP8X_ALLOWED_FLAGS) !== 0
+        || bytes[payload + 1] !== 0
+        || bytes[payload + 2] !== 0
+        || bytes[payload + 3] !== 0
+      ) return null;
       canvas = vp8xDimensions(bytes, payload, size);
+      canvasFlags = flags;
+    }
+    if (kind === 'ICCP') {
+      // A profile is only legal in the extended container and comes before
+      // image data.  This keeps EXIF/XMP and arbitrary RIFF payloads out.
+      if (canvas === null || iccpChunk || alphaChunk || foundImageChunks > 0 || size === 0) return null;
+      iccpChunk = true;
     }
     if (kind === 'ALPH') {
       if (alphaChunk || size < 2) return null;
@@ -76,6 +103,8 @@ export function inspectWebp(data: ArrayBuffer): WebpInspection | null {
     offset = end + (size % 2);
   }
   if (offset !== bytes.length || foundImageChunks !== 1 || encoded === null) return null;
+  if (canvas !== null && (((canvasFlags ?? 0) & VP8X_ICCP_FLAG) !== 0) !== iccpChunk) return null;
+  if (canvas === null && iccpChunk) return null;
   if (alphaChunk && canvas === null) return null;
   const dimensions = canvas ?? encoded;
   if (dimensions === null) return null;

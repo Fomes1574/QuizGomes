@@ -166,7 +166,7 @@ export default function ThemeArtworkEditor({
               </>
             ) : null}
             {value.image !== null ? <small>{value.image.width} × {value.image.height} · {(value.image.blob.size / 1_024).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} KB · WebP</small> : null}
-            <p>O arquivo é recortado em quadrado, reencodado sem metadata e limitado a 60 KB. O original não é enviado.</p>
+            <p>O arquivo é recortado em quadrado, reencodado sem EXIF/XMP e limitado a 60 KB. O original não é enviado.</p>
           </div>
         </div>
       ) : null}

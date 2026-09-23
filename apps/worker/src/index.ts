@@ -741,7 +741,7 @@ async function adminThemeArtworkRoute(request: Request, env: Env, themeId: strin
       ));
       const dimensions = inspectWebp(data);
       if (dimensions === null) {
-        throw new ApiError(400, 'ARTWORK_INVALID', 'A imagem precisa ser WebP quadrada, válida, sem metadata e ter de 256 a 512 px.');
+        throw new ApiError(400, 'ARTWORK_INVALID', 'A imagem precisa ser WebP quadrada e válida, sem EXIF/XMP, entre 256 e 512 px.');
       }
       const theme = await themes.setCustomArtwork({
         data,
