@@ -7,6 +7,9 @@ export interface QuestionContentKey {
   difficulty: string;
   options: readonly [string, string, string, string];
   prompt: string;
+  /** Só revisões de uma ACTIVE recebem este escopo; criações/importações
+   * continuam detectando a mesma pergunta como duplicata. */
+  revisionOf?: string;
   themeId: string;
 }
 
@@ -19,6 +22,7 @@ export async function questionContentHash(question: QuestionContentKey): Promise
     difficulty: question.difficulty,
     options: question.options.map((option) => option.normalize('NFKC').trim().toLocaleLowerCase('pt-BR')),
     prompt: question.prompt.normalize('NFKC').trim().toLocaleLowerCase('pt-BR'),
+    ...(question.revisionOf === undefined ? {} : { revisionOf: question.revisionOf }),
     themeId: question.themeId,
   });
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(normalized));

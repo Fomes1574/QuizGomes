@@ -23,6 +23,7 @@ import {
   categoryUpdateSchema,
   importBatchSchema,
   profileInputSchema,
+  questionBatchApprovalSchema,
   questionEditorialSchema,
   questionEditSchema,
   questionRejectionSchema,
@@ -661,7 +662,16 @@ async function editorialQuestionsRoute(request: Request, env: Env, url: URL, the
   const questions = new QuestionEditorialRepository(env.QUESTIONS_DB);
   if (request.method === 'GET') {
     const cursor = url.searchParams.get('cursor');
-    return json(await questions.listForTheme({ cursor, themeId }));
+    const requestedStatus = url.searchParams.get('statuses');
+    const statuses = requestedStatus === null
+      ? undefined
+      : ['ACTIVE', 'DISABLED', 'IN_REVIEW', 'PENDING', 'REJECTED'].includes(requestedStatus)
+        ? [requestedStatus as 'ACTIVE' | 'DISABLED' | 'IN_REVIEW' | 'PENDING' | 'REJECTED']
+        : null;
+    if (statuses === null) throw new ApiError(400, 'QUESTION_STATUS_INVALID', 'Status de pergunta inválido.');
+    return json(await questions.listForTheme(statuses === undefined
+      ? { cursor, themeId }
+      : { cursor, statuses, themeId }));
   }
   if (request.method === 'POST') {
     const parsed = questionEditorialSchema.safeParse(await readJson(request));
@@ -692,6 +702,12 @@ async function editorialQuestionActionRoute(
     await requireQuestionEditAccess(env, profile.userId, isAdmin, current.themeId);
     const parsed = questionEditSchema.safeParse(await readJson(request));
     if (!parsed.success) throw validationError(parsed.error);
+    if (current.status === 'IN_REVIEW') {
+      await questions.reviseDraft({ questionId, ...parsed.data });
+      const question = await questions.findForModeration(questionId);
+      await auditLog(env, profile.userId, 'REVISE_QUESTION_DRAFT', 'question', questionId, {});
+      return json({ question });
+    }
     const draft = await questions.proposeEdit({ actorUserId: profile.userId, questionId, ...parsed.data });
     await auditLog(env, profile.userId, 'PROPOSE_QUESTION_EDIT', 'question', draft.draftId, { replaces: questionId });
     return json(draft, { status: 201 });
@@ -718,6 +734,28 @@ async function editorialQuestionActionRoute(
   await syncThemeQuestionCount(env, themeId);
   await auditLog(env, profile.userId, 'DEACTIVATE_QUESTION', 'question', questionId, { themeId });
   return json({ ok: true });
+}
+
+async function editorialQuestionBatchApprovalRoute(request: Request, env: Env, themeId: string): Promise<Response> {
+  if (request.method !== 'POST') throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Método não permitido.');
+  const identity = await requireUser(request, env);
+  const profile = await new UserRepository(env.CORE_DB).findByFirebaseUid(identity.uid);
+  if (profile === null) throw new ApiError(409, 'PROFILE_REQUIRED', 'Conclua seu perfil.');
+  await requireAdmin(identity, env);
+  const parsed = questionBatchApprovalSchema.safeParse(await readJson(request));
+  if (!parsed.success) throw validationError(parsed.error);
+
+  const result = await new QuestionEditorialRepository(env.QUESTIONS_DB).approveMany({
+    actorUserId: profile.userId, questionIds: parsed.data.questionIds, themeId,
+  });
+  if (result.approvedQuestionIds.length > 0) {
+    await syncThemeQuestionCount(env, themeId);
+    await auditLog(env, profile.userId, 'APPROVE_QUESTIONS_BATCH', 'theme', themeId, {
+      approvedQuestionIds: result.approvedQuestionIds,
+      failedQuestionIds: result.failed.map((failure) => failure.questionId),
+    });
+  }
+  return json(result);
 }
 
 async function adminThemeArtworkRoute(request: Request, env: Env, themeId: string): Promise<Response> {
@@ -1539,6 +1577,11 @@ async function apiRoute(request: Request, env: Env, url: URL, context: Execution
   const editorialQuestionsMatch = /^\/api\/editorial\/themes\/([a-z0-9_-]{1,128})\/questions$/i.exec(url.pathname);
   if (editorialQuestionsMatch?.[1] !== undefined) {
     return editorialQuestionsRoute(request, env, url, decodeURIComponent(editorialQuestionsMatch[1]));
+  }
+
+  const editorialQuestionBatchApprovalMatch = /^\/api\/editorial\/themes\/([a-z0-9_-]{1,128})\/questions\/approve$/i.exec(url.pathname);
+  if (editorialQuestionBatchApprovalMatch?.[1] !== undefined) {
+    return editorialQuestionBatchApprovalRoute(request, env, decodeURIComponent(editorialQuestionBatchApprovalMatch[1]));
   }
 
   const editorialQuestionActionMatch = /^\/api\/editorial\/questions\/([a-f0-9-]{36})\/(approve|reject|deactivate)$/i

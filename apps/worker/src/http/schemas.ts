@@ -127,6 +127,14 @@ export const questionRejectionSchema = z.object({
   note: z.string().trim().max(280).optional(),
 }).strict();
 
+/** Uma página editorial contém no máximo 50 registros. O limite mantém a
+ * aprovação em lote previsível e evita transformar uma ação administrativa
+ * em uma varredura do catálogo. */
+export const questionBatchApprovalSchema = z.object({
+  questionIds: z.array(z.string().uuid()).min(1).max(50)
+    .refine((ids) => new Set(ids).size === ids.length, 'Não repita perguntas no mesmo lote.'),
+}).strict();
+
 export const reportCreationSchema = z.object({
   contextId: z.string().trim().min(1).max(128),
   contextKind: z.enum(['MATCH', 'CHALLENGE']),

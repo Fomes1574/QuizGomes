@@ -113,6 +113,44 @@ describe('M11 — CRUD e versionamento de pergunta', () => {
     expect(pool?.active_count).toBe(1);
   });
 
+  it('permite revisar somente a resposta correta ou as fontes sem criar uma pergunta duplicada', async () => {
+    const themeId = `theme-editorial-answer-only-${crypto.randomUUID()}`;
+    const questions = new QuestionEditorialRepository(env.QUESTIONS_DB);
+    const created = await questions.create(questionInput(themeId, 'Qual é a resposta?', 'actor-1'));
+    await questions.approve(created.questionId, 'admin-1');
+
+    const revision = await questions.proposeEdit({
+      actorUserId: 'actor-1', correctOption: 1, options: ['A', 'B', 'C', 'D'],
+      prompt: 'Qual é a resposta?', questionId: created.questionId, sources: [],
+    });
+    const draft = await questions.findForModeration(revision.draftId);
+    expect(draft).toMatchObject({ correctOption: 1, replacesQuestionId: created.questionId, status: 'IN_REVIEW' });
+    expect(draft?.sources).toEqual([]);
+  });
+
+  it('permite corrigir um rascunho em revisão, inclusive alternativas e fontes, sem criar duplicata', async () => {
+    const themeId = `theme-editorial-revise-${crypto.randomUUID()}`;
+    const questions = new QuestionEditorialRepository(env.QUESTIONS_DB);
+    const created = await questions.create(questionInput(themeId, 'Enunciado com detalhe a mais?', 'actor-1'));
+
+    await questions.reviseDraft({
+      correctOption: 2,
+      options: ['Alternativa A', 'Alternativa B', 'Alternativa C', 'Alternativa D'],
+      prompt: 'Enunciado corrigido?',
+      questionId: created.questionId,
+      sources: [],
+    });
+
+    const revised = await questions.findForModeration(created.questionId);
+    expect(revised).toMatchObject({
+      correctOption: 2,
+      options: ['Alternativa A', 'Alternativa B', 'Alternativa C', 'Alternativa D'],
+      prompt: 'Enunciado corrigido?', status: 'IN_REVIEW',
+    });
+    expect(revised?.sources).toEqual([]);
+    expect(revised?.activeSlot).toBeNull();
+  });
+
   it('editar pergunta que não está ACTIVE falha com QUESTION_NOT_ACTIVE', async () => {
     const themeId = `theme-editorial-edit-inactive-${crypto.randomUUID()}`;
     const questions = new QuestionEditorialRepository(env.QUESTIONS_DB);
@@ -143,6 +181,35 @@ describe('M11 — CRUD e versionamento de pergunta', () => {
       .bind((await questions.findForModeration(first.questionId))?.poolId).first<{ active_count: number }>();
     // Só a vencedora avançou a contagem — sem slot duplicado nem contagem adiantada.
     expect(pool?.active_count).toBe(1);
+  });
+
+  it('aprova um lote do mesmo pool em série, mantendo slots densos', async () => {
+    const themeId = `theme-editorial-batch-${crypto.randomUUID()}`;
+    const questions = new QuestionEditorialRepository(env.QUESTIONS_DB);
+    const ids: string[] = [];
+    for (let index = 1; index <= 3; index += 1) {
+      ids.push((await questions.create(questionInput(themeId, `Lote ${index}?`, 'actor-1'))).questionId);
+    }
+
+    const result = await questions.approveMany({ actorUserId: 'admin-1', questionIds: ids, themeId });
+    expect(result).toEqual({ approvedQuestionIds: ids, failed: [] });
+    const slots = await env.QUESTIONS_DB.prepare(
+      "SELECT active_slot FROM questions WHERE pool_id = ?1 AND status = 'ACTIVE' ORDER BY active_slot",
+    ).bind((await questions.findForModeration(ids[0]!))?.poolId).all<{ active_slot: number }>();
+    expect(slots.results.map((row) => row.active_slot)).toEqual([1, 2, 3]);
+  });
+
+  it('recusa o lote inteiro se uma pergunta não pertencer ao tema selecionado', async () => {
+    const questions = new QuestionEditorialRepository(env.QUESTIONS_DB);
+    const themeId = `theme-editorial-batch-a-${crypto.randomUUID()}`;
+    const first = await questions.create(questionInput(themeId, 'Tema A?', 'actor-1'));
+    const second = await questions.create(questionInput(`theme-editorial-batch-b-${crypto.randomUUID()}`, 'Tema B?', 'actor-1'));
+
+    await expect(questions.approveMany({
+      actorUserId: 'admin-1', questionIds: [first.questionId, second.questionId], themeId,
+    })).rejects.toMatchObject({ code: 'QUESTION_NOT_FOUND' });
+    expect((await questions.findForModeration(first.questionId))?.status).toBe('IN_REVIEW');
+    expect((await questions.findForModeration(second.questionId))?.status).toBe('IN_REVIEW');
   });
 
   it('desativar preserva densidade: o último slot assume o slot vago, sem buracos', async () => {
@@ -210,5 +277,18 @@ describe('M11 — CRUD e versionamento de pergunta', () => {
     expect(firstPage.questions).toHaveLength(5);
     expect(firstPage.nextCursor).toBeNull();
     expect(new Set(firstPage.questions.map((question) => question.id))).toEqual(new Set(ids));
+  });
+
+  it('filtra a fila editorial pelo status solicitado', async () => {
+    const themeId = `theme-editorial-status-${crypto.randomUUID()}`;
+    const questions = new QuestionEditorialRepository(env.QUESTIONS_DB);
+    const active = await questions.create(questionInput(themeId, 'Publicada?', 'actor-1'));
+    const review = await questions.create(questionInput(themeId, 'Ainda em revisão?', 'actor-1'));
+    await questions.approve(active.questionId, 'admin-1');
+
+    expect((await questions.listForTheme({ statuses: ['ACTIVE'], themeId })).questions.map((question) => question.id))
+      .toEqual([active.questionId]);
+    expect((await questions.listForTheme({ statuses: ['IN_REVIEW'], themeId })).questions.map((question) => question.id))
+      .toEqual([review.questionId]);
   });
 });

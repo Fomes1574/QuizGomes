@@ -104,6 +104,51 @@ describe('AdminQuestionEditorialPanel', () => {
     })));
   });
 
+  it('seleciona a página revisada e aprova o lote por uma única rota', async () => {
+    mocks.apiRequest.mockImplementation((path: string) => {
+      if (path.startsWith('/api/admin/themes?')) return Promise.resolve({ themes: [theme] });
+      if (path.startsWith('/api/editorial/themes/theme-1/questions?')) return Promise.resolve({ nextCursor: null, questions: [question] });
+      if (path === '/api/editorial/themes/theme-1/questions/approve') return Promise.resolve({ approvedQuestionIds: ['question-1'], failed: [] });
+      return Promise.resolve({ ok: true });
+    });
+    render(<AdminQuestionEditorialPanel getToken={mocks.getToken} />);
+
+    fireEvent.change(screen.getByPlaceholderText('Buscar tema'), { target: { value: 'Tema' } });
+    await screen.findByRole('option', { name: 'Tema Um' });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Tema' }), { target: { value: 'theme-1' } });
+    await screen.findByText('Pergunta em revisão?');
+    fireEvent.click(screen.getByLabelText('Selecionar todas as perguntas desta página'));
+    fireEvent.click(screen.getByRole('button', { name: 'Aprovar selecionadas (1)' }));
+
+    await waitFor(() => expect(mocks.apiRequest).toHaveBeenCalledWith('/api/editorial/themes/theme-1/questions/approve', expect.objectContaining({
+      body: { questionIds: ['question-1'] }, method: 'POST',
+    })));
+    expect(await screen.findByText('1 pergunta aprovada.')).toBeInTheDocument();
+  });
+
+  it('abre uma pergunta em revisão para correção e salva o mesmo rascunho', async () => {
+    mocks.apiRequest.mockImplementation((path: string) => {
+      if (path.startsWith('/api/admin/themes?')) return Promise.resolve({ themes: [theme] });
+      if (path.startsWith('/api/editorial/themes/theme-1/questions?')) return Promise.resolve({ nextCursor: null, questions: [question] });
+      if (path === '/api/editorial/questions/question-1') return Promise.resolve({ question: { ...question, prompt: 'Pergunta corrigida?' } });
+      return Promise.resolve({ ok: true });
+    });
+    render(<AdminQuestionEditorialPanel getToken={mocks.getToken} />);
+
+    fireEvent.change(screen.getByPlaceholderText('Buscar tema'), { target: { value: 'Tema' } });
+    await screen.findByRole('option', { name: 'Tema Um' });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Tema' }), { target: { value: 'theme-1' } });
+    await screen.findByText('Pergunta em revisão?');
+    fireEvent.click(screen.getByRole('button', { name: 'Revisar e editar' }));
+    fireEvent.change(screen.getByLabelText('Enunciado da revisão'), { target: { value: 'Pergunta corrigida?' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Salvar revisão' }));
+
+    await waitFor(() => expect(mocks.apiRequest).toHaveBeenCalledWith('/api/editorial/questions/question-1', expect.objectContaining({
+      body: { correctOption: 0, options: ['A', 'B', 'C', 'D'], prompt: 'Pergunta corrigida?', sources: [] }, method: 'PATCH',
+    })));
+    expect(await screen.findByText('Rascunho atualizado. Revise-o antes de aprovar.')).toBeInTheDocument();
+  });
+
   it('importa CSV para o tema selecionado com chave de idempotência', async () => {
     mocks.apiRequest.mockImplementation((path: string) => {
       if (path.startsWith('/api/admin/themes?')) return Promise.resolve({ themes: [theme] });

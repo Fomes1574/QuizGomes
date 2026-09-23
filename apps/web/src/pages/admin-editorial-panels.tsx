@@ -271,6 +271,11 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importFileKey, setImportFileKey] = useState(0);
   const [importing, setImporting] = useState(false);
+  const [selectedQuestionIds, setSelectedQuestionIds] = useState<string[]>([]);
+  const [batchApproving, setBatchApproving] = useState(false);
+  const [editingQuestion, setEditingQuestion] = useState<EditorialQuestion | null>(null);
+  const [editDraft, setEditDraft] = useState(emptyDraft());
+  const [savingEdit, setSavingEdit] = useState(false);
 
   useEffect(() => {
     const delay = window.setTimeout(() => {
@@ -291,6 +296,7 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
         nextCursor: result.nextCursor,
         questions: replace ? result.questions : [...current.questions, ...result.questions],
       })))
+      .then(() => { if (replace) setSelectedQuestionIds([]); })
       .catch((loadError: unknown) => setMessage({ kind: 'error', text: errorText(loadError, 'Não foi possível abrir as perguntas.') }))
       .finally(() => setLoading(false));
   }
@@ -314,6 +320,98 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
       setMessage({ kind: 'error', text: errorText(actError, 'Não foi possível concluir a ação.') });
     } finally {
       setBusyId(null);
+    }
+  }
+
+  function beginEdit(question: EditorialQuestion) {
+    setMessage(null);
+    setEditingQuestion(question);
+    setEditDraft({
+      correctOption: question.correctOption,
+      difficulty: question.difficulty,
+      options: [...question.options] as [string, string, string, string],
+      prompt: question.prompt,
+      sources: question.sources.map((source) => source.title === undefined
+        ? { kind: source.kind, url: source.url }
+        : { kind: source.kind, title: source.title, url: source.url }),
+    });
+  }
+
+  function updateEditOption(index: number, value: string) {
+    setEditDraft((current) => {
+      const options = [...current.options] as [string, string, string, string];
+      options[index] = value;
+      return { ...current, options };
+    });
+  }
+
+  function updateEditSource(index: number, patch: Partial<QuestionSourceInput>) {
+    setEditDraft((current) => ({ ...current, sources: current.sources.map((source, sourceIndex) => sourceIndex === index ? { ...source, ...patch } : source) }));
+  }
+
+  async function saveEdit() {
+    if (editingQuestion === null) return;
+    setSavingEdit(true);
+    setMessage(null);
+    try {
+      const result = await apiRequest<{ question?: EditorialQuestion }>(`/api/editorial/questions/${encodeURIComponent(editingQuestion.id)}`, {
+        body: {
+          correctOption: editDraft.correctOption, options: editDraft.options, prompt: editDraft.prompt,
+          sources: editDraft.sources.filter((source) => source.url.trim() !== ''),
+        },
+        getToken, method: 'PATCH',
+      });
+      if (editingQuestion.status === 'IN_REVIEW' && result.question !== undefined) {
+        setPage((current) => ({ ...current, questions: current.questions.map((question) => question.id === result.question?.id ? result.question : question) }));
+        setMessage({ kind: 'success', text: 'Rascunho atualizado. Revise-o antes de aprovar.' });
+      } else {
+        setMessage({ kind: 'success', text: 'Revisão criada. A pergunta publicada continua ativa até você aprová-la.' });
+        if (status === 'IN_REVIEW') loadQuestions(themeId, status, null, true);
+      }
+      setEditingQuestion(null);
+    } catch (saveError) {
+      setMessage({ kind: 'error', text: errorText(saveError, 'Não foi possível salvar a revisão.') });
+    } finally {
+      setSavingEdit(false);
+    }
+  }
+
+  function toggleQuestionSelection(questionId: string) {
+    setSelectedQuestionIds((current) => current.includes(questionId)
+      ? current.filter((id) => id !== questionId)
+      : [...current, questionId]);
+  }
+
+  function togglePageSelection() {
+    const reviewIds = page.questions.filter((question) => question.status === 'IN_REVIEW').map((question) => question.id);
+    const allSelected = reviewIds.length > 0 && reviewIds.every((id) => selectedQuestionIds.includes(id));
+    setSelectedQuestionIds((current) => allSelected
+      ? current.filter((id) => !reviewIds.includes(id))
+      : [...new Set([...current, ...reviewIds])]);
+  }
+
+  async function approveSelected() {
+    if (themeId === '' || selectedQuestionIds.length === 0) return;
+    setBatchApproving(true);
+    setMessage(null);
+    try {
+      const result = await apiRequest<{ approvedQuestionIds: string[]; failed: Array<{ code: string; questionId: string }> }>(
+        `/api/editorial/themes/${encodeURIComponent(themeId)}/questions/approve`,
+        { body: { questionIds: selectedQuestionIds }, getToken, method: 'POST' },
+      );
+      const approved = new Set(result.approvedQuestionIds);
+      setPage((current) => ({ ...current, questions: current.questions.filter((question) => !approved.has(question.id)) }));
+      setSelectedQuestionIds((current) => current.filter((id) => !approved.has(id)));
+      setMessage({
+        kind: result.failed.length === 0 ? 'success' : 'error',
+        text: result.failed.length === 0
+          ? `${result.approvedQuestionIds.length} ${result.approvedQuestionIds.length === 1 ? 'pergunta aprovada.' : 'perguntas aprovadas.'}`
+          : `${result.approvedQuestionIds.length} aprovadas; ${result.failed.length} mudaram de estado. Atualize e revise as restantes.`,
+      });
+    } catch (approvalError) {
+      setMessage({ kind: 'error', text: errorText(approvalError, 'Não foi possível aprovar o lote.') });
+    } finally {
+      setBatchApproving(false);
     }
   }
 
@@ -401,12 +499,37 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
               </button>
             ))}
           </div>
+          {status === 'IN_REVIEW' && page.questions.length > 0 && (
+            <div className="admin-card__actions" aria-label="Ações em lote da revisão">
+              <label className="field">
+                <input
+                  aria-label="Selecionar todas as perguntas desta página"
+                  checked={page.questions.every((question) => selectedQuestionIds.includes(question.id))}
+                  onChange={togglePageSelection}
+                  type="checkbox"
+                /> Selecionar todas desta página
+              </label>
+              <Button disabled={batchApproving || busyId !== null || selectedQuestionIds.length === 0} onClick={() => void approveSelected()} type="button">
+                {batchApproving ? 'Aprovando…' : `Aprovar selecionadas (${selectedQuestionIds.length})`}
+              </Button>
+            </div>
+          )}
           {loading && page.questions.length === 0 ? <p className="inline-notice">Carregando perguntas…</p> : null}
           {!loading && page.questions.length === 0 ? <p className="inline-notice">Nenhuma pergunta {QUESTION_STATUS_LABEL[status].toLowerCase()}.</p> : null}
           <div className="admin-card-list">
             {page.questions.map((question) => (
               <article className="admin-card" key={question.id}>
                 <header><strong>{question.prompt}</strong><small>{DIFFICULTY_LABEL[question.difficulty]}</small></header>
+                {question.status === 'IN_REVIEW' && (
+                  <label className="field">
+                    <input
+                      checked={selectedQuestionIds.includes(question.id)}
+                      disabled={batchApproving || busyId !== null}
+                      onChange={() => toggleQuestionSelection(question.id)}
+                      type="checkbox"
+                    /> Selecionar para aprovação em lote
+                  </label>
+                )}
                 <ol className="report-card__options">
                   {question.options.map((option, index) => <li className={index === question.correctOption ? 'report-card__option--correct' : ''} key={option}>{option}</li>)}
                 </ol>
@@ -419,12 +542,16 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
                 <div className="admin-card__actions">
                   {question.status === 'IN_REVIEW' && (
                     <>
+                      <Button disabled={busyId !== null || batchApproving || savingEdit} onClick={() => beginEdit(question)} type="button" variant="ghost">Revisar e editar</Button>
                       <Button disabled={busyId !== null} onClick={() => void act(question, 'reject')} type="button" variant="ghost">{busyId === question.id ? 'Aguarde…' : 'Rejeitar'}</Button>
                       <Button disabled={busyId !== null} onClick={() => void act(question, 'approve')} type="button">{busyId === question.id ? 'Aguarde…' : 'Aprovar'}</Button>
                     </>
                   )}
                   {question.status === 'ACTIVE' && (
-                    <Button disabled={busyId !== null} onClick={() => void act(question, 'deactivate')} type="button" variant="ghost">{busyId === question.id ? 'Aguarde…' : 'Desativar'}</Button>
+                    <>
+                      <Button disabled={busyId !== null || batchApproving || savingEdit} onClick={() => beginEdit(question)} type="button" variant="ghost">Criar revisão</Button>
+                      <Button disabled={busyId !== null} onClick={() => void act(question, 'deactivate')} type="button" variant="ghost">{busyId === question.id ? 'Aguarde…' : 'Desativar'}</Button>
+                    </>
                   )}
                 </div>
               </article>
@@ -436,6 +563,38 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
             </Button>
           )}
           {message !== null && <p className={`form-message form-message--${message.kind}`} role="status">{message.text}</p>}
+          {editingQuestion !== null && (
+            <form className="form-card" onSubmit={(event) => { event.preventDefault(); void saveEdit(); }}>
+              <h3>{editingQuestion.status === 'ACTIVE' ? 'Criar revisão da pergunta publicada' : 'Revisar pergunta'}</h3>
+              {editingQuestion.status === 'ACTIVE' && <p>A versão publicada continua disponível até que este rascunho seja aprovado.</p>}
+              <p className="inline-notice">Dificuldade: {DIFFICULTY_LABEL[editingQuestion.difficulty]}</p>
+              <label className="field"><span>Enunciado</span><textarea aria-label="Enunciado da revisão" maxLength={360} minLength={1} onChange={(event) => setEditDraft((current) => ({ ...current, prompt: event.target.value }))} required rows={3} value={editDraft.prompt} /></label>
+              {editDraft.options.map((option, index) => (
+                <label className="field" key={index}>
+                  <span>Alternativa {index + 1}{index === editDraft.correctOption ? ' (correta)' : ''}</span>
+                  <div className="admin-panel__option-row">
+                    <input maxLength={180} onChange={(event) => updateEditOption(index, event.target.value)} required value={option} />
+                    <label><input checked={editDraft.correctOption === index} name="edit-correct-option" onChange={() => setEditDraft((current) => ({ ...current, correctOption: index }))} type="radio" /> Correta</label>
+                  </div>
+                </label>
+              ))}
+              {editDraft.sources.map((source, index) => (
+                <div className="admin-panel__option-row" key={index}>
+                  <input aria-label={`Título da fonte opcional ${index + 1}`} maxLength={160} onChange={(event) => updateEditSource(index, { title: event.target.value })} placeholder="Título da fonte (opcional)" value={source.title ?? ''} />
+                  <input aria-label={`URL da fonte opcional ${index + 1}`} onChange={(event) => updateEditSource(index, { url: event.target.value })} placeholder="URL da fonte (opcional)" value={source.url} />
+                  <select aria-label={`Tipo da fonte opcional ${index + 1}`} onChange={(event) => updateEditSource(index, { kind: event.target.value as QuestionSourceInput['kind'] })} value={source.kind}>
+                    <option value="PRIMARY">Primária</option><option value="WEB">Web</option><option value="BOOK">Livro</option><option value="OTHER">Outra</option>
+                  </select>
+                  <Button aria-label={`Remover fonte ${index + 1}`} onClick={() => setEditDraft((current) => ({ ...current, sources: current.sources.filter((_, sourceIndex) => sourceIndex !== index) }))} type="button" variant="ghost">Remover</Button>
+                </div>
+              ))}
+              <div className="admin-card__actions">
+                <Button disabled={savingEdit || editDraft.sources.length >= 5} onClick={() => setEditDraft((current) => ({ ...current, sources: [...current.sources, { ...EMPTY_SOURCE }] }))} type="button" variant="ghost">Adicionar fonte opcional</Button>
+                <Button disabled={savingEdit} type="button" variant="ghost" onClick={() => setEditingQuestion(null)}>Cancelar</Button>
+                <Button disabled={savingEdit} type="submit">{savingEdit ? 'Salvando…' : editingQuestion.status === 'ACTIVE' ? 'Enviar revisão' : 'Salvar revisão'}</Button>
+              </div>
+            </form>
+          )}
           <section className="form-card" aria-labelledby="admin-question-import-title">
             <h3 id="admin-question-import-title">Importar perguntas</h3>
             <p>Envie CSV ou JSON com no máximo 100 perguntas. O tema selecionado acima é aplicado ao lote; fontes são opcionais.</p>

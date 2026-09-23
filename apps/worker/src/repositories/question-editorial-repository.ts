@@ -168,7 +168,12 @@ export class QuestionEditorialRepository {
     ).bind(input.questionId).first<{ difficulty: Difficulty; pool_id: string; theme_id: string }>();
     if (active === null) throw new ApiError(404, 'QUESTION_NOT_ACTIVE', 'Só uma pergunta publicada pode ser editada.');
     const draftId = crypto.randomUUID();
-    const contentHash = await questionContentHash({ ...input, difficulty: active.difficulty, themeId: active.theme_id });
+    // A revisão é escopada pela pergunta publicada. Assim é possível corrigir
+    // apenas a alternativa correta ou as fontes sem liberar uma segunda
+    // pergunta nova com o mesmo enunciado/opções no tema.
+    const contentHash = await questionContentHash({
+      ...input, difficulty: active.difficulty, revisionOf: input.questionId, themeId: active.theme_id,
+    });
     const statements: D1PreparedStatement[] = [
       this.db.prepare(
         `INSERT INTO questions (
@@ -185,6 +190,97 @@ export class QuestionEditorialRepository {
     ];
     await this.runOrDuplicate(statements);
     return { draftId };
+  }
+
+  /**
+   * Corrige o próprio rascunho sem criar uma segunda cópia. Rascunhos não
+   * participam do pool; por isso a edição é segura e a pergunta publicada que
+   * eventualmente será substituída continua intacta.
+   */
+  async reviseDraft(input: {
+    correctOption: number;
+    options: readonly [string, string, string, string];
+    prompt: string;
+    questionId: string;
+    sources: readonly QuestionSourceInput[];
+  }): Promise<{ questionId: string }> {
+    const draft = await this.db.prepare(
+      `SELECT q.pool_id, q.replaces_question_id, p.theme_id, p.difficulty FROM questions q
+        JOIN question_pools p ON p.id = q.pool_id
+       WHERE q.id = ?1 AND q.status = 'IN_REVIEW'`,
+    ).bind(input.questionId).first<{
+      difficulty: Difficulty; pool_id: string; replaces_question_id: string | null; theme_id: string;
+    }>();
+    if (draft === null) throw new ApiError(409, 'QUESTION_NOT_IN_REVIEW', 'Esta pergunta não está em revisão.');
+
+    const contentHash = await questionContentHash(draft.replaces_question_id === null
+      ? { ...input, difficulty: draft.difficulty, themeId: draft.theme_id }
+      : { ...input, difficulty: draft.difficulty, revisionOf: draft.replaces_question_id, themeId: draft.theme_id });
+    // Atualiza o conteúdo antes de tocar nas fontes: se o hash conflitar, as
+    // referências originais permanecem intactas. `batch` é transacional no D1.
+    const statements: D1PreparedStatement[] = [
+      this.db.prepare(
+        `UPDATE questions
+            SET prompt = ?1, option_a = ?2, option_b = ?3, option_c = ?4, option_d = ?5,
+                correct_option = ?6, content_hash = ?7
+          WHERE id = ?8 AND status = 'IN_REVIEW'`,
+      ).bind(input.prompt, ...input.options, input.correctOption, contentHash, input.questionId),
+      this.db.prepare('DELETE FROM question_sources WHERE question_id = ?1').bind(input.questionId),
+      ...input.sources.map((source) => this.db.prepare(
+        'INSERT INTO question_sources (id, question_id, url, title, source_kind) VALUES (?1, ?2, ?3, ?4, ?5)',
+      ).bind(crypto.randomUUID(), input.questionId, source.url, source.title ?? null, source.kind)),
+    ];
+    try {
+      const results = await this.db.batch(statements);
+      if ((results[0]?.meta.changes ?? 0) !== 1) {
+        throw new ApiError(409, 'QUESTION_NOT_IN_REVIEW', 'Esta pergunta mudou de estado. Atualize a tela.');
+      }
+    } catch (error) {
+      if (error instanceof ApiError) throw error;
+      if (error instanceof Error && /UNIQUE constraint failed: questions\.content_hash/i.test(error.message)) {
+        throw new ApiError(409, 'DUPLICATE_QUESTION', 'Uma pergunta com este conteúdo já existe.');
+      }
+      throw error;
+    }
+    return { questionId: input.questionId };
+  }
+
+  /**
+   * Aprova uma seleção já revisada, sempre em série. Assim cada aprovação vê
+   * a contagem/slot produzido pela anterior e não há corrida interna no mesmo
+   * pool. Antes de começar, o lote inteiro é conferido contra o tema e o
+   * estado atual; uma corrida externa vira falha explícita por item, nunca
+   * publicação silenciosa de outra pergunta.
+   */
+  async approveMany(input: {
+    actorUserId: string;
+    questionIds: readonly string[];
+    themeId: string;
+  }): Promise<{ approvedQuestionIds: string[]; failed: Array<{ code: string; questionId: string }> }> {
+    const records = await Promise.all(input.questionIds.map((questionId) => this.findForModeration(questionId)));
+    for (const record of records) {
+      if (record === null || record.themeId !== input.themeId) {
+        throw new ApiError(404, 'QUESTION_NOT_FOUND', 'Uma das perguntas não pertence a este tema.');
+      }
+      if (record.status !== 'IN_REVIEW') {
+        throw new ApiError(409, 'QUESTION_NOT_PENDING', 'Todas as perguntas do lote precisam estar em revisão. Atualize a tela.');
+      }
+    }
+
+    const approvedQuestionIds: string[] = [];
+    const failed: Array<{ code: string; questionId: string }> = [];
+    for (const questionId of input.questionIds) {
+      try {
+        await this.approve(questionId, input.actorUserId);
+        approvedQuestionIds.push(questionId);
+      } catch (error) {
+        failed.push({
+          code: error instanceof ApiError ? error.code : 'QUESTION_APPROVAL_FAILED',
+          questionId,
+        });
+      }
+    }
+    return { approvedQuestionIds, failed };
   }
 
   async findForModeration(questionId: string): Promise<QuestionModerationRecord | null> {

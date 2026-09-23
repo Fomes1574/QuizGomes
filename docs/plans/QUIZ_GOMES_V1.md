@@ -1,3 +1,6 @@
+Warning: truncated output (original token count: 33577)
+Total output lines: 1409
+
 # ExecPlan — QUIZ GOMES V1
 
 ## Objetivo
@@ -56,6 +59,13 @@ e de smokes; quando divergirem, não voltam a ser regra.
   perder a seleção atual. A validação de arte aceita WebP estático reencodado pelo
   navegador com perfil ICC técnico, mas continua recusando EXIF, XMP, animação e
   chunks desconhecidos. Nenhum smoke físico desta corretiva foi declarado.
+- A revisão editorial ADMIN permite selecionar e aprovar em lote somente as
+  perguntas **Em revisão** da página atual (máximo 50, em série e com trilha de
+  auditoria), além de corrigir o enunciado, alternativas, resposta e fontes de
+  um rascunho. Editar uma pergunta ativa cria uma nova revisão: a publicada não
+  sai do sorteio até a aprovação. O filtro de status agora é aplicado no Worker,
+  não apenas sugerido pela aba visual. Smoke físico desta melhoria permanece
+  pendente.
 - Nenhum smoke físico foi executado nesta sessão. O checklist específico de
   M11/M12 está em `docs/DEPLOYMENT.md` §7, além da regressão física do
   M8–M10 já pendente de longa data. Conteúdo editorial real passa por revisão
@@ -68,6 +78,11 @@ e de smokes; quando divergirem, não voltam a ser regra.
   compatibilidade segura de arte WebP reencodada pelo navegador (perfil ICC
   técnico permitido; EXIF/XMP/animação/chunks desconhecidos bloqueados), coberta
   por testes unitários/Worker e build; smoke físico pendente.
+- [x] 2026-09-23 — corretiva editorial ADMIN: filtro de status aplicado no
+  servidor, revisão de rascunho no próprio registro, edição versionada de
+  pergunta ativa e aprovação em lote explicitamente selecionada (até 50 por
+  página, serializada para preservar slots densos), com auditoria; smoke físico
+  pendente.
 
 - [x] 2026-08-10 — prompt mestre consolidado em documentação persistente.
 - [x] 2026-08-10 — repositório remoto identificado (`Fomes1574/QuizGomes`) e constatado vazio.
@@ -483,113 +498,7 @@ Validação executada antes da publicação:
 - 18 arquivos/107 testes unitários aprovados, incluindo sigilo antes da resolução, escolha adversária certa/errada, timeout nulo prevalecendo sobre clique local, avatares iguais/diferentes, correta sem voto e READY único aos 1.900 ms;
 - 4 arquivos/10 testes no runtime Workers/WebSocket aprovados, inclusive projeções reais antes e depois de `ROUND_RESOLVED`;
 - builds do domínio, PWA com realtime ativado e Worker aprovados;
-- o smoke real Fácil em dois usuários com `2.400 / 1.900`, acerto, erro e timeout permanece pendente do deploy automático.
-
-### 2026-08-12 — sistema de arte dos temas
-
-Implementação concluída:
-
-- cada tema passou a ter exatamente uma apresentação ativa: ícone padrão, imagem personalizada ou fallback pelas iniciais; a resolução fica centralizada em `ThemeArtwork`, sem regras paralelas nas telas;
-- foi criada uma biblioteca interna reutilizável com 16 símbolos vetoriais próprios em um único sprite SVG leve, sem emoji e sem dependência de ícones; catálogo, busca, detalhe, matchmaking e ADMIN usam o mesmo asset;
-- `ThemeArtwork` mantém dimensões quadradas conhecidas, usa `object-fit: cover`, preserva o fallback durante o carregamento e memoriza URLs carregadas; o matchmaking recebe o objeto de tema já disponível e não repete a consulta;
-- a rota Criar e o editor de arte são chunks lazy. O ADMIN escolhe claramente `Ícone padrão`, `Imagem personalizada` ou `Sem imagem`, vê a grade visual e pode substituir ou remover a escolha depois;
-- o processamento local aceita apenas PNG/JPEG/WebP/AVIF, rejeita SVG, permite crop quadrado com zoom e deslocamento, reencoda por Canvas em WebP, remove metadata, tenta 512 px com redução progressiva até 256 px e busca até 55 KB, respeitando o hard cap de 60 KB; o original nunca é enviado nem armazenado;
-- a migration versionada `core/0004_theme_artwork.sql` mantém somente metadados nas linhas de tema e guarda no máximo um WebP ativo por tema em `theme_artwork_blobs`; consultas textuais não selecionam o BLOB e R2 não foi provisionado;
-- o Worker expõe URL pública própria e versionada `/api/theme-artwork/:themeId/v<versão>.webp`, com ETag, `HEAD`, `304` e cache imutável; versões antigas deixam de resolver depois da troca;
-- gravações de arte exigem Firebase válido, role `ADMIN`, versão esperada e validação autoritativa. A leitura em streaming é interrompida ao ultrapassar 60 KB; o parser WebP verifica contêiner, chunks, dimensões e metadata proibida antes da transação, e um token único impede upload concorrente atrasado de tocar no BLOB vencedor;
-- `coverImageKey` permanece apenas como ponte compatível para imagens personalizadas e não contém o BLOB; ícone e fallback usam a nova representação tipada;
-- foram atualizadas a arquitetura, as proteções de free tier e os testes de domínio, UI, processamento, API, repository/runtime, migration e contrato do sprite. Nenhuma regra de partida foi alterada e o Milestone 9 não foi iniciado.
-
-Auditoria de performance:
-
-- baseline anterior: JS inicial 372,97 KB / 115,84 KB gzip e CSS 41,86 KB / 9,11 KB gzip;
-- build final com realtime: JS comum dividido em 362,86 KB + 9,86 KB, total 372,72 KB / 116,70 KB gzip; variação aproximada de -0,25 KB bruto e +0,86 KB gzip;
-- CSS final: 47,63 KB / 9,96 KB gzip; variação aproximada de +5,77 KB bruto e +0,85 KB gzip;
-- o chunk de gestão `create-page` tem 8,53 KB / 3,08 KB gzip, o editor 6,46 KB / 2,61 KB gzip e o sprite 5,36 KB / 1,37 KB gzip; os três ficaram fora do precache do service worker;
-- imagens personalizadas adicionam zero byte ao startup: só são requisitadas pelo componente nas telas que efetivamente as exibem. O sprite também só é requisitado quando um tema com ícone padrão é renderizado.
-
-Validação executada antes da publicação:
-
-- `npm run check` com realtime ativado aprovou lint sem warnings, typecheck dos três workspaces, 25 arquivos/127 testes unitários, 5 arquivos/14 testes no runtime Workers/WebSocket e builds de domínio, PWA e Worker;
-- todas as migrations de Questions `0001–0002` e Core `0001–0004` foram aplicadas do zero em bancos D1 locais separados; o Core contém a tabela de arte e não contém perguntas, e o Questions contém perguntas e não contém arte;
-- a seleção de ícone/fallback, substituição e remoção de imagem, concorrência de versão, cache/ETag, ausência de BLOB no catálogo, bloqueio sem ADMIN, rejeição de arquivo inválido/metadata/SVG e fallback de imagem quebrada têm cobertura automatizada;
-- o smoke real autenticado de upload, troca de arte e renderização após deploy permanece pendente porque exige Firebase/D1/Worker reais. Esse ponto não é declarado como evidência local.
-
-### 2026-08-12 — correção do deployment da arte dos temas
-
-Investigação concluída:
-
-- o Workers Build chegou ao comando remoto com Wrangler `4.120.1`, mas parou antes de publicar o novo Worker; Questions não tinha migration pendente e Core falhou na `0004_theme_artwork.sql`;
-- o caminho local do Wrangler separa o SQL com `unstable_splitSqlQuery()` e envia statements completos ao batch local. O caminho remoto concatena a migration com o `INSERT` de tracking e envia a string inteira ao endpoint D1 `/query`;
-- o primeiro statement incompatível era `CREATE TRIGGER validate_theme_artwork_blob_insert`, especificamente seu `SELECT CASE WHEN … THEN RAISE(ABORT, …) END;` sem parênteses. O parser multi-statement remoto interpretava esse primeiro `END` como término do trigger e entregava SQL truncado ao SQLite, resultando em `incomplete input`;
-- a migration usa LF, e `PRAGMA foreign_keys`, `RAISE()` isolado e a sintaxe SQLite do trigger não eram a causa. Os outros triggers com `CASE … END` manteriam o mesmo risco mesmo se apenas o primeiro fosse contornado;
-- as release notes oficiais de Wrangler `4.121.0` não incluem correção de D1 migrations, `/query`, splitter ou triggers. A versão permaneceu fixada em `4.120.1`, sem atualização especulativa;
-- D1 documenta que uma migration com erro é revertida e não avança `d1_migrations`. Como a tentativa remota da `0004` falhou, produção permaneceu integralmente em `0003`; por isso a correção correta foi editar a `0004` ainda pendente, sem criar `0005` compensatória.
-
-Correção restrita ao deployment:
-
-- a `0004` passou a usar somente SQL remoto simples. `CHECK`s expressam a união exclusiva e a lista de ícones; PK limita a um BLOB por tema; índice único e FK composta ligam o BLOB `CUSTOM` à versão ativa; tipo, dimensões, byte cap e igualdade entre `byte_length`/BLOB permanecem no schema;
-- o Worker continua sendo a autoridade para autenticação ADMIN e validação estrutural WebP. A escolha ICON/NONE agora remove condicionalmente o BLOB antes de atualizar metadata, no mesmo batch transacional; a substituição CUSTOM mantém update versionado + upsert com token único e `ON UPDATE CASCADE`;
-- falha da segunda operação reverte a remoção, e uma requisição atrasada não remove o BLOB vencedor porque o `DELETE` também exige a versão esperada. Testes diretos cobrem estados inválidos, cap/dimensões/tipo, FK, unicidade, substituição, remoção e conflito;
-- `scripts/validate-d1-migrations.mjs` foi incluído em `npm run check` e repetido imediatamente antes da migration remota. Ele usa o Wrangler real, bloqueia compound triggers, executa todas as migrations em banco vazio, executa upgrade exato `0003 → 0004`, inspeciona schema/constraints e comprova rollback sem resíduo;
-- o gate local não finge reproduzir o parser hospedado de `/query`. A aprovação remota continua sendo o Workers Build disparado pelo push da `main`; nenhum SQL ou deploy manual foi executado.
-
-Validação executada:
-
-- `VITE_ENABLE_REALTIME_MATCHES=true npm run check`: lint sem warnings, typecheck dos três workspaces, 25 arquivos/127 testes unitários, 5 arquivos/14 testes no runtime Workers/WebSocket, gate D1 e builds de domínio/PWA/Worker aprovados;
-- migration Core aplicada desde banco vazio e desde o estado exato `0003`; schema final, defaults do tema existente, FK composta, invariantes metadata/BLOB e rollback de migration inválida aprovados;
-- revisão final da `0004`: LF, 2.168 bytes, zero trigger, zero `RAISE`, seis statements de schema + statement de tracking separados corretamente pelo Wrangler;
-- `npm audit --audit-level=high`: zero vulnerabilidades; auditoria de secrets encontrou somente `.env.example` e `.dev.vars.example` com placeholders esperados, sem chave privada, Service Account ou token;
-- ThemeArtwork, 16 SVGs, UX ADMIN/crop, endpoint/cache/lazy loading, storage D1 separado e auditoria de performance permaneceram inalterados. Nenhum R2, billing, seed, deploy manual ou Milestone 9 foi iniciado.
-
-### 2026-08-13 — correção de escopo do Milestone 8.5
-
-Auditoria antes de alterações:
-
-- a `main` em `856aaa1` ainda possuía radar simples, texto antigo, Cancelar secundário, timeout local, navegação imediata, `QG`, assets PWA placeholder e nenhum avatar customizado;
-- Theme Artwork, os 16 ícones, editor ADMIN e `0004_theme_artwork.sql` foram verificados e permaneceram sem diff;
-- baseline de produção: 372,72 KB / 116,70 KB gzip de JS inicial, 47,63/9,96 KB de CSS e 9 entradas/417,07 KiB de precache.
-
-Implementação concluída:
-
-- a fila envia `SEARCHING.timeoutAt`; o frontend deriva o segundo inteiro e mantém o backend autoritativo, sem polling nem estado por frame;
-- o diálogo preserva `ThemeArtwork`, remove o parágrafo antigo, usa Cancelar primário vermelho e apresenta globo/lupa/personagens próprios em SVG/CSS, com entrada/saída e reduced-motion;
-- o MatchRoom projeta por jogador a identidade real do adversário, `knowledgeBefore` temático e somente a primeira pergunta pública. A apresentação usa 1.200 ms de entrada, 800 ms de permanência e 900 ms de saída;
-- chunk, ticket, socket, avatar e imagem pública atual são preparados nos 2.900 ms. O socket fica bufferizado sem `READY`; a MatchScreen assume a conexão antes de iniciar o protocolo existente;
-- `user_custom_avatars` guarda uma única versão ativa WebP 256 × 256/50 KB no Core D1. Upload e remoção usam o Firebase UID autenticado; perfil, Top 5 e partida consultam somente metadata;
-- `Avatar` e `AvatarFrame` centralizam `custom → Google → iniciais` e preservam moldura no header, perfil, ranking do tema, jogador encontrado, MatchScreen, alternativas e resultado;
-- a imagem oficial anexada gerou favicon, Apple, PWA `192/512/maskable` e logos internas WebP fingerprinted. A variante escura troca somente áreas brancas por near-black; placeholders foram removidos;
-- performance e requests antes/depois estão registrados em `docs/PERFORMANCE_MILESTONE_8_5.md`.
-
-Validação executada:
-
-- gate final `VITE_ENABLE_REALTIME_MATCHES=true npm run check`: lint sem warnings, typecheck dos três workspaces, 30 arquivos/142 testes unitários, 6 arquivos/18 testes Workers/WebSocket, migrations e builds aprovados;
-- migrations Core aprovadas em banco vazio, `0003 → 0004`, `0004 → 0005`, invariantes e rollback; a `0004` não foi alterada;
-- Chromium real: busca/encontrado/preparando em desktop 1.440 × 900 e mobile 390 × 844, claro/escuro, sem overflow/console error; Cancelar computado em vermelho, lupa animada e movimentos desligados por reduced-motion;
-- editor de avatar com arquivo real aprovado nas mesmas larguras, com preview, três controles, troca/remoção e variante escura da marca, sem overflow;
-- `npm audit --audit-level=high`: zero vulnerabilidades; varredura de chave/token privado sem achados;
-- build final: JS inicial 367,71/117,80 KB gzip, CSS 53,47/10,99 KB gzip, MatchScreen lazy 15,03/5,02 KB gzip, cropper lazy 4,92/2,04 KB gzip e precache 11 entradas/433,03 KiB;
-- nenhum scoring, ranking, XP, Conhecimento, duração de 10 segundos, cadência 2.400/1.900, randomização, reconexão, regra de 7 segundos, Durable Object existente ou Milestone 9 foi alterado.
-
-### 2026-08-14 — fechamento robusto de reconexão, locks e smoke dataset
-
-Auditoria causal antes das alterações:
-
-- o celular congelava porque, após 7 segundos de retries locais, `live-match-page.tsx` preservava a projeção `PAUSED` e a pergunta antiga; o ramo visual da pergunta tinha precedência sobre o erro e não existia recuperação terminal por retorno de rede/foco/visibilidade;
-- `CONNECT` em `PAUSED` restaurava a fase sem comparar o `graceDeadlineMs` persistido. Um alarme atrasado permitia `RESUMED` depois da fronteira aprovada;
-- `FINALIZING` ainda podia projetar a pergunta e uma reconexão nessa janela não forçava a finalização idempotente nem restaurava sempre o summary terminal;
-- a finalização normal já apagava `active_match_players` no mesmo batch do ledger. Como as contas observadas conseguiam abrir a fila — cujo ticket e socket verificavam o lock — o segundo pareamento não falhou por lock preso. O pool de 30 perguntas, bloqueado pela união dos recentes, reproduziu `QUESTION_POOL_INSUFFICIENT`, mas a fila colapsava esse código em `MATCH_INITIALIZATION_FAILED` e a UI mostrava a mensagem genérica;
-- associações historicamente órfãs apontando para uma partida já terminal e Presence terminal residual não possuíam reparo seguro, embora não tenham sido a causa do incidente observado;
-- a finalização já marcava somente `questions.slice(0, roundIndex + 1)`: a pergunta efetivamente exibida continua vista, e as futuras selecionadas para a sala não entram no histórico de uma partida anulada.
-
-Implementação:
-
-- `CONNECT` e `ALARM` usam o mesmo deadline persistido; exatamente no deadline a única saída é `VOID`. O restore preserva a fase, pergunta, respostas, READY, scores e `phaseRemainingMs` quando ocorre antes da fronteira;
-- na implementação de então, após 7 segundos locais o frontend mantinha somente retries terminais espaçados. A remoção da pergunta permaneceu válida, mas a decisão cliente de usar `terminal=1` por tempo local foi explicitamente substituída em 2026-08-18 pela recuperação do estado autoritativo atual;
-- a sala não projeta pergunta em `FINALIZING`, repete finalização idempotentemente e recupera `MATCH_VOID`/`MATCH_FINISHED` do storage ou D1 para membros históricos;
-- locks de partidas terminais são limpos de forma restrita na consulta/idempotência, Presence volta a `idle` sem poder sobrescrever uma atividade nova e partidas ativas permanecem bloqueadas;
-- a fila propaga somente códigos allowlisted; detalhes internos continuam reduzidos a `MATCH_INITIALIZATION_FAILED` e logs estruturados seguros;
-- migrations forward-only ampliam exclusivamente `SYNTHETIC_SMOKE_TEST` para 250 perguntas EASY mínimas. Nenhum histórico real pode ser resetado e o limite global de 200 recentes permanece intacto;
+- o smoke real Fácil em doi…3577 tokens truncated…de 200 recentes permanece intacto;
 - `LIVE_ROUND_RESULT_MS` foi corrigido para 2.900 ms; a apresentação da próxima pergunta permanece 1.900 ms e o gameplay permanece 10.000 ms.
 
 Cobertura adicionada:
