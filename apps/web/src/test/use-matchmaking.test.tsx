@@ -36,9 +36,9 @@ vi.mock('../pages/live-match-page.js', () => ({ LiveMatchPage: () => null }));
 import {
   elapsedSearchSeconds,
   matchmakingFailureMessage,
-  MATCH_FOUND_PRESENTATION_MS,
   useMatchmaking,
 } from '../hooks/use-matchmaking.js';
+import { MATCH_FOUND_PRESENTATION_MS } from '../lib/matchmaking-presentation.js';
 
 type FakeListener = (event: { code?: number; data?: string }) => void;
 

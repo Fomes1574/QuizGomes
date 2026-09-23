@@ -1,14 +1,14 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MatchmakingDialog } from '../components/matchmaking-dialog.js';
 import {
   MATCH_FOUND_ENTRY_MS,
   MATCH_FOUND_EXIT_MS,
   MATCH_FOUND_HOLD_MS,
   MATCH_FOUND_PRESENTATION_MS,
-} from '../hooks/use-matchmaking.js';
+} from '../lib/matchmaking-presentation.js';
 import type { ThemeSummary } from '../lib/models.js';
 
 const theme: ThemeSummary = {
@@ -24,7 +24,12 @@ const theme: ThemeSummary = {
 };
 
 describe('fechamento visual do matchmaking', () => {
-  afterEach(() => cleanup());
+  beforeEach(() => {
+    // Este arquivo verifica estrutura e acessibilidade; manter movimento reduzido
+    // evita RAFs decorativos competirem com o limite do runner compartilhado.
+    vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: true })));
+  });
+  afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
   it('mostra arte, timer autoritativo, globo, personagens, lupa e Cancelar vermelho sem o texto antigo', () => {
     const onCancel = vi.fn();
