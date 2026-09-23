@@ -1,1 +1,1353 @@
-Y��x-���jם��i��+��j[h��ܢ���]��:-jZ.����)޳Uv�]���$z{-���jם
+Warning: truncated output (original token count: 33577)
+Total output lines: 1409
+
+# ExecPlan — QUIZ GOMES V1
+
+## Objetivo
+
+Entregar uma fundação real, testável e retomável do QUIZ GOMES: PWA responsiva, autenticação Firebase validada no Worker, modelo D1, motores de ranking/XP/perguntas/partida e bases seguras para realtime, social, assíncrono e administração.
+
+## Estado vigente — ler antes do histórico
+
+Esta seção é a fonte operacional atual. Entradas abaixo são histórico de decisões
+e de smokes; quando divergirem, não voltam a ser regra.
+
+- M0–M7 concluídos; M8, M8.5, M9A.1, M9B e M9C+M10 estão **CONCLUÍDOS/FROZEN**.
+  O corrective #3 de DIRECT/ASYNC, recovery e PWA foi aprovado fisicamente pelo
+  proprietário. A regressão completa desses fluxos volta no smoke final M12.
+- Toda modalidade usa **EASY 5 / MEDIUM 8 / HARD 12**, 10 s por pergunta e
+  sorteio uniforme sem histórico entre partidas; não há repetição somente dentro
+  da própria partida. Descoberta histórica não influencia o sorteio.
+- Desafios entre amigos são sempre Casual. DIRECT dura 30 s — só o convite
+  `PENDING_DIRECT` ainda não aceito, nunca a sala já reservada; ASYNC nunca
+  expira, e uma metade `MISSING` (ainda não aberta) pode ficar assim
+  indefinidamente sem ser anulada; por dupla coexistem no máximo um ASYNC vivo
+  e um DIRECT vivo. A graça de 7 s do M8 vale só para reconexão de uma
+  partida/metade JÁ iniciada — abaixo dela retoma, a partir dela vira `VOID` —
+  e nunca é usada como prazo de criação, aceite ou abertura (corrigido em
+  2026-09-22, ver diário).
+- M11 está **CONCLUÍDO**: pipeline editorial completo (categorias, moderação de
+  tema com concessão de OWNER, CRUD/versionamento de pergunta com fontes
+  opcionais, import CSV/JSON diagnosticado diretamente no painel ADMIN), estatísticas de pergunta idempotentes,
+  missões diárias e streak por tema orientados a evento autoritativo, Perfil
+  real (nível/XP, melhor tema, Conhecimento, partidas, missões/streak, média
+  ordinal por categoria), superfícies ADMIN na Web (categorias, moderação de
+  tema, perguntas, usuários/papéis, auditoria) e a auditoria de paginação
+  restante (bloqueados e pedidos pendentes, antes truncados em 100 sem
+  cursor — corrigido).
+- M12 foi tratado como **auditoria pontual, não a suíte E2E completa** pedida
+  originalmente: não existe `test:e2e` nem `check:full` cobrindo os fluxos
+  ponta a ponta (auth, onboarding, catálogo, Casual/Ranqueada, Social,
+  matchmaking, DIRECT/ASYNC, reconexão, reports, missões/streak,
+  admin/moderação/import) descritos no pedido original. O que foi feito:
+  cabeçalhos de segurança/CORS/no-store já existiam e foram confirmados
+  aplicados a toda rota nova; `npm audit --omit=dev` limpo; scan manual de
+  segredos no diff sem achados; limite técnico novo contra rajada de proposta
+  de tema (não existia, análogo ao de desafios/denúncias); migrations
+  validadas (banco vazio, upgrade `0003→…→0012` Core e `0002→…→0005`
+  Questions, rollback). Não auditados nesta passada: multi-aba/multi-
+  dispositivo, offline/reload/retry, restauração de sessão Firebase,
+  atualização de PWA fora de partida, orçamento de imagem, hibernação de DO e
+  a11y ponta a ponta das novas telas além dos padrões já reaproveitados
+  (rótulos, `role`, foco). Ver seção de entrega do relatório desta sessão.
+- R2 continua sem provisionamento e sem custo. O código/documentação deve manter
+  somente `ImageStorage` intercambiável, chaves opacas e proibir imagens que não
+  possam ser realmente servidas pelo backend ativo.
+- A revisão administrativa de 2026-09-23 mantém categorias e temas sincronizados
+  na própria tela: criar, aprovar, desativar ou editar uma categoria atualiza os
+  seletores dependentes sem F5; criar/aprovar tema atualiza arte e editorial sem
+  perder a seleção atual. A validação de arte aceita WebP estático reencodado pelo
+  navegador com perfil ICC técnico, mas continua recusando EXIF, XMP, animação e
+  chunks desconhecidos. Nenhum smoke físico desta corretiva foi declarado.
+- A corretiva de imagens D1 de 2026-09-23 normaliza o formato de BLOB devolvido
+  pelo binding remoto (`number[]`) antes de servir arte personalizada de tema ou
+  avatar personalizado. Ambos os endpoints agora conferem o tamanho persistido
+  antes de responder; isso elimina a situação em que metadata/ETag indicavam um
+  WebP salvo, mas o navegador recebia corpo inválido e caía no fallback. Upload,
+  cache versionado e a indisponibilidade de imagens de pergunta permanecem sem
+  alteração. A cobertura Worker verifica o formato remoto; smoke físico ainda
+  está pendente.
+- A revisão editorial ADMIN permite selecionar e aprovar em lote somente as
+  perguntas **Em revisão** da página atual (máximo 50, em série e com trilha de
+  auditoria), além de corrigir o enunciado, alternativas, resposta e fontes de
+  um rascunho. Editar uma pergunta ativa cria uma nova revisão: a publicada não
+  sai do sorteio até a aprovação. O filtro de status agora é aplicado no Worker,
+  não apenas sugerido pela aba visual. Smoke físico desta melhoria permanece
+  pendente.
+- A corretiva ADMIN de 2026-09-23 (segurança/performance) fechou os achados
+  críticos e altos de uma auditoria somente-leitura anterior: `deploy:cloudflare`
+  não roda mais `test:migrations` duas vezes (já corre dentro de `build:cloudflare`
+  → `check`; economiza ~6,5 min por deploy sem perder cobertura, migration
+  `0015_admin_user_search_index.sql` indexa `users(disabled_at, created_at DESC,
+  id DESC)` para a paginação ADMIN. `UserRepository.setAdminRole` nunca mais
+  zera `user_roles` de ADMIN — a checagem de que sobra outro ADMIN corre na
+  própria cláusula `WHERE` do `DELETE`, atomicamente com a escrita; a rota
+  também bloqueia auto-revogação e revogar um UID de bootstrap (`ADMIN_FIREBASE_UIDS`)
+  que nunca teve a role gravada no banco. `POST /api/themes` agora recusa
+  quem não é ADMIN também no Worker, não só escondendo o formulário na UI
+  (criação pública continua desativada na V1). Import CSV/JSON e mutação de
+  arte de tema passam a gravar auditoria (faltava); o diagnóstico por linha do
+  CSV voltou a chegar no formato que o cliente espera (`details` como array).
+  Na Web, revogar ADMIN, rejeitar/desativar tema e aprovar lote passam por um
+  `ConfirmDialog` acessível (mesmo padrão de foco/`showModal` das telas de
+  desafio) antes de irem à API; corrigidos overflow/wrap dos painéis ADMIN em
+  telas estreitas e o indicador ✓/× que faltava num dos cards de denúncia.
+  Cobertura nova: 5 testes de Worker isolados para as guardas de revogação (em
+  arquivo próprio, com limpeza de estado a cada teste — `user_roles`/
+  `audit_logs` são tabelas globais e a suíte roda com `--no-isolate`,
+  compartilhando D1 entre arquivos) e 2 testes de Web para o fluxo de
+  confirmação. Adiado deliberadamente por risco/esforço, sem regra de produto
+  envolvida: N+1 em `adminReportsRoute`, paginação por cursor real de
+  `/api/admin/themes` (já um gap aceito), reabrir denúncia automaticamente ao
+  editar a pergunta reportada, OWNER editar um tema `DISABLED`, e uma reescrita
+  de performance de `validate-d1-migrations.mjs`. Nenhum smoke físico
+  executado nem declarado.
+- Nenhum smoke físico foi executado nesta sessão. O checklist específico de
+  M11/M12 está em `docs/DEPLOYMENT.md` §7, além da regressão física do
+  M8–M10 já pendente de longa data. Conteúdo editorial real passa por revisão
+  humana; fontes são opcionais por decisão do proprietário e o dataset
+  `SYNTHETIC_SMOKE_TEST` não é catálogo de produção.
+
+## Histórico de progresso
+
+- [x] 2026-09-23 — corretiva ADMIN de segurança/performance a partir de
+  auditoria: pipeline de deploy sem `test:migrations` redundante (migration
+  `0015` adiciona índice de listagem ADMIN); `UserRepository.setAdminRole` com
+  guarda atômica de último ADMIN, bloqueio de auto-revogação e de revogar UID
+  de bootstrap; `POST /api/themes` recusando não-ADMIN também no Worker;
+  auditoria gravada em import e mutação de arte (faltava); diagnóstico por
+  linha do CSV corrigido; `ConfirmDialog` acessível antes de revogar ADMIN,
+  rejeitar/desativar tema ou aprovar lote na Web; correções de overflow/wrap
+  e de indicador ✓/× nos painéis ADMIN; 7 testes novos (5 Worker + 2 Web);
+  lint, typecheck, `test:unit`, `test:worker`, `test:migrations`, build e
+  `npm audit` verdes; smoke físico pendente.
+- [x] 2026-09-23 — corretiva ADMIN: sincronização local de catálogo sem F5 e
+  compatibilidade segura de arte WebP reencodada pelo navegador (perfil ICC
+  técnico permitido; EXIF/XMP/animação/chunks desconhecidos bloqueados), coberta
+  por testes unitários/Worker e build; smoke físico pendente.
+- [x] 2026-09-23 — corretiva editorial ADMIN: filtro de status aplicado no
+  servidor, revisão de rascunho no próprio registro, edição versionada de
+  pergunta ativa e aprovação em lote explicitamente selecionada (até 50 por
+  página, serializada para preservar slots densos), com auditoria; smoke físico
+  pendente.
+
+- [x] 2026-08-10 — prompt mestre consolidado em documentação persistente.
+- [x] 2026-08-10 — repositório remoto identificado (`Fomes1574/QuizGomes`) e constatado vazio.
+- [x] 2026-08-10 — validação Firebase e limites Cloudflare confirmados em documentação oficial atual.
+- [x] 2026-08-10 — Milestone 0: scaffold, scripts, lint, typecheck, testes e build.
+- [x] 2026-08-10 — Milestone 1: tokens, Claro/Escuro/Sistema, shell, quatro abas e PWA.
+- [x] 2026-08-10 — Milestone 2: login Google, onboarding, verificação server-side e bootstrap ADMIN.
+- [x] 2026-08-10 — Milestone 3: migrations e repositories D1.
+- [x] 2026-08-10 — Milestone 4: busca, categorias, tema, Top 5, ranking e descoberta pessoal.
+- [x] 2026-08-10 — Milestone 5: motores de ranking e XP completos.
+- [x] 2026-08-10 — Milestone 6: pools, recentes 200, bitmap, fixtures e import foundation.
+- [x] 2026-08-10 — Milestone 7: scoring, projeção segura e interface local isolada de partida.
+- [x] 2026-08-10 — publicação pública autorizada pelo proprietário e auditoria específica de segredos concluída antes dos commits.
+- [x] 2026-08-10 — 107 arquivos publicados em commits lógicos na `main`; árvore remota comparada byte a byte e auditoria pós-push sem secrets.
+- [x] 2026-08-10 — Milestone 8: motor autoritativo, sala WebSocket, reconexão, resultado transacional e interface realtime concluídos e validados localmente.
+- [x] 2026-08-10 — Milestone 8: runtime Workers simulado validado com WebSockets, D1 e storage real de Durable Object do ambiente de testes.
+- [x] 2026-08-11 — D1 reais criados manualmente no Workers Free; bindings `CORE_DB` e `QUESTIONS_DB` atualizados somente com os UUIDs fornecidos.
+- [x] 2026-08-11 — pipeline de produção Workers Builds, migrations remotas sem seed e origem própria dinâmica preparados e validados localmente.
+- [x] 2026-08-11 — integração GitHub → Workers Builds configurada manualmente no Dashboard pelo proprietário; este commit documental dispara o primeiro build real, cujo resultado ainda aguarda confirmação da Cloudflare.
+- [x] 2026-08-11 — primeiro Workers Build/deploy real confirmado em `quiz-gomes.teteumatheus1062.workers.dev`; `/api/health` respondeu `status: ok`.
+- [x] 2026-08-11 — primeiro incidente real de autenticação/onboarding investigado; correção mantém RS256/audience/issuer e adiciona refresh único, diagnóstico seguro e saída do onboarding.
+- [x] 2026-08-11 — reteste real aprovado: Google Authentication, onboarding, perfil persistido, `JOGADOR · ADMIN`, secret ADMIN e PWA no `workers.dev`.
+- [x] 2026-08-11 — dataset temporário `SYNTHETIC_SMOKE_TEST` preparado em migrations próprias, com limpeza futura versionada e inativa.
+- [x] 2026-08-11 — fluxo principal WebSocket real aprovado com dois usuários: matchmaking Casual, cinco perguntas EASY, respostas, pontuação e resultado.
+- [x] 2026-08-14 — smoke real do Milestone 8 confirmou reconexão dentro de 7 s, `VOID` acima da graça e nova partida imediata com as mesmas contas.
+- [x] 2026-08-11 — Milestone 8.5 — Gameplay Presentation Polish implementado e validado localmente, sem alteração de gameplay ou rede.
+- [x] 2026-08-11 — reteste visual real do Milestone 8.5 aprovado pelo proprietário: timer, layout, animações e tela de resultado satisfatórios em produção.
+- [x] 2026-08-11 — calibração final do Milestone 8.5 implementada localmente com resultado em 2.000 ms e apresentação da próxima pergunta em 1.600 ms.
+- [x] 2026-08-11 — reteste real da cadência `2.000 / 1.600` melhorou novamente a partida e motivou uma última calibração pequena.
+- [x] 2026-08-11 — calibração `2.400 / 1.900` e revelação autoritativa das duas escolhas implementadas e validadas localmente.
+- [x] 2026-08-21 — smoke físico aprovado pelo proprietário: partida Fácil real com dois usuários, cadência `2.900 / 1.900`, acerto, erro e timeout.
+- [x] 2026-08-12 — sistema unificado de arte dos temas implementado e validado localmente, com ícones próprios, upload ADMIN em D1 e auditoria de carregamento.
+- [x] 2026-08-12 — falha remota da migration de arte isolada no parser multi-statement do D1; `0004` pendente tornada robusta sem triggers e coberta por gate pré-deploy.
+- [x] 2026-08-18 — smoke real do Theme Artwork aprovado pelo proprietário em produção: arte e migration D1-safe `0004` operantes, sem regressão reportada.
+- [x] 2026-08-13 — correção de escopo do Milestone 8.5 concluída localmente: matchmaking visual/autoritativo, apresentação do adversário, preload seguro, marca oficial e avatar personalizado.
+- [x] 2026-08-21 — smoke físico aprovado pelo proprietário: apresentação real do adversário e upload/troca/remoção de avatar com usuários autenticados.
+- [x] 2026-08-14 — correção final do Milestone 8 concluída localmente: deadline de reconexão autoritativo, recuperação terminal, cleanup/self-healing, códigos seguros e pool sintético ampliado.
+- [x] 2026-08-14 — produção aprovou o fluxo `partida 1 → queda >7 s → VOID → partida 2 imediata` com as mesmas contas; não houve lock terminal persistente.
+- [x] 2026-08-14 — hardening final de UX/liveness concluído localmente: questão removida na perda local/`PAUSED`, heartbeat leve e matchmaking modal de verdade.
+- [x] 2026-08-18 — smoke físico de modo avião e modalidade real aprovado: pergunta removida localmente, pausa/retomada/VOID corretos, revanche imediata e navegação integralmente bloqueada durante matchmaking.
+- [x] 2026-08-18 — sincronização visual pré-9A concluída localmente: perda local sem contador fictício e graça visual derivada somente de `graceRemainingMs` autoritativo com relógio monotônico.
+- [x] 2026-08-21 — smoke físico final de sincronização visual aprovado pelo proprietário nos dois aparelhos; perda local sem contador fictício e graça exclusivamente autoritativa.
+- [x] 2026-08-21 — Milestones 8 e 8.5 oficialmente FROZEN após aprovação física em produção; motor, reconexão e matchmaking permanecem congelados, exceto integração mínima obrigatória de bloqueios na fila ou regressão comprovada.
+- [x] 2026-08-21 — Milestone 9A Social Foundation implementado e validado localmente: descoberta pública, amizades, recusas direcionais, bloqueios, compatibilidade na fila e FCM opcional por instalação.
+- [x] 2026-08-21 — smoke físico parcial do 9A aprovado: busca nominal/ID, pedido, primeira recusa, bloqueio, invisibilidade e incompatibilidade competitiva.
+- [x] 2026-08-21 — Milestone 9A.1 implementado e validado localmente: cancelamento pré-partida identificado, retorno ao tema e canal Social hibernável com contador global/invalidações realtime.
+- [x] 2026-08-21 — smoke físico integral do Milestone 9A.1 aprovado pelo proprietário em produção: cancelamento por nome/contexto, usuários online únicos e pedidos atualizados com Social aberta.
+- [x] 2026-08-21 — Milestone 9A.1 oficialmente concluído após aprovação física; M8/M8.5, Social Foundation e realtime global permanecem preservados.
+- [ ] Milestone 9A — smoke físico pós-deploy pelo proprietário: descoberta, pedidos, três recusas direcionais, bloqueios/pareamento e push real somente após configuração opcional do Firebase/Cloudflare.
+- [x] 2026-08-21 — Milestone 9B implementado e validado localmente: presença privada/autoritativa entre amigos, snapshot versionado, fanout direcionado e Social responsivo refinado.
+- [x] 2026-09-11 — smoke físico integral do Milestone 9B APROVADO pelo proprietário em produção: Online, matchmaking, partida, reconexão, offline, múltiplas abas e dispositivos, nova amizade, remoção, bloqueio, busca sem presença, contador global, mobile/desktop/escuro e regressão de gameplay.
+- [x] 2026-09-11 — Milestone 9B oficialmente CONCLUÍDO e FROZEN; M8, M8.5, 9A, 9A.1 e 9B permanecem preservados.
+- [x] 2026-09-10 — apresentação do duelo implementada e validada localmente: composição VS na apresentação e no lobby, coreografia em quatro tempos, continuidade FLIP até o placar e cadência ampliada para 1.200/1.200/900 ms sob autorização explícita do proprietário.
+- [ ] Apresentação do duelo — smoke físico pós-deploy pelo proprietário: coreografia, continuidade modal→lobby→placar, retrato/moldura/liga, paisagem, claro/escuro e `prefers-reduced-motion` em aparelhos reais.
+- [x] 2026-09-10 — Milestone 9C+M10 (unificado, Desafios entre amigos) — regras globais aplicadas: 5/8/12 perguntas, sorteio sem histórico de exibição, limite de 200 amizades e silenciamento por amizade.
+- [x] 2026-09-10 — Milestone 9C+M10 — desafio simultâneo ("Desafiar agora") implementado e validado localmente: núcleo de domínio, migration 0008, repositório com CAS, aceite no MatchRoom existente, realtime no canal social e interface no tema e no Social.
+- [x] 2026-09-11 — Milestone 9C+M10 — desafio assíncrono ("Desafiar depois") implementado e validado localmente: conjunto selado uma vez para os dois, metade por vez com as primitivas do M8, sigilo e revelação progressiva, resultado/XP idempotentes, rate limiting técnico e varredura de convites vencidos.
+- [x] 2026-09-11 — Milestone 9C+M10 — smoke físico REPROVADO pelo proprietário em produção. Oito defeitos reportados: lista do Social só mudava com recarregar; cards com texto genérico e botão "Jogar" fora de hora; "Desafiar amigo" aparecia em Ranqueada; DIRECT bloqueado por um ASYNC vivo da mesma dupla; espera do convite direto presa à tela do tema e perdida no reload; metade assíncrona sem saída; seletor de amigo sobreposto no celular; sessão do Firebase caindo a cada recarga no celular.
+- [x] 2026-09-11 — Milestone 9C+M10 — passe corretivo do smoke aplicado e validado localmente: `CHALLENGE_UPDATED` em toda transição autoritativa, textos e ações dos cards por papel/estado, desafio entre amigos restrito ao Casual, migration forward-only `0009` separando o limite por tipo, espera global do convite direto recuperável do servidor, "Cancelar e voltar" na metade assíncrona, seletor de amigo empilhado no celular e persistência declarada do Firebase Auth.
+- [x] 2026-09-11 — Milestone 9C+M10 — passe corretivo #2 aplicado após a reprovação física: reconciliação bounded de ciclos DIRECT/ASYNC, terminal do `MatchRoom`/`ChallengeRoom` convergindo D1, recuperação da graça de 7 s sem socket, card Social compacto com presença privada real e regressões de lifecycle/mobile. Nenhum novo smoke físico foi declarado.
+- [x] 2026-09-11 — Milestone 9C+M10 — corrective #3 aplicado após persistir ghost DIRECT em produção: liveness agora vem do `MatchRoom` autoritativo (`/reconcile`), reserva `PREPARING` sem state após 7 s vira `VOID` e libera locks; o PWA ativa/recarrega bundles novos apenas fora de `/partida/*` e `/desafio/*`. Smoke físico continua reprovado/pendente.
+- [x] Milestone 9C+M10 — corrective #3 fisicamente aprovado pelo proprietário; DIRECT/ASYNC, recovery e PWA correspondente estão CONCLUÍDOS/FROZEN. A regressão integral retorna ao smoke final M12.
+- [ ] M11/M12 — checkpoint de finalização: corrigidos nível do shell, melhor tema real no perfil, disponibilidade DIRECT somente ONLINE, limpeza de mute em unfriend/block e retomada única de intenção pós-login. Próxima continuação: migrations forward-only de reports/missões/streak/stats e superfícies ADMIN ponta a ponta; V1 ainda não está finalizada.
+- [ ] Milestone 11 — criação/moderação/import/admin (autorizado; não concluído).
+- [ ] Milestone 12 — e2e, performance, acessibilidade, segurança e deploy.
+
+## Decisões
+
+1. **Monorepo npm simples.** Três workspaces evitam tooling excessivo e isolam domínio puro.
+2. **Validação Firebase sem Service Account.** `jose` valida RS256 e claims com certificados públicos rotativos, conforme a documentação Firebase para runtimes sem Admin SDK nativo.
+3. **Durable Objects SQLite + Hibernation.** É o backend disponível no plano gratuito e evita duração ociosa.
+4. **Estado usuário+pool binário.** Bitmap de descoberta fica em uma row compacta versionada; formatos legados com fila recente são apenas compatibilidade e não influenciam o sorteio.
+5. **Slots densos.** Sorteio uniforme por inteiro e índice; nunca `ORDER BY RANDOM()`.
+6. **Categoria usa média ordinal fracionária.** Apenas temas com Ranqueada, cap em Desafiante I, sem efeito competitivo.
+7. **R2 adiado, mas preparado.** `ImageStorage` permanece intercambiável com chaves opacas e sem upload fictício; nenhum binding, bucket, permissão ou custo será ativado sem nova autorização.
+8. **Repositório público autorizado.** A autorização explícita do proprietário em 2026-08-10 substitui a exigência anterior de repositório privado. Configuração Web Firebase pode ser pública; credenciais de servidor permanecem fora do Git.
+9. **Sala simultânea é autoridade única.** O Durable Object recebe somente READY, opção escolhida e comandos de conexão; deadline, `remainingMs`, correção, score, progressão e resultado são derivados no servidor e persistidos a cada transição.
+10. **Exclusividade e resultado no D1.** `active_match_players` impede duas partidas por usuário; `result_ledger`, `result_version` e um único `D1Database.batch()` tornam resultado, XP, Conhecimento, histórico e liberação do lock transacionais e idempotentes.
+11. **Deploy real não é simulado.** A criação manual dos D1 é evidência externa, mas migrations, Worker, Durable Objects, hostname e smoke tests só serão marcados como reais após o Workers Builds terminar na conta do proprietário.
+12. **Workers Builds parte da raiz.** `npm ci` e o gate completo coordenam os três workspaces; o deploy é aceito somente na `main`, aplica migrations pendentes antes do Worker/PWA e nunca referencia seeds.
+13. **Produção é mesma origem.** O Worker deriva sua própria origem de `request.url`; `ALLOWED_ORIGINS` é apenas uma lista adicional explícita de desenvolvimento, sem wildcard e sem hostname `workers.dev` hardcoded.
+14. **401 de Firebase tem uma única recuperação.** O cliente reutiliza o ID Token atual uma vez, força `getIdToken(true)` após o primeiro 401 e repete exatamente uma vez. Uma segunda rejeição encerra o fluxo com mensagem clara; assinatura RS256, `kid`, `aud`, `iss`, `exp`, `iat`, `auth_time` e `sub` continuam obrigatórios no Worker.
+15. **Conteúdo de smoke real é isolado e temporário.** Categoria, tema e pool com 250 perguntas artificiais usam IDs reservados, texto inequívoco e a flag `SYNTHETIC_SMOKE_TEST`; Questions migra antes de Core. A limpeza fica fora do pipeline até autorização posterior, remove apenas o conteúdo marcado e preserva referências históricas com tombstones desativados.
+16. **Polimento da partida não muda autoridade.** O deadline e `remainingMs` do Durable Object continuam sendo a única referência; CSS anima apenas a barra, React atualiza o número inteiro isoladamente e o cliente envia `ROUND_READY` somente após a apresentação local, sem calcular score, resposta ou timeout.
+17. **Cadência local respeita o piso do servidor.** `roundPresentationDelay()` usa o maior valor entre `MATCH_ROUND_TRANSITION_MS` e `payload.transitionMs`; a calibração atual usa `ROUND_RESULT` de 2.900 ms e apresentação de 1.900 ms. `QUESTION_DURATION_MS` permanece em 10.000 ms e só começa depois do READY dos dois jogadores.
+18. **Escolhas são reveladas somente após resolução autoritativa.** Durante `ANSWERING`, a projeção informa apenas se o adversário respondeu. Em `ROUND_RESULT` ou estado equivalente já resolvido, `resolution` recebe do estado do MatchRoom as opções selecionadas por ambos, inclusive erro ou `null` por timeout; o cliente nunca deriva a escolha adversária pelo score.
+19. **Arte de tema é uma união exclusiva e versionada.** `ICON`, `CUSTOM` e `NONE` não coexistem. SVG padrão é estático/reutilizável; WebP personalizado ocupa uma única row BLOB separada no Core D1. Catálogo nunca lê o BLOB, URL pública contém versão, alteração exige versão esperada e somente ADMIN pode gravar.
+20. **Migrations remotas D1 não usam triggers compostos.** O endpoint `/query` recebe a migration inteira e seu parser pode truncar corpos `BEGIN … SELECT CASE … END; END`. A `0004` usa `CHECK`, chave única, FK composta e batches transacionais; o pipeline bloqueia `CREATE TRIGGER`, valida parse/exec/upgrade/rollback localmente e mantém o Workers Build remoto como smoke definitivo.
+21. **Busca visual não substitui autoridade.** A fila envia `SEARCHING.timeoutAt`; o cliente deriva `startedAt = timeoutAt - 60.000`, atualiza apenas o texto por segundo e nunca estende a fila. `MATCH_FOUND` entra em apresentação explícita e não navega imediatamente.
+22. **Preload não inicia gameplay.** Durante 2.900 ms o cliente pode abrir/bufferizar o socket da sala e baixar somente chunk/assets públicos. `READY` fica proibido até a MatchScreen assumir o socket; `correctOption`, resposta adversária e pergunta futura não entram na projeção.
+23. **Avatar customizado é separado e substitutivo.** O BLOB WebP 256 × 256 fica em `user_custom_avatars`; perfil/ranking/partida leem apenas versão ativa. Firebase UID autenticado define o dono e a resolução única em UI é `custom → Google → iniciais`.
+24. **A marca deriva da fonte oficial.** Browser, PWA, Apple e marca interna usam derivados dimensionados do anexo oficial. A variante escura troca somente áreas brancas por near-black, sem `filter: invert()` e sem alterar os ícones canônicos instalados.
+25. **A fronteira persistida de 7 segundos é definitiva.** Em `PAUSED`, tanto `CONNECT` quanto `ALARM` comparam `graceDeadlineMs`; 6.999 ms restaura exatamente a fase e o tempo congelados, enquanto 7.000 ms ou mais finaliza em `VOID`, independentemente da ordem da corrida ou do atraso do alarme.
+26. **Terminal nunca volta a ser jogável.** `FINALIZING` não projeta pergunta e força finalização idempotente; `VOID`/`FINISHED` restauram o summary do storage/D1. Tempo local sem conectividade não declara estado terminal: o cliente consulta novamente a sala em cadência limitada e aplica `ANSWERING`, `PAUSED`, `VOID` ou `FINISHED` conforme a fonte autoritativa, inclusive em `online`, foco e visibilidade.
+27. **Locks terminais têm reparo restrito.** A transação de resultado continua removendo os dois locks; uma associação histórica que aponta para `VOID`/`FINISHED` é apagada ao ser consultada, mas locks de `PREPARING`/`PLAYING` nunca são tratados como órfãos. Presence terminal residual volta a `idle` somente quando a membership e o recurso confirmam a mesma sala terminal.
+28. **Falha de pareamento expõe somente código seguro.** `PLAYER_BUSY`, `PROFILE_REQUIRED`, `QUESTION_POOL_EMPTY`, `QUESTION_POOL_INCONSISTENT` e `QUESTION_POOL_INSUFFICIENT` chegam ao cliente sem SQL, stack ou detalhe interno. O dataset reservado cresceu de 30 para 250 perguntas; a regra global de 200 recentes não mudou e perguntas futuras não exibidas não entram no histórico ao anular.
+29. **Perda local fecha a superfície da pergunta sem inventar graça.** `offline`, close/error do socket ou ausência de `PONG` tiram imediatamente a `MatchScreen` jogável do DOM e mostram uma tela opaca local sem número. O heartbeat de 1.500 ms considera a conexão silenciosa após 3.000 ms, mas nunca decide pausa, deadline, score, `RESUMED` ou `VOID`; toda decisão de gameplay permanece no MatchRoom.
+30. **Matchmaking ocupa o top layer.** A busca usa `dialog.showModal()` em Portal, torna o AppShell explicitamente `inert`, confina Tab, trata Escape como cancelamento seguro durante busca/timeout e restaura o foco ao fechar. Busca, cancelamento, timeout e apresentação do adversário mantêm o fundo indisponível até o estado `idle` ou a navegação para a sala.
+31. **A graça visual possui uma única fonte.** Somente uma projeção `PAUSED` cria contador. O cliente ancora o `graceRemainingMs` calculado pelo MatchRoom em `performance.now()` ao recebê-lo; não usa `Date.now()`, timestamp enviado pelo jogador, deadline local ou chegada visual a zero para decidir `VOID`.
+32. **M8/M8.5 estão congelados após aprovação física.** Reconexão, MatchRoom, timers, locks, score, Knowledge, XP, perguntas, apresentação, avatar, marca e modalidade não recebem alteração sem bug comprovado. O M9A só acrescenta a checagem obrigatória de incompatibilidade por bloqueio na `MatchmakingQueue`, sem tocar a sala.
+33. **Identidade social pública é mínima.** Pesquisa nominal usa prefixo indexado/limitado; `#QG...` exige igualdade exata. A projeção social inclui somente nome, ID público, avatar e frame; UID Firebase, email, IDs internos e FIDs nunca aparecem em superfícies públicas. Bloqueio em qualquer direção equivale a usuário indisponível para ambos.
+34. **Recusas e bloqueios são conceitos independentes.** Três recusas explícitas contam exclusivamente para remetente → destinatário e impõem 30 dias; expiração reseta sob demanda, aceite limpa o ciclo, cancelamento não incrementa. `D1Database.batch()`, nonce de resolução e índice único parcial da dupla impedem pedidos cruzados/efeitos duplicados. Bloquear remove amizade/pedidos, preserva cooldown e não interrompe partida existente.
+35. **Cloud Messaging gratuito é a única exceção Firebase autorizada além do Google Auth.** Firebase JS SDK `12.17.1` usa `register()`/`onRegistered()` e Firebase Installation IDs; FCM HTTP v1 recebe `message.fid`, sem APIs/token legados. A chave VAPID pública pode estar no bundle; `FCM_SERVICE_ACCOUNT_JSON` existe somente como secret de runtime Cloudflare. Push é opt-in, multi-device, pós-persistência, best-effort e inexistente com credencial ausente.
+36. **Workbox e push compartilham um único service worker.** `injectManifest` preserva shell offline, precache, atualização e APIs `NetworkOnly`; a registration existente é entregue explicitamente ao Firebase Messaging. Foreground atualiza badge/lista, background cria uma notificação controlada e o clique abre Social/Pedidos. Não há segundo root scope, polling, billing, Firestore, Storage ou Functions.
+37. **Cancelamento pré-partida tem semântica própria sem efeito competitivo.** `VOID/CANCELLED` persiste somente o assento do jogador autoritativo e projeta nome público real; o adversário não vê placar nem UID, quem cancelou retorna imediatamente, e route state preserva tema/dificuldade/modalidade. A alteração mínima de domínio/projeção não toca reconexão, timers, score, XP, Knowledge, locks ou demais voids.
+38. **Presença global e individual compartilham um único canal.** `SocialRealtimeHub` global aceita tickets curtos autenticados, conta IDs internos únicos entre sockets hibernáveis e mantém `ONLINE_COUNT`; várias abas não duplicam usuários. O 9B acrescenta presença privada somente entre amizades válidas, sem presença pública, last-seen, desafios ou canal adicional.
+39. **Realtime social acorda somente por mudança real.** Mutação persistida aciona `waitUntil` com `SOCIAL_INVALIDATED` genérico para todas as sessões das pessoas afetadas; o cliente atualiza summary/snapshot sob demanda, sem revelar bloqueio. `PING/PONG` a cada 45 s usa auto-response Cloudflare sem acordar o DO, sem polling HTTP/D1 e sem depender de FCM.
+40. **Conectividade e atividade têm autoridades separadas.** A última sessão `SocialRealtimeHub` encerrada sempre produz `OFFLINE`, mesmo se `PresenceHub` conservar atividade competitiva; sessão ativa combina `idle/invite → ONLINE`, `matchmaking → MATCHMAKING`, `preparing/playing/finished → IN_MATCH` e `reconnecting → RECONNECTING`. Nenhuma informação de sala, UID, recurso ou adversário cruza o socket social.
+41. **Fanout e snapshot de presença são privados e versionados.** D1 resolve amizades válidas sem bloqueio somente diante de mudança/snapshot real; o navegador nunca escolhe destinatários. Revisão lógica é reservada antes de awaits, snapshot antigo não substitui evento novo e gerações descartam respostas HTTP obsoletas após remoção/bloqueio.
+42. **Motion social usa somente CSS e WAAPI/FLIP.** Amigos online/offline são ordenados por disponibilidade, busca, partida e nome; verde/amarelo/cinza têm tokens próprios, estado textual acessível e animações pontuais. Dark/mobile/desktop/reduced-motion não exigem dependências, loops de animação, polling ou segundo WebSocket.
+
+## Descobertas e riscos
+
+- O repositório está **público** por decisão explícita do proprietário. A árvore versionável foi auditada antes da publicação; somente a configuração Web pública do Firebase foi mantida no frontend.
+- O ambiente não possui `gh`; publicação, quando segura, usará a API Git do conector ou exigirá instalação externa.
+- A logo oficial foi recebida em 2026-08-13. O JPEG fonte não é distribuído; somente derivados técnicos WebP/PNG/ICO dimensionados entram no app, sem redesenho.
+- Alterar slots ativos exige versionar/migrar bitmaps; a V1 bloqueará publicação durante migração para preservar descoberta exata.
+- Revogação imediata de Firebase tokens não é consultada por request sem Admin API; avaliar em hardening para ações críticas.
+- Bindings D1 precisam de UUIDs distintos; IDs iguais fazem o Wrangler compartilhar o mesmo arquivo SQLite entre shards. Os UUIDs reais configurados em 2026-08-11 foram testados em armazenamento local vazio e permaneceram isolados.
+- O helper de evicção do runtime Vitest bloqueou com WebSockets hibernáveis ativos. O teste simulado comprova estado pausado no storage e reconexão WebSocket pelo mesmo caminho de restauração; evicção/hibernação efetiva permanece parte do smoke test em `workers.dev` e não foi declarada como executada localmente.
+- `wrangler whoami`, executado nesta sessão local em 2026-08-10, retornou `You are not authenticated`; por isso nenhum deploy foi feito pelo Codex. Depois, o proprietário conectou Workers Builds e confirmou externamente o primeiro deploy e `/api/health`, sem disponibilizar credenciais à sessão.
+- O token automático documentado do Workers Builds não inclui `D1 Edit` e inclui permissões desnecessárias de KV/R2. A conexão deve selecionar token de usuário restrito a `Workers Scripts: Edit` e `D1: Edit` na conta correta, sem R2 ou Billing.
+- O primeiro erro real era reduzido a uma mensagem genérica depois da etapa criptográfica, portanto a causa específica da rejeição original não pode ser recuperada retroativamente. A investigação confirmou projeto/issuer, bundle, domínio, certificados X.509 atuais e importação/verificação RS256 no `workerd`; novos logs registram somente `stage` e `reason`, sem token, UID, email, cookies ou payload.
+- O tema sintético será referenciado pelas partidas reais de smoke. Por isso, a limpeza futura não pode apagar o tema quando houver histórico: perguntas/pool são removidos, catálogo é desativado e o registro mínimo permanece como tombstone para não tocar em partidas, usuários ou resultados.
+- A projeção simultânea continua sem expor `opponent.selectedOption`, correção ou resposta correta durante `ANSWERING`. A revelação das escolhas certa ou errada existe exclusivamente dentro de `resolution`, depois que `resolveRound()` já produziu o estado autoritativo; score não é usado para inferir alternativa.
+- `coverImageKey` existia no modelo, mas não possuía resolução HTTP ligada aos temas: migrations/seeds atuais usam `NULL` e `LocalImageStorage` atende somente fixtures de perguntas. A arte dinâmica passou a ter endpoint próprio; `coverImageKey` permanece apenas como ponte compatível, sem URL inventada.
+- Wrangler `4.120.1` separa migrations localmente antes do `db.batch()`, mas envia a migration remota inteira, junto do tracking, para o endpoint D1 `/query`. O primeiro `SELECT CASE … END` sem parênteses do trigger `validate_theme_artwork_blob_insert` foi interpretado como fim do trigger e chegou incompleto ao SQLite remoto; `PRAGMA`, `RAISE` isolado e CRLF não foram a causa. A `4.121.0` não contém correção de migration/parser/trigger e não foi adotada.
+- A documentação D1 garante rollback da migration que falha. Como a tentativa da `0004` não foi registrada, corrigir a própria `0004` preserva produção em `0003`, instalações vazias e o princípio de nunca reescrever uma migration já aplicada. O próximo Workers Build é a confirmação remota; teste D1 local não substitui esse smoke.
+
+## Testes requeridos por marco
+
+- M0/M1: lint, typecheck, unit, build e render responsivo básico.
+- M2: token ausente/inválido, claim incorreta, ADMIN falsificado, onboarding idempotente.
+- M5: thresholds, overflow, rebaixamento, cap, tabela, simulação ~2.457; XP exemplos/total/cap.
+- M6: recentes 200/201, união, bitmap round-trip, uniformidade estrutural e pool insuficiente.
+- M7: scoring em limites de ms, timeout, empate, navbar ausente e overflow.
+- M8+: cancelamento, readiness, reconexão 7 s, dupla queda, finalização idempotente e vazamento assíncrono.
+- M8 concluído local/simulado: 5/10/15 rodadas, empate, Casual sem Conhecimento, XP, abandono, dupla queda, lock único, payload estrito, sigilo do adversário, retry idempotente e transação D1; o health real passou, enquanto hibernação e smoke WebSocket reais continuam pendentes.
+- Preparação de deploy: origem própria, localhost explícito, wildcard/origem externa e bloqueio do script fora do Workers Builds/`main`; migrations vazias devem preservar isolamento core/questions.
+- Incidente de autenticação: retry único após 401 com refresh forçado, segunda falha terminal, saída real do onboarding, ADMIN posterior à autenticação, diagnóstico de algoritmo/chave/assinatura/claims sem token ou PII e fixture X.509 sintética no runtime Workers.
+- Dataset de smoke: uma categoria interna, um tema, somente EASY, 250 slots densos, quatro opções, distribuição 63/63/62/62, nenhuma imagem/fonte/trivia e flag editorial exata; limpeza deve preservar todo histórico.
+- M8.5: timer sem rerender de alta frequência, segundo inteiro sincronizado, pausa por `phaseRemainingMs`, retomada por `remainingMs`, resultado por 2.900 ms, READY após apresentação de 1.900 ms, título de rodada único, escolhas autoritativas com dois avatares, resultado com dois perfis e `prefers-reduced-motion`.
+- Arte de tema: união exclusiva, 16 chaves/SVGs, fallback, imagem quebrada, crop/reencode/cap, magic bytes/chunks/dimensões, autorização ADMIN, conflito de versão, replace/remove, URL/ETag/cache, ausência de BLOB no catálogo, migration vazia e chunks lazy fora do precache.
+- Compatibilidade remota de migrations: parse de cada arquivo com o Wrangler fixado, proibição de trigger composto, banco vazio, upgrade exato `0003 → 0004`, schema/FK/constraints, invariantes metadata/BLOB e rollback sem resíduo em schema ou `d1_migrations`; smoke hospedado continua obrigatório.
+- Correção M8.5: `SEARCHING.timeoutAt`, 00:00–01:00, cancelamento imediato, globo/lupa/personagens/reduced-motion, `MATCH_FOUND` sem navegação imediata, apresentação 1.200/800/900 ms, payload individual sem segredo, preload sem READY, avatar custom→Google→iniciais, upload/replace/remove/version/cache, manifesto/logo claro/escuro e Chromium desktop/mobile.
+- Fechamento M8: corrida 6.999/7.000/7.001 ms, CONNECT/ALARM após deadline, todas as fases pausáveis, FINALIZING neutro, reconexão terminal, offline além da graça, recuperação por retorno de rede, lock/Presence, finalização idempotente e `partida 1 → VOID → partida 2` com os mesmos usuários.
+- Hardening UX M8: offline imediato, socket silencioso com `navigator.onLine=true`, retomada da mesma pergunta/tempo, `VOID` sem retorno da questão, `PAUSED` opaco nos dois clientes, modal top-layer, Tab/Escape, cancelamento/Presence, encontrado e timeout com fundo inerte, desktop e viewport mobile.
+
+## Diário de execução
+
+### 2026-08-10 — início
+
+- Repositório remoto sem commits/conteúdo.
+- Stack atualizada com Node 22+, React/Vite, Wrangler, D1 e DO.
+- Fontes oficiais consultadas e registradas.
+- Próximo: concluir scaffold e motores puros, instalar dependências e fechar o primeiro ciclo `npm run check`.
+
+### 2026-08-10 — checkpoint implementado
+
+Entregue localmente:
+
+- monorepo npm com domínio puro, React/PWA e Worker;
+- sistema visual responsivo com as quatro abas exatas, tema Claro/Escuro/Sistema e `prefers-reduced-motion`;
+- Firebase Google Auth, onboarding, ID público imutável e role ADMIN por UID do ambiente;
+- D1 core/question shard com schemas de usuários, social, rankings, matches, perguntas, fontes, stats, cosméticos e auditoria;
+- catálogo, busca, página de tema, Top 5, ranking pessoal e descoberta histórica por bitmap;
+- ranking/Conhecimento, média de categoria, XP, scoring, resultado idempotente e regras de conexão;
+- pool denso, seleção uniforme, união das últimas 200 e importação administrativa idempotente para revisão;
+- tickets WebSocket de uso único, presença por jogador, fila exata com proximidade de elo, timeout server-side, sala, READY, preparação e reconexão;
+- projeção que impede vazamento da escolha/score/resposta correta antes da trava local, inclusive assíncrono;
+- validador editorial por largura medida, não só caracteres;
+- fixtures sintéticas isoladas e adapters de imagem sem R2.
+
+Validação realmente executada:
+
+- `npm run lint`: passou, 0 warnings;
+- `npm run typecheck`: passou nos 3 workspaces;
+- `npm test`: 12 arquivos, 73 testes, todos passaram;
+- `npm run build`: passou; PWA gerou manifest/service worker e Worker gerou bundle ESM;
+- `npm audit --omit=dev --audit-level=high`: 0 vulnerabilidades;
+- migrations core/questions aplicadas do zero em diretório D1 temporário;
+- seeds executados: 4 categorias, 4 temas, 8 perguntas e 8 fontes verificadas.
+
+Limitação do ambiente:
+
+- `wrangler dev` reconheceu todos os bindings e databases, mas o runtime do contêiner encerrou antes de abrir a porta com `uv_interface_addresses returned Unknown system error 1`, inclusive em `127.0.0.1`. Portanto smoke test HTTP/WebSocket real permanece pendente em uma máquina/CI que permita interfaces de rede.
+
+Autorização e segurança de publicação:
+
+- o proprietário autorizou explicitamente manter `Fomes1574/QuizGomes` público, substituindo a restrição anterior;
+- a revisão pré-publicação não encontrou chaves privadas, Service Accounts, tokens GitHub/Cloudflare, secrets do Worker, credenciais ou arquivos reais de ambiente na árvore versionável;
+- `.gitignore`, `.env.example` e `.dev.vars.example` separam configuração pública, desenvolvimento local e secrets remotos;
+- R2 e qualquer produto/plano pago permanecem desabilitados.
+
+### 2026-08-10 — publicação pública concluída
+
+- a `main` pública foi criada e avançada somente por commits fast-forward, sem force push;
+- 107 arquivos foram publicados e a árvore Git remota coincidiu exatamente com a árvore local validada;
+- `.gitignore`, exemplos de ambiente, configuração Firebase Web, Wrangler e documentação de deployment foram relidos diretamente do GitHub;
+- buscas pós-push por assinaturas de chaves privadas, Service Accounts e tokens de provedores retornaram zero resultados;
+- próximo trabalho: Milestone 8, com entrega autoritativa de cada pergunta no Durable Object e finalização transacional/idempotente da partida.
+
+### 2026-08-10 — Milestone 8 implementado; deploy real bloqueado por autenticação
+
+Implementação concluída:
+
+- motor de estados puro para lobby, preparação, pergunta entregue, READY por rodada, resposta, resolução, pausa, finalização e anulação;
+- pergunta pública atual projetada sem alternativa correta; perguntas futuras e segredo do adversário permanecem somente no servidor;
+- 10 segundos iniciados apenas depois do READY dos dois jogadores, com deadline/`remainingMs` e score calculados pelo relógio do Durable Object;
+- bolinha cinza/amarela baseada somente em submissão, score adversário congelado até a resolução e nenhuma alternativa/correção do adversário no payload;
+- progressão exata de 5/10/15 perguntas, resultado visível por 1,2 s, empate sem desempate e finalização de Casual/Ranqueada;
+- pausa integral por até 7 s, preservação do tempo, reconexão, restauração pelo storage, abandono individual, readiness desigual, dupla queda e falha sistêmica;
+- locks D1 por jogador, membership server-side e claims de presença impedindo participação concorrente;
+- resultado em batch transacional/idempotente com ledger, ranking, XP, respostas, histórico compacto das perguntas e liberação dos locks;
+- retry de finalização e de limpeza de presença; falha durante inicialização anula sem penalidade e libera locks;
+- cliente realtime em português, sem barra principal durante a partida, com pergunta X/Y, timer, pausa, resolução acessível e tela terminal.
+
+Validação local realmente executada:
+
+- `npm run lint`: aprovado, 0 warnings;
+- `npm run typecheck`: aprovado nos três workspaces;
+- `npm test`: 13 arquivos/85 testes unitários e 1 arquivo/5 testes no runtime Workers, todos aprovados;
+- `npm run build`: aprovado para domínio, PWA e Worker;
+- migrations `0001_core.sql`, `0002_live_matches.sql` e `0001_questions.sql` aplicadas do zero em diretório D1 temporário e tabelas verificadas;
+- nenhum seed foi executado contra ambiente remoto.
+
+Validação simulada no runtime Workers:
+
+- WebSockets reais do runtime local para dois jogadores autenticados diretamente no stub da sala, READY, cinco rodadas, payload malicioso rejeitado, pausa/reconexão e término; emissão/consumo HTTP de ticket não foi classificada como smoke real;
+- D1 do runtime com pergunta pública sem `correctOption`, lock de usuário, respostas, empate, Casual, dupla queda, Conhecimento/XP e retry idempotente;
+- storage do Durable Object inspecionado durante a pausa para confirmar `phaseRemainingMs` preservado;
+- não foi declarada evicção/hibernação local: o helper do Vitest bloqueou com sockets hibernáveis ativos.
+
+Validação real Cloudflare não executada:
+
+- `wrangler whoami` retornou `You are not authenticated`;
+- não houve criação de `quiz-gomes-core`/`quiz-gomes-questions-01`, troca de UUID remoto, migration remota, deploy, domínio `workers.dev`, `/api/health` remoto ou smoke HTTP/WebSocket remoto;
+- naquele checkpoint, o bloqueio dependia de autenticação do proprietário; o fluxo atual foi substituído pela conexão via Workers Builds documentada na seção de 2026-08-11;
+- Milestone 9 não foi iniciado.
+
+### 2026-08-11 — D1 reais e Workers Builds preparados
+
+Configuração concluída:
+
+- `CORE_DB` aponta para `quiz-gomes-core` (`3260deba-54ab-4e47-8c7f-a4d088dad728`);
+- `QUESTIONS_DB` aponta para `quiz-gomes-questions-01` (`40ea8ac4-9dd6-40a8-b032-89cb3cede229`);
+- nomes, bindings, migrations, regras de jogo e Durable Objects não foram alterados;
+- root scripts `build:cloudflare` e `deploy:cloudflare` coordenam os workspaces npm;
+- o deploy remoto é bloqueado fora de `WORKERS_CI=1` + branch `main`, aplica migrations antes de `wrangler deploy` e usa `--experimental-provision=false`;
+- nenhum comando remoto referencia seeds, R2, billing ou produto pago;
+- produção aceita dinamicamente a própria origem; `localhost:5173` ficou somente em `.dev.vars` e CORS não aceita `*`.
+
+Validação local realmente executada:
+
+- `npm run build:cloudflare` partiu de dependências limpas, executou `npm ci` e concluiu todo o gate;
+- lint e typecheck passaram nos três workspaces;
+- 14 arquivos/89 testes unitários passaram;
+- 2 arquivos/7 testes no runtime Workers passaram, incluindo origem própria e bloqueio de origem externa;
+- builds de domínio, PWA e Worker passaram; o bundle PWA também foi gerado com `VITE_ENABLE_REALTIME_MATCHES=true`;
+- o guard de deploy recusou execução local antes de qualquer chamada D1/Cloudflare;
+- migrations aplicaram do zero usando os UUIDs reais: 2 no core e 1 em questions; core não contém tabela `questions` e questions não contém tabela `users`;
+- nenhum seed foi usado nessa validação.
+
+Validação real Cloudflare ainda não executada:
+
+- a criação manual dos dois D1 foi informada pelo proprietário e não é classificada como execução desta sessão;
+- não foram aplicadas migrations remotas, provisionadas classes Durable Objects, criada versão Worker, gerado hostname `workers.dev`, chamado `/api/health` remoto ou aberto WebSocket remoto;
+- o próximo passo externo é conectar `Fomes1574/QuizGomes` ao Workers Builds com os valores de `docs/DEPLOYMENT.md` e iniciar o primeiro build da `main`;
+- Milestone 9 permanece não iniciado.
+
+### 2026-08-11 — primeiro deploy real e correção de autenticação/onboarding
+
+Evidência real confirmada:
+
+- Workers Builds publicou `quiz-gomes.teteumatheus1062.workers.dev` e a PWA real foi recuperada desse hostname;
+- `/api/health` respondeu `{"name":"QUIZ GOMES","status":"ok","version":"0.1.0"}`;
+- domínio autorizado, login Google, criação do Firebase User e secret `ADMIN_FIREBASE_UIDS` foram confirmados pelo proprietário;
+- o POST do primeiro perfil recebeu 401 antes desta correção; o motivo criptográfico específico não ficou disponível porque a versão implantada reduzia todas as falhas posteriores à seleção de chave à mesma mensagem.
+
+Investigação local e no runtime Workers:
+
+- configuração pública, API key, `FIREBASE_PROJECT_ID=quizgomes-cbc48`, issuer e bundle implantado foram comparados;
+- os quatro certificados X.509 publicados pelo Secure Token em 2026-08-11 foram importados com RS256 pelo `workerd` em harness temporário;
+- um JWT RS256 sintético, com X.509 e formato completo de Firebase ID Token, passou pelo verificador no runtime Workers;
+- `ADMIN_FIREBASE_UIDS` permanece fora de `requireUser` e só é consultado depois que o token produz uma identidade válida;
+- a segurança não foi afrouxada: algoritmo, `kid`, assinatura, `aud`, `iss`, `exp`, `iat`, `auth_time` e `sub` continuam obrigatórios.
+
+Correção implementada:
+
+- o Worker classifica falhas por etapa e motivo seguro, sem registrar token, payload, UID, email, cookie ou credencial;
+- toda requisição autenticada pode forçar `getIdToken(true)` após o primeiro 401 e repete no máximo uma vez;
+- uma segunda rejeição encerra com mensagem clara, sem loop;
+- o onboarding mostra o erro de sessão e oferece “Sair / trocar conta” por `signOut()` real do Firebase;
+- nenhuma regra de ranking, XP, matchmaking, partida ou perguntas foi alterada; Milestone 9 não foi iniciado.
+
+Validação executada antes da publicação:
+
+- `npm run check` com realtime habilitado: lint, typecheck, 16 arquivos/96 testes unitários, 3 arquivos/8 testes runtime Workers e builds dos três workspaces aprovados;
+- migrations aplicadas em D1 local vazio: 2 no core e 1 em questions; isolamento confirmado e nenhum seed executado;
+- `npm audit --audit-level=high`: 0 vulnerabilidades;
+- auditoria de secrets: nenhuma chave privada, Service Account, token de provedor, JWT completo, arquivo `.env` ou `.dev.vars`; somente a API key Web pública já autorizada do Firebase;
+- reteste real do perfil e smoke WebSocket completo permanecem pendentes do deploy automático deste commit.
+
+### 2026-08-11 — autenticação real aprovada e dataset do smoke WebSocket preparado
+
+Evidência real confirmada pelo proprietário:
+
+- Google Authentication, onboarding e persistência do primeiro perfil passaram em produção;
+- a conta foi reconhecida como `JOGADOR · ADMIN`, comprovando o secret `ADMIN_FIREBASE_UIDS` após autenticação válida;
+- a aplicação carregou normalmente em `quiz-gomes.teteumatheus1062.workers.dev`;
+- o incidente de autenticação/onboarding está resolvido.
+
+Preparação temporária:
+
+- `QUESTIONS_DB/0002` cria somente o pool EASY com 30 perguntas artificiais, slots 1..30, alternativas A/B/C/D e flag `SYNTHETIC_SMOKE_TEST`;
+- `CORE_DB/0003` publica a categoria interna e o tema `Teste Multiplayer` somente depois do shard de perguntas;
+- não há trivia, imagens, fontes, seed de desenvolvimento ou alteração de regra competitiva;
+- a estratégia de limpeza está versionada fora das migrations ativas e não será executada neste deploy;
+- o smoke WebSocket real com duas contas permanece o último gate do Milestone 8; o Milestone 9 não foi iniciado.
+
+Validação executada antes da publicação:
+
+- lint e typecheck dos três workspaces aprovados;
+- 16 arquivos/96 testes unitários e 4 arquivos/10 testes no runtime Workers aprovados;
+- builds do domínio, PWA com realtime ativado e Worker aprovados;
+- migrations aplicadas em bancos locais vazios: 2 em Questions e 3 em Core, sem seed e com isolamento preservado;
+- dataset conferido com 30 perguntas, 30 slots distintos de 1 a 30, nenhuma imagem/fonte e distribuição correta 8/8/7/7;
+- limpeza aplicada duas vezes num banco descartável com histórico sintético: perguntas/pool removidos, enquanto usuário, perfil, partida, jogador, snapshot, resposta, ledger, ranking e estado de pool permaneceram; catálogo virou tombstone desativado;
+- `npm audit --audit-level=high`: 0 vulnerabilidades;
+- auditoria de secrets: nenhuma credencial, chave privada, Service Account, token, JWT, arquivo real de ambiente ou URL autenticada; somente a configuração Web pública já autorizada do Firebase.
+
+### 2026-08-11 — Milestone 8.5 — Gameplay Presentation Polish inicial
+
+Evidência real confirmada pelo proprietário:
+
+- a primeira partida Casual em produção completou matchmaking, cinco perguntas EASY, respostas, pontuação e resultado com dois usuários;
+- esta evidência aprova o fluxo principal, mas não declara como executados os cenários separados de queda abaixo/acima de 7 segundos, dupla queda e liberação de locks.
+
+Implementação concluída:
+
+- o timer deixou de rerenderizar a tela 20 vezes por segundo: uma animação linear de `transform: scaleX()` desenha a barra no compositor e um subcomponente atualiza apenas o número inteiro;
+- pausa usa diretamente `phaseRemainingMs`; reconexão recria o deadline com o `remainingMs` autoritativo; o timeout visual apenas bloqueia interação local e não finaliza a rodada;
+- a transição de rodada dura 900 ms, mostra uma única composição `PERGUNTA` + `N / TOTAL` e só então envia um único `ROUND_READY`;
+- pergunta, respostas, resolução, ✓/×, indicador adversário, scores e `+N` receberam movimento curto baseado principalmente em opacity/transform;
+- desktop acima de 1024 px ganhou palco mais largo, tipografia e respostas proporcionais, placar nos cantos e melhor uso vertical, preservando o grid mobile;
+- o resultado mostra os dois perfis, nomes, scores, vencedor/empate/anulação, halo discreto, XP e Conhecimento em revelação progressiva e mantém apenas “Voltar aos temas”; o contêiner de ações admite futura rematch sem expor função inexistente;
+- molduras já equipadas recebem somente um contorno estrutural a partir do `frameId` existente; nenhum cosmético ou catálogo foi inventado;
+- `prefers-reduced-motion` remove movimentos não essenciais, mantém a resolução legível e troca a barra contínua por passos de um segundo;
+- nenhuma alteração foi feita em domínio, Worker, Durable Objects, WebSockets, D1, matchmaking, scoring, ranking, XP, Conhecimento, perguntas ou sigilo.
+
+Validação executada antes da publicação:
+
+- lint e typecheck dos três workspaces aprovados;
+- 18 arquivos/103 testes unitários aprovados, incluindo timer isolado, pausa, timeout visual, transição sem duplicidade, READY único aos 900 ms e tela final;
+- 4 arquivos/10 testes no runtime Workers/WebSocket aprovados sem alteração;
+- builds do domínio, PWA com realtime ativado e Worker aprovados;
+- `npm audit --audit-level=high`: 0 vulnerabilidades; auditoria dos arquivos alterados sem credenciais, chaves privadas, tokens ou JWTs;
+- naquele checkpoint, o reteste visual real ainda dependia do deploy automático; ele foi posteriormente aprovado pelo proprietário e está registrado na calibração abaixo. Milestone 9 não foi iniciado.
+
+### 2026-08-11 — Milestone 8.5 — calibração final de cadência
+
+Evidência real confirmada pelo proprietário:
+
+- o polimento inicial melhorou consideravelmente a experiência em produção; timer fluido, layout, animações e tela de resultado foram aprovados;
+- o intervalo entre uma resposta e a próxima pergunta ainda não dava tempo suficiente para absorver alternativa correta, escolhas, veredito, pontos e placar;
+- a calibração escolhida para o próximo teste real é `2.000 / 1.600`; a alternativa `2.000 / 2.000` permanece apenas como decisão posterior ao reteste, não como regra implementada.
+
+Implementação concluída:
+
+- `LIVE_ROUND_RESULT_MS` passou de 1.200 para 2.000 ms sem atrasar o cálculo autoritativo já concluído pelo servidor;
+- `MATCH_ROUND_TRANSITION_MS` passou de 900 para 1.600 ms; a mesma constante alimenta o timeout de READY e a duração CSS total, incluindo entrada, permanência e saída;
+- a pergunta e as alternativas são montadas desabilitadas ainda em `ROUND_READY`, entram sob o fade nos 300 ms finais e só ficam interativas depois de `ROUND_STARTED`; assim a entrada visual não consome o deadline de resposta;
+- `LIVE_ROUND_TRANSITION_MS` permanece em 450 ms no payload e `roundPresentationDelay()` continua escolhendo `max(1.600, payload.transitionMs)`, sem reduzir uma exigência maior do servidor;
+- veredito local ocupa aproximadamente 0–200 ms, avatar permitido 200–450 ms, placar e `+N` 450–700 ms; de 700 a 2.000 ms o resultado permanece estável e legível;
+- o score exibido é retido localmente até 450 ms, mas cálculo, persistência e payload autoritativos não são atrasados nem alterados;
+- `prefers-reduced-motion` continua removendo movimento não essencial, enquanto os intervalos funcionais de 2.000 e 1.600 ms permanecem para sincronizar os clientes;
+- `QUESTION_DURATION_MS` continua exatamente em 10.000 ms e só nasce no servidor após os dois `ROUND_READY`; nenhum milissegundo da apresentação reduz a janela de resposta;
+- nenhuma alteração foi feita em scoring, XP, Conhecimento, matchmaking, quantidade de perguntas, WebSockets, Durable Objects, reconexão, regra de 7 segundos ou sigilo do adversário.
+
+Validação executada antes da publicação:
+
+- lint e typecheck dos três workspaces aprovados;
+- 18 arquivos/103 testes unitários aprovados, incluindo resultado exato de 2.000 ms, piso de apresentação, READY único aos 1.600 ms e revelação do placar aos 450 ms;
+- 4 arquivos/10 testes no runtime Workers/WebSocket aprovados sem alteração de protocolo;
+- builds do domínio, PWA com realtime ativado e Worker aprovados;
+- naquele checkpoint, o reteste real de cinco perguntas com `2.000 / 1.600` permanecia pendente; ele foi posteriormente aprovado pelo proprietário e fundamentou a calibração abaixo. Milestone 9 não foi iniciado.
+
+### 2026-08-11 — Milestone 8.5 — calibração 2.400/1.900 e escolhas autoritativas
+
+Evidência real confirmada pelo proprietário:
+
+- a cadência `2.000 / 1.600` melhorou bastante a partida em produção, mas ainda justificava um pequeno aumento de leitura e fades mais suaves;
+- testes reais mostraram que o avatar adversário aparecia principalmente em acertos e que o avatar do próprio jogador não aparecia na alternativa escolhida;
+- a causa foi confirmada: `LiveMatchProjection.resolution` não enviava `opponent.selectedOption`, e o frontend tentava localizar a escolha adversária pelo aumento do score.
+
+Implementação concluída:
+
+- `LIVE_ROUND_RESULT_MS` passou de 2.000 para 2.400 ms; o cálculo autoritativo continua concluído antes da janela de apresentação;
+- a revelação usa aproximadamente 0–250 ms para veredito/avatar próprio, 250–550 ms para o avatar adversário, 550–850 ms para `+N` e placar, estabilidade até 2.100 ms e saída suave de 2.100–2.400 ms;
+- `MATCH_ROUND_TRANSITION_MS` passou de 1.600 para 1.900 ms; a composição central usa aproximadamente 320 ms para entrada e saída, e a pergunta continua entrando bloqueada nos 300 ms finais;
+- `roundPresentationDelay()` preserva `max(1.900, payload.transitionMs)`, `ROUND_READY` sai somente ao fim da apresentação e os 10.000 ms nascem no servidor apenas após READY dos dois;
+- durante `ANSWERING`, o objeto público do adversário continua contendo somente `answered`, identidade pública e score já revelável, sem `selectedOption` ou `correct`;
+- somente depois da resolução, `resolution` projeta diretamente dos `LiveRoundAnswer` autoritativos `correctOption`, as duas `selectedOption`, as duas correções e scores necessários; timeout usa `selectedOption: null`;
+- uma pausa iniciada em `ROUND_RESULT` preserva a revelação já autorizada, enquanto pausa de `ANSWERING` continua selada;
+- o frontend não contém mais inferência por diferença de score: avatar próprio e adversário aparecem nas alternativas autoritativas, sejam corretas, erradas, iguais ou diferentes;
+- alternativa correta fica verde mesmo sem votos; alternativas erradas escolhidas ficam vermelhas sem perder os avatares; duas escolhas iguais usam uma fileira legível, com molduras existentes preservadas;
+- `prefers-reduced-motion` remove movimentos não essenciais, mas os intervalos funcionais de 2.400 e 1.900 ms permanecem;
+- não houve alteração de scoring, XP, Conhecimento, matchmaking, 5/10/15 perguntas, randomização, timer de 10 segundos, transporte WebSocket, reconexão ou regra de 7 segundos; Milestone 9 não foi iniciado.
+
+Validação executada antes da publicação:
+
+- lint e typecheck dos três workspaces aprovados;
+- 18 arquivos/107 testes unitários aprovados, incluindo sigilo antes da resolução, escolha adversária certa/errada, timeout nulo prevalecendo sobre clique local, avatares iguais/diferentes, correta sem voto e READY único aos 1.900 ms;
+- 4 arquivos/10 testes no runtime Workers/WebSocket aprovados, inclusive projeções reais antes e depois de `ROUND_RESOLVED`;
+- builds do domínio, PWA com realtime ativado e Worker aprovados;
+- o smoke real Fácil em doi…3577 tokens truncated…de 200 recentes permanece intacto;
+- `LIVE_ROUND_RESULT_MS` foi corrigido para 2.900 ms; a apresentação da próxima pergunta permanece 1.900 ms e o gameplay permanece 10.000 ms.
+
+Cobertura adicionada:
+
+- domínio em 6.999/7.000/7.001 ms, CONNECT versus ALARM, todas as fases pausáveis e projeção sem pergunta em `FINALIZING`;
+- cliente offline além da graça confirmada pela sala, remoção da pergunta, recuperação por `online` e terminal sem retorno a gameplay;
+- runtime com CONNECT primeiro depois do deadline, ALARM primeiro, reconexão histórica, Casual sem efeito, Ranqueada com penalidade somente no desconectado, cleanup/self-healing, Presence e finalização concorrente/idempotente;
+- fluxo obrigatório `PARTIDA 1 → queda → VOID → locks 0/Presence idle → PARTIDA 2` com os mesmos usuários;
+- Questions vazio e upgrade `0002→0003`, Core vazio e `0003→0004→0005→0006`, comprovando 250 slots densos, marcados e sem mídia/fonte.
+
+Validação final local:
+
+- `VITE_ENABLE_REALTIME_MATCHES=true npm run check`: lint sem warnings, typecheck dos três workspaces, 30 arquivos/156 testes unitários, 6 arquivos/26 testes Workers/WebSocket, migrations e builds aprovados;
+- build Web: JS inicial 215,31/67,69 KB gzip, sala lazy 16,50/5,41 KB gzip, CSS 53,47/10,99 KB gzip e precache de 11 entradas/435,00 KiB; Worker 706,8 KB;
+- `npm audit --audit-level=high`: zero vulnerabilidades; varredura de chaves/tokens privados sem achados fora dos arquivos `.example` esperados.
+
+Branding, Theme Artwork, avatar, matchmaking visual, globo/lupa, apresentação do adversário, scoring, XP, ranking, Conhecimento, aleatoriedade, sigilo e Milestone 9 permaneceram fora do diff funcional.
+
+### 2026-08-14 — hardening final de UX de desconexão e modalidade do matchmaking
+
+Auditoria causal antes das alterações:
+
+- na perda local, close/offline alteravam apenas retry e texto; a projeção anterior continuava `ANSWERING`, portanto `MatchScreen` mantinha pergunta, imagem, alternativas e escolha no DOM até a recuperação terminal;
+- `PAUSED` era incluído explicitamente no ramo jogável e recebia apenas um overlay com fundo parcialmente transparente. As respostas ficavam desabilitadas, mas o conteúdo continuava legível;
+- o MatchRoom já implementava `HEARTBEAT → PONG`, porém o frontend não o consumia. `navigator.onLine`, `offline` e o callback de close do edge não cobrem imediatamente uma conexão móvel silenciosa;
+- `aria-modal` estava aplicado a uma `section` comum. O AppShell, header e barra inferior permaneciam clicáveis/focáveis porque não havia top layer, `inert` nem confinamento de Tab.
+
+Implementação restrita à UX/liveness:
+
+- o cliente mantém estado local explícito `CONNECTED / SUSPECTED_LOSS / RECONNECTING / TERMINAL_RECOVERY`. Offline, close/error ou ausência de dois ciclos de `PONG` removem imediatamente a tela jogável e mostram `CONEXÃO PERDIDA`; a contagem local 7→0 desta primeira implementação foi removida na correção de sincronização de 2026-08-18;
+- heartbeat envia uma mensagem pequena a cada 1.500 ms enquanto o socket está aberto e considera a conexão silenciosa em 3.000 ms. Um watchdog de abertura e um timer único da graça evitam socket pendurado, sem polling HTTP ou estado por frame;
+- `PAUSED_FOR_RECONNECT` desmonta `MatchScreen` nos dois clientes. O jogador conectado vê `AGUARDANDO JOGADOR`; o cliente localmente afetado vê `CONEXÃO PERDIDA`. A tela é opaca e entrada/saída usam somente opacity/transform;
+- `RESUMED` aplica primeiro a projeção e o `remainingMs` autoritativos, mantém a tela de pausa durante 180 ms de saída e só então remonta a mesma pergunta. `MATCH_VOID` e recuperação terminal nunca remontam conteúdo jogável;
+- matchmaking usa `dialog.showModal()` em Portal. O AppShell fica `inert` e `aria-hidden`, cliques/foco externos têm bloqueio defensivo, Tab permanece no modal, Escape cancela a fila durante busca ou fecha o timeout pelo mesmo caminho de `Voltar ao tema`, e o foco original é restaurado no cleanup;
+- o visual existente do ThemeArtwork, globo/lupa, Cancelar vermelho, timer e apresentação do adversário foi preservado. Domínio, MatchRoom, regra 6.999/7.000/7.001 ms, scoring, pool e dataset não receberam alteração funcional.
+
+Cobertura e validação local:
+
+- A–E: offline imediato, socket silencioso com `navigator.onLine=true`, retomada suave da mesma pergunta/tempo, terminal depois da graça e `PAUSED` opaco para o adversário;
+- F–J: navegação/header inertes, Tab confinado, Cancelar com close real da fila e Presence `idle`, encontrado ainda modal e timeout bloqueado até `Voltar ao tema`;
+- `VITE_ENABLE_REALTIME_MATCHES=true npm run check` aprovou lint e typecheck dos três workspaces, 30 arquivos/163 testes unitários, 6 arquivos/27 testes Workers/WebSocket e todas as migrations; o build raiz foi repetido com update notifier desativado e aprovado;
+- build Web: JS inicial 217,60/68,34 KB gzip, sala lazy 18,68/6,17 KB gzip, CSS 55,16/11,26 KB gzip e precache de 11 entradas/441,02 KiB; Worker 706,8 KB;
+- `npm audit --audit-level=high`: zero vulnerabilidades; varredura de chaves/tokens privados sem achados. A chave Web pública do Firebase permanece classificada como configuração cliente, não segredo.
+
+### 2026-08-18 — sincronização visual final da perda de conexão e da graça
+
+Auditoria causal antes das alterações:
+
+- o primeiro sinal local de perda criava `retryStartedAt + 7.000` e o passava à tela como se fosse um deadline da sala. Como o MatchRoom só começava a graça quando o edge detectava o socket morto, celular e computador animavam relógios iniciados em momentos diferentes;
+- ao completar esses 7 segundos locais, o cliente trocava para recuperação `terminal=1`. Isso transformava tempo percebido pelo navegador em decisão de protocolo, apesar de a sala ainda poder estar legitimamente em `ANSWERING`;
+- a projeção `PAUSED` já continha `graceRemainingMs` calculado pelo domínio no instante do envio. Não foi necessária alteração em domínio, MatchRoom, Hibernation API ou fronteira 6.999/7.000/7.001 ms;
+- heartbeat e watchdog já operavam em 1.500/3.000 ms. Em uma sala normal são dois sockets, aproximadamente 1,33 mensagens HEARTBEAT de entrada por segundo no Durable Object, além dos PONGs; aumentar a frequência não eliminaria a janela física sem canal e elevaria tráfego/wakeups.
+
+Implementação restrita à UI/reconexão cliente:
+
+- perda local desmonta a `MatchScreen` imediatamente, exibe spinner e nunca mostra número. Após 3 segundos, a cópia muda para `Aguardando conexão para verificar a partida...`, sem declarar derrota, `VOID` ou partida anulada;
+- somente `PAUSED_FOR_RECONNECT` cria relógio. `graceRemainingMs` é ancorado em `performance.now()` no recebimento e consumido monotonicamente; alterações em `Date.now()` não afetam o contador;
+- reconexão normal não recebe mais `terminal=1` por expiração de cronômetro local. `ROOM_STATE` ainda em `ANSWERING` restaura a projeção e o `remainingMs` atuais, `PAUSED` usa o restante real, e `MATCH_VOID`/`MATCH_FINISHED` permanecem terminais;
+- chegar visualmente a zero mostra apenas `Confirmando encerramento da partida...`; nenhum estado terminal é criado no frontend;
+- as transições opacas de 180 ms e `prefers-reduced-motion` foram preservados. O indicador local passou a ser um arco CSS leve, sem request, polling HTTP, frame state ou dependência nova;
+- Theme Artwork, branding, avatar, matchmaking, locks, dataset, perguntas, scoring, Conhecimento, XP, ranking, cadências e Milestone 9A ficaram fora do diff funcional.
+
+Cobertura adicionada:
+
+- perda local sem contador, cópia de espera, questão/alternativas ausentes e nenhuma decisão terminal após 7 segundos locais;
+- recuperação autoritativa de `ANSWERING` mesmo após espera local, sem reset ou reembolso; recuperação durante `PAUSED` começando em 4, não em 7; `MATCH_VOID` somente após mensagem da sala;
+- adversário em `PAUSED` usando 6.842 ms reais, relógio civil divergente sem efeito, dois consumidores do mesmo evento dentro de 25 ms e zero visual sem `MATCH_VOID` inventado;
+- a suíte existente continua cobrindo heartbeat silencioso, todas as fases pausáveis, retomada em 6.999 ms, `VOID` em 7.000/7.001 ms, corrida CONNECT/ALARM e runtime completo de cleanup/revanche.
+
+Validação local final:
+
+- `VITE_ENABLE_REALTIME_MATCHES=true npm run check`: lint e typecheck dos três workspaces aprovados, 31 arquivos/168 testes unitários, 6 arquivos/27 testes Workers/WebSocket, migrations e builds aprovados;
+- migrations: Core vazio e upgrades exatos `0003→0004→0005→0006`, Questions vazio e `0002→0003`, invariantes, rollback e schemas finais aprovados;
+- build Web: JS inicial 217,60/68,34 KB gzip, sala lazy 19,15/6,32 KB gzip, CSS 54,87/11,19 KB gzip e precache de 11 entradas/441,18 KiB; Worker 706,8 KB;
+- comparado ao hardening anterior, o chunk lazy da sala cresceu 0,47 KB bruto/0,15 KB gzip, o CSS caiu 0,29/0,07 KB gzip e não surgiu request, dependência ou chunk novo de startup;
+- `npm audit --audit-level=high`: zero vulnerabilidades; varredura de chaves privadas/tokens sem achados.
+
+### 2026-08-21 — congelamento físico de M8/M8.5 e Milestone 9A Social Foundation
+
+O proprietário confirmou em produção todos os smokes físicos pendentes de M8/M8.5, incluindo cadência `2.900 / 1.900`, apresentação, avatar, modo avião, graça visual monotônica, `VOID`, revanche e modalidade. Ambos foram registrados como **FROZEN antes do início do 9A**. O motor autoritativo, `MatchRoom`, reconnect, locks, scores, Knowledge, XP, perguntas, dataset, arte, avatar e marca ficaram fora do diff funcional.
+
+Auditoria inicial:
+
+- `users`, `user_profiles.public_id`, `friendships`, `friend_requests` e o índice nominal já existiam no Core D1; a aba Social ainda era placeholder com presença e assíncronas fictícias;
+- o índice pendente original impedia duplicação na mesma direção, mas permitia `A→B` e `B→A` simultaneamente; inexistiam recusas direcionais, bloqueios, instalações e filtro competitivo por bloqueio;
+- Firebase JS SDK `12.17.1` já estava instalado. A documentação oficial atual recomenda `register()`/`onRegistered()` com Firebase Installation ID; a referência REST HTTP v1 aceita `message.fid` e identifica registration tokens como depreciados;
+- o PWA existente usava `generateSW`; adicionar um `firebase-messaging-sw.js` separado criaria risco de dois service workers competindo no root scope.
+
+Implementação:
+
+- migration D1-safe `0007_social_foundation.sql`: `resolution_key`, índice parcial normalizado para um único pending por dupla, estados direcionais de recusa/cooldown, bloqueios com índices inversos e múltiplas instalações FID por usuário; nenhum trigger, banco novo, alteração do Questions DB ou produto pago;
+- pesquisa autenticada por prefixo nominal case-insensitive limitado a 20 resultados e lookup exato por `#QG...`, omitindo self, usuários desativados e duplas bloqueadas; respostas incluem somente nome, public ID, avatar custom/Google/iniciais e moldura;
+- pedidos, cancelamento do remetente, aceite idempotente/atômico, recusa explícita direcional e remoção de amizade reutilizam as tabelas existentes. A terceira recusa cria 30 dias; ciclos expiram sob demanda e aceite zera o histórico da direção;
+- bloquear cancela pendings bidirecionais e remove amizade no mesmo batch, preserva cooldown, torna ambos invisíveis socialmente e mantém a lista privada somente em Perfil. Desbloquear não restaura vínculos nem envia notificação;
+- única integração competitiva: a fila consulta bloqueio server-side antes de inicializar a sala, mantém dupla bloqueada procurando e escolhe o próximo candidato compatível. Uma partida já criada continua íntegra;
+- Social funcional com pedidos recebidos/enviados, amigos, avatar/frame, aceite verde, recusa vermelha, badge real, busca debounced, confirmação acessível e ausência deliberada de presença/desafios/assíncronas;
+- push opt-in multi-device usa um único service worker Workbox `injectManifest`, foreground sem alerta duplicado, background com clique em Social/Pedidos, FID moderno, OAuth RS256 via Web Crypto e `waitUntil` pós-persistência. Credenciais ausentes ou FCM indisponível não quebram o produto;
+- Profile carrega bloqueados somente após gesto explícito; Firebase Messaging e Social são lazy quando aplicável. O bundle inicial caiu de `217,60 / 68,34 KB gzip` para `214,16 / 67,51 KB gzip`; Social soma `7,49 / 2,31 KB gzip`, SW único `69,43 / 21,60 KB gzip` e Worker `736,5 KB`.
+
+Cobertura local:
+
+- 36 arquivos / 185 testes unitários, incluindo Social, badge, confirmação, opt-in, foreground, background, notification click e shell Workbox;
+- 7 arquivos / 43 testes Workers/WebSocket, incluindo busca/privacidade, pedidos cruzados, aceite/recusa concorrentes, 3 recusas e 30 dias direcionais, bloqueio/desbloqueio, FIDs/IDOR, falha/instalação inválida FCM, dupla bloqueada com terceiro compatível e bloqueio durante partida ativa;
+- os testes históricos preservam a fronteira `6.999 / 7.000 / 7.001`, corrida `CONNECT`/`ALARM`, recuperação terminal, Presence, cleanup e segunda partida com a mesma dupla;
+- lint, typecheck, builds PWA/Worker, migrations Core vazio e upgrade `0006→0007`, rollback, npm audit e varredura de secrets fazem parte do gate final; FCM real depende apenas da configuração manual opcional documentada em `docs/DEPLOYMENT.md`.
+
+O smoke físico completo do Milestone 9A **permanece pendente da aprovação explícita do proprietário**. Os Milestones 9B/9C, presença individual social, desafio direto, assíncrono, chat, mensagens, grupos e recomendação não foram iniciados.
+
+### 2026-08-21 — Milestone 9A.1: cancelamento pré-partida e realtime social
+
+O proprietário aprovou em produção a busca nominal/ID, pedido, primeira recusa,
+bloqueio, invisibilidade e filtro de bloqueio no matchmaking. Foram identificadas
+somente duas lacunas: `CANCELLED` antes do início aparecia como `VOID` genérico
+com placar fictício; Social dependia de foco/navegação/FCM para atualizar pedidos.
+
+- domínio preserva `VOID/CANCELLED`, zero XP/Knowledge/score e grava somente o
+  assento do cancelador; a projeção terminal acrescenta `{ seat, displayName }`
+  derivado do jogador autoritativo, nunca UID ou dado privado;
+- tela específica mostra “Partida cancelada por {nome}” sem `0 × 0`; route state
+  devolve ao tema original com dificuldade e modalidade selecionadas;
+- migration Durable Objects SQLite `v2` registra exclusivamente
+  `SocialRealtimeHub`; não há migration D1, banco, SQL manual ou produto pago;
+- ticket curto `scope: social` autentica o WebSocket; anexos/tags mantêm o ID
+  interno, e o total publicado conta usuários únicos entre abas/dispositivos;
+- criação/aceite/recusa/cancelamento de pedido, remoção de amizade e
+  bloqueio/desbloqueio publicam apenas `SOCIAL_INVALIDATED` depois da escrita;
+  todas as sessões afetadas recarregam o estado real, sem polling nem motivo do
+  bloqueio;
+- heartbeat social de 45 s e watchdog de 15 s utilizam
+  `setWebSocketAutoResponse`, sem acordar o DO, sem timers server-side e sem
+  alterar o heartbeat competitivo de 1.500 ms;
+- 30 usuários por 24 h representam 57.600 heartbeats, até 2.880 requests DO
+  equivalentes na razão conservadora 20:1, zero writes/reads D1 periódicos e
+  duração ociosa nula por hibernação;
+- Firebase Messaging permanece opcional apenas para background; Social aberto
+  atualiza mesmo sem qualquer VAPID/service-account configurada.
+- build medido: startup `214,83 / 67,69 KB gzip`, Social lazy inalterado
+  `7,49 / 2,31 KB gzip`, sala `19,59 / 6,52 KB gzip`, precache
+  `15 entradas / 480,69 KiB` e Worker `742,1 KB`.
+
+O smoke físico do 9A.1 foi posteriormente **aprovado integralmente pelo
+proprietário em produção**, autorizando exclusivamente o início do 9B. Desafio
+9C e demais milestones futuros permanecem não iniciados.
+
+### 2026-08-21 — Milestone 9B: presença privada e experiência Social refinada
+
+Antes da implementação, o gate físico do 9A.1 foi marcado como aprovado e o
+milestone como concluído. M8/M8.5 permanecem **FROZEN**; `MatchRoom`, fila,
+reconexão, scoring, Knowledge, XP, perguntas, locks, marca, avatar e FCM ficaram
+fora do diff funcional.
+
+- `PresenceHub` comunica somente mudanças reais de atividade ao
+  `SocialRealtimeHub` global já existente; o identificador do objeto é associado
+  server-side à sessão autenticada, sem UID/room ID no evento público;
+- somente a primeira/última sessão lógica altera online/offline. `OFFLINE`
+  vence qualquer atividade antiga; segunda aba/aparelho não duplica presença;
+- `/api/social/presence` autentica o ator, resolve amigos e bloqueios no D1 e
+  consulta `PresenceHub` apenas para amigos com socket ativo. Busca pública e
+  não-amigos não possuem lookup individual nem recebem eventos;
+- `FRIEND_PRESENCE_CHANGED` contém apenas ID público, enum de atividade geral e
+  revisão lógica. Fanout resolve novamente amizades válidas imediatamente antes
+  da entrega; remoção/bloqueio limpa mapas por invalidação/snapshot;
+- snapshots capturam revision antes dos awaits e o frontend compara revisões e
+  gerações de request, impedindo sobrescrita por evento/resposta antiga;
+- `SocialContext` mantém mapa privado em contexto separado; status de um amigo
+  não exige atualização do header global, busca, requests ou segundo socket;
+- Social separa online/offline, ordena disponibilidade → busca → partida →
+  reconexão → nome, mostra dot verde/amarelo/cinza, moldura/avatar reais e usa
+  FLIP/WAAPI de 390 ms apenas quando necessário, com fallback reduced-motion;
+- heartbeat social permanece em 45 s com watchdog 15 s e auto-response
+  hibernável; não existe timer/alarm no DO, polling HTTP, escrita D1 periódica,
+  migration, serviço extra, biblioteca de motion, billing ou push de presença;
+- baseline e impacto ficam registrados em `docs/PERFORMANCE_MILESTONE_9A.md`;
+  build inicial passou de `214,83 / 67,69 KB gzip` para
+  `215,00 / 67,76 KB gzip`, e a sala congelada permanece em
+  `19,59 / 6,52 KB gzip`.
+
+O smoke físico integral do Milestone 9B foi **aprovado pelo proprietário em
+produção em 2026-09-11**, e o milestone está **CONCLUÍDO e FROZEN**. Chat,
+last-seen, mensagens, grupos e recomendação continuam **não iniciados**.
+
+### 2026-09-10 — apresentação do duelo: composição, coreografia e continuidade
+
+O proprietário autorizou explicitamente **todas** as melhorias levantadas no estudo
+da tela `JOGADOR ENCONTRADO`, incluindo as duas que dependiam de autorização por
+encostarem no M8.5 congelado. Nada no servidor mudou: nenhum campo novo no
+`MATCH_FOUND`, nenhum endpoint, nenhum WebSocket, nenhuma requisição extra.
+
+Diagnóstico que motivou o trabalho: `.match-found` renderizava quatro elementos
+centralizados dentro de um diálogo de `100dvh`, sem o jogador local, sem o
+contexto da partida escolhida e com uma única animação de fade para todo o bloco.
+
+Entregue:
+
+- **Composição de duelo** (`duel-side.tsx`): os dois jogadores lado a lado com
+  retrato, moldura, liga e Conhecimento do tema. O jogador local vem de `profile`
+  e de `personal.knowledge`, ambos já presentes no cliente; o adversário vem do
+  `MATCH_FOUND` que já trafegava. Sem exposição nova.
+- **Faixa de contexto**: dificuldade, contagem de perguntas via
+  `questionsForDifficulty` e modo Casual/Ranqueada.
+- **Coreografia em quatro tempos** dentro da janela visível: contexto, entrada dos
+  lados por bordas opostas, impacto do `VS` com anel de choque e costura, e por
+  último selos de liga e Conhecimento. Só `transform`/`opacity`, sem biblioteca.
+- **Acento cromático por liga** reutilizando as mesmas oito cores do `RankBadge`,
+  sem tabela paralela; brilho varrendo a moldura; Conhecimento subindo em ~620 ms
+  com o valor autoritativo exposto em `sr-only` para não repetir anúncios no
+  `aria-live` do diálogo.
+- **Barra de preparo** no lugar do texto solto, preservando a semântica de
+  `preparing` exatamente como era.
+- **Line-up no lobby da sala** (`match-lobby-duel.tsx`), renderizado apenas a
+  partir da `projection` autoritativa, resolvendo também o vazio da tela de espera.
+- **Continuidade FLIP** (`lib/match-handoff.ts`): a geometria dos retratos é medida
+  e continuada do modal para o lobby e do lobby para o placar, no instante em que a
+  apresentação da rodada começa a desaparecer. É decoração pura — guarda só
+  retângulos, consome cada origem uma única vez, exige rodada 1, ignora ambientes
+  sem WAAPI ou com `prefers-reduced-motion`, e falha em silêncio deixando as telas
+  corretas e estáticas.
+
+Alterações em território M8.5 congelado, todas autorizadas nominalmente:
+
+1. `MATCH_FOUND_HOLD_MS` de 800 para 1.200 ms, elevando a janela visível para
+   2.400 ms e o total para 3.300 ms. A soma virou invariante estrutural
+   (`PRESENTATION = ENTRY + HOLD + EXIT`) em vez de coincidência, e o teste de
+   cadência foi atualizado. Reverter é trocar uma constante.
+2. `match-screen.tsx` e `live-match-page.tsx` receberam as âncoras de continuidade
+   e o descarte da geometria ao sair da partida. Nenhuma regra de autoridade,
+   timer, score, reconexão ou resultado foi tocada.
+
+Defeito pré-existente corrigido no caminho: em telas com altura ≤ 620 px o cartão
+do matchmaking ultrapassava a viewport por causa do tamanho do globo, cortando
+tanto a busca quanto a apresentação. Globo, arte e espaçamentos foram reduzidos
+nessa faixa e o duelo passa a ser horizontal ali; medido em Chromium, o cartão
+inteiro agora cabe em 740×400 e 844×390.
+
+Verificação: `lint`, `typecheck`, 215 testes unitários, 56 testes de Worker,
+`test:migrations` e `build` verdes. Inspeção visual em Chromium com os componentes
+reais e o `global.css` real em 390×844, 360×640, 1280×800, 740×400 e 844×390, nos
+temas claro e escuro, sem overflow horizontal em nenhum caso.
+
+Smoke físico **não foi executado** e permanece pendente do proprietário.
+
+### 2026-09-10 — M9C+M10: regras globais e desafio simultâneo entre amigos
+
+Regras globais aplicadas em todas as modalidades:
+
+- **5/8/12 perguntas** por dificuldade, 10 s por pergunta preservados, com o pool
+  mínimo passando a ser exatamente a contagem da dificuldade.
+- **Sorteio sem histórico**: a união das últimas 200 exibições saiu da seleção.
+  Agora é amostra uniforme sem reposição sobre os slots densos `1..N` do pool
+  tema+dificuldade. Repetição entre partidas diferentes é permitida; dentro da
+  mesma partida é impossível por construção da amostragem. O conjunto é sorteado
+  uma única vez e serve os dois jogadores.
+- **Estado usuário+pool no formato 2**, guardando só o bitmap de descoberta que
+  alimenta a porcentagem do tema. A leitura aceita o formato 1 e descarta a fila,
+  sem migration de dados e com menos bytes por linha no D1.
+- **200 amizades ativas** por usuário, validado no envio e, autoritativamente, no
+  aceite: o limite é condição da própria transição SQL.
+- **Silenciar por amizade** suprime apenas notificação; não desfaz amizade, não
+  bloqueia, não esconde presença e não impede desafio.
+
+Desafio simultâneo entre amigos (M9C) entregue de ponta a ponta:
+
+- núcleo de domínio puro com bloqueio por dupla, desafio cruzado resolvido como
+  aceite ou concordância sem criar segundo registro, precedência do cancelamento
+  até o segundo jogador começar, expiração de 30 s que não é recusa e as regras de
+  sigilo do assíncrono;
+- migration `0008` com `friendship_mutes`, o schema unificado de `challenges`,
+  `challenge_questions`, `challenge_answers` e o índice único por dupla não
+  ordenada como barreira final. A tabela `challenges` do M3, que nunca recebeu
+  escrita de nenhuma rota ou DO, foi substituída forward-only;
+- repositório aplicando cada transição com CAS na revisão lida; encerrar um
+  desafio apaga conjunto e respostas sem gerar resultado, XP ou Conhecimento;
+- desfazer amizade e bloquear encerram o pendente e nunca derrubam partida
+  iniciada;
+- aceite revalidando amizade, bloqueio, presença e expiração no servidor e
+  entregando o **MatchRoom existente**: nenhum motor, scoring, timer, reconexão ou
+  resultado foi duplicado, e o lock `active_match_players` segue como barreira
+  final contra duas partidas;
+- realtime pelo `SocialRealtimeHub` que já existe, com um endpoint de notificação
+  tipada no mesmo canal — sem polling, sem segundo WebSocket, sem novo Durable
+  Object, sem nova presença e sem escrita periódica no D1. Um convite pendente não
+  cria estado público novo: `invite` continua aparecendo como `Online`;
+- interface com "Puxar partida" e "Desafiar amigo" no tema, seletor ordenado por
+  presença, espera com contagem derivada do prazo autoritativo, e a lista de
+  desafios no Social com Jogar, Recusar e Cancelar.
+
+Todo desafio entre amigos é Casual por construção: não há seletor de modalidade e
+o Conhecimento nunca muda.
+
+O desafio assíncrono foi completado na execução seguinte, registrada abaixo.
+
+Verificação: `lint`, `typecheck`, 241 testes unitários e de domínio, 66 testes de
+Worker/WebSocket, `test:migrations` (banco vazio, upgrade 0007→0008, invariantes
+de dupla e rollback) e `build` verdes. Nenhum smoke físico foi executado.
+
+### 2026-09-11 — M9C+M10 concluído: desafio assíncrono, rate limiting e reconciliação
+
+A branch de desafios foi reconciliada com a `main` por **merge normal**, sem
+reset, revert ou reconstrução: os cinco commits existentes (`77a9e80`, `ed9c3aa`,
+`e84a3c2`, `de73757`, `14234ef`) permanecem na ancestralidade, e `7bcc5b0` — que é
+o merge do próprio trabalho do duelo na `main` — também. O merge não teve
+conflito porque os dois lados carregavam o mesmo conteúdo do duelo.
+
+**Desafio assíncrono ("Desafiar depois") completo:**
+
+- quem desafia joga a metade dele imediatamente; o amigo joga quando puder, em
+  qualquer presença, sem expiração;
+- o conjunto é sorteado e selado uma única vez na criação — mesmas perguntas,
+  mesma ordem, mesmas alternativas, mesmo tempo para os dois. Selar de novo é
+  no-op;
+- **sigilo por construção**: só a sala do segundo jogador recebe a metade selada
+  do primeiro, e a projeção revela uma rodada apenas depois que o segundo a
+  resolve. Escolha, tempo, score e resposta correta futuros nunca atravessam;
+- na metade do primeiro jogador o adversário aparece como pendente, com traço no
+  lugar do placar (`opponentPending`), porque ele ainda não jogou — nenhum zero
+  é inventado;
+- o motor reutiliza as primitivas do M8 (10 s por pergunta, `scoreAnswer`,
+  resolução e graça exata de 7 s com 6999 retomando e 7000/7001 anulando) e
+  projeta no formato da partida simultânea, então a tela de jogo é a mesma, sem
+  interface duplicada;
+- resultado, XP e limpeza idempotentes: reexecutar não duplica resposta nem paga
+  XP duas vezes, empate não paga a ninguém, anulação não deixa payload. O
+  Conhecimento nunca muda, porque desafio entre amigos é sempre Casual.
+
+**Novo Durable Object `ChallengeRoom` — necessidade demonstrada e registrada:** a
+metade assíncrona é um jogador só contra o relógio e a regra do M8 exige detecção
+AUTORITATIVA de desconexão com graça de 7 s. Isso não cabe em HTTP puro, porque
+não há conexão para observar, e não cabe no `MatchRoom`, que é máquina de dois
+assentos e está FROZEN — encaixar uma metade solo ali exigiria forjar o segundo
+assento dentro de motor congelado. O DO não recria scoring, timer, graça nem
+resolução: todos vêm do domínio compartilhado. Sem polling, sem segundo canal
+social, sem presença nova e sem escrita periódica no D1.
+
+**Rate limiting técnico** de criação de desafios por usuário numa janela curta,
+com mensagem neutra: é proteção de servidor, não cooldown social visível, e fora
+da janela o mesmo usuário volta a criar normalmente.
+
+**Cleanup de convite direto vencido** corrigido: a varredura transiciona
+`PENDING_DIRECT` para `EXPIRED`, libera a dupla e notifica os dois lados. É
+disparada por atividade real — abrir o Social, listar desafios — e nunca por
+timer, mantendo a regra de nenhuma escrita periódica.
+
+**Bug encontrado pelos próprios testes e corrigido:** um empate no assíncrono
+deixava a lista de pagamentos de XP vazia e o `batch([])` do D1 falhava. Empate
+agora não escreve nada.
+
+Verificação: `lint`, `typecheck`, 252 testes unitários e de domínio, 71 testes de
+Worker/WebSocket, `test:migrations` (banco vazio, upgrade 0007→0008, invariantes
+de dupla e rollback) e `build` verdes. Nenhum smoke físico foi executado.
+
+### 2026-09-11 — M9C+M10: smoke físico REPROVADO e passe corretivo
+
+O proprietário executou o smoke físico do M9C+M10 em produção e **REPROVOU** a
+entrega. O milestone **permanece ABERTO** — não foi congelado, e o M11 não foi
+iniciado. Os oito defeitos reportados e o que cada um exigiu:
+
+1. **A lista do Social não se atualizava sozinha.** Toda transição autoritativa
+   do desafio (selar a primeira metade, iniciar a segunda, concluir, anular,
+   cancelar, recusar) passa a emitir `CHALLENGE_UPDATED` pelo canal social já
+   existente, via `services/challenge-notifier.ts`. Nenhum polling novo, nenhum
+   segundo WebSocket, nenhuma escrita periódica no D1.
+2. **Os cards diziam "sua vez" para todo mundo e ofereciam "Jogar" cedo demais.**
+   `challengeCardCopy` passou a derivar texto e ações de papel + estado:
+   "Você desafiou {Nome} em {Tema} na dificuldade {Dif}" / "{Nome} te desafiou
+   …", e "Jogar" só existe depois de `WAITING_FOR_SECOND`. Nenhum status revela
+   número de rodada, progresso ou placar parcial do adversário.
+3. **"Desafiar amigo" aparecia em Ranqueada.** O botão só existe em Casual e
+   trocar para Ranqueada fecha o seletor aberto — desafio entre amigos é sempre
+   Casual, por regra do próprio milestone.
+4. **Um ASYNC vivo bloqueava o convite direto da mesma dupla.** O índice único
+   `idx_challenges_live_pair` tratava os dois tipos como um só. A migration
+   forward-only `0009` o substitui por `idx_challenges_live_pair_async` e
+   `idx_challenges_live_pair_direct`. A `0008`, já aplicada em produção, não foi
+   tocada. Cenário obrigatório coberto por regressão: A criou ASYNC para B, A
+   terminou a primeira metade (`WAITING_FOR_SECOND`) e A pode enviar DIRECT para
+   B com B Online.
+5. **A espera do convite direto morria com a tela do tema e sumia no reload.** O
+   estado saiu do hook da página para um `ChallengeProvider` global; o convite
+   pendente é recuperado do servidor e a contagem deriva do `expiresAt`
+   autoritativo. `CHALLENGE_STARTED` passou a ter um consumidor único e global,
+   então o aceite remoto leva o desafiante à sala de qualquer tela.
+6. **A metade assíncrona não tinha saída.** `ChallengeRoom` ganhou `CANCEL` pelo
+   WebSocket e `/abort` pelo servidor; a tela espera a confirmação autoritativa
+   antes de sair e volta ao tema de origem — cancelar o próprio desafio não vira
+   tela de resultado anulado.
+7. **O seletor de amigo se sobrepunha no celular.** O card empilha por padrão
+   (ações em `grid-column: 1 / -1`) e só vira linha a partir de 640px.
+8. **A sessão do Firebase caía a cada recarga no celular.** Persistência
+   declarada explicitamente (IndexedDB → localStorage) com fallback para o auth
+   já inicializado; falha transitória de `/api/profile/me` não apaga mais o
+   perfil e a shell mostra "Restaurando sessão" em vez de "Visitante".
+
+Correção de rota encontrada pelo próprio passe: no desafio, "Cancelar e voltar"
+navegava sem o estado de origem e a tela do tema reabria nos padrões. Agora volta
+com dificuldade e modalidade, igual ao cancelamento da partida simultânea.
+
+Verificação: `lint`, `typecheck`, 277 testes unitários e de domínio, 79 testes de
+Worker/WebSocket, `test:migrations` (banco vazio, upgrade até `0009`, invariantes
+de dupla por tipo e rollback) e `build` verdes. **Nenhum smoke físico novo foi
+executado nem declarado** — a reprovação acima continua valendo até que o
+proprietário execute e aprove o novo smoke em aparelhos reais.
+
+### 2026-09-11 — M9C+M10: passe corretivo #2 para desafios fantasma
+
+O smoke físico anterior continua **REPROVADO** e o milestone continua **ABERTO**.
+Este passe não escondeu cards nem introduziu cancelamento para maquiar estado
+inválido: corrigiu a fonte autoritativa do lifecycle.
+
+- DIRECT em `PREPARING`/`ACTIVE` agora converge para `COMPLETED` quando o
+  `MatchRoom` persistiu `FINISHED` e para `VOID` quando persistiu `VOID`. A
+  própria finalização do `MatchRoom` faz a convergência e emite
+  `CHALLENGE_UPDATED`; leitura/criação reaplicam uma reconciliação bounded para
+  linhas antigas, incluindo reserva sem MatchRoom após a graça de 7 s.
+- ASYNC agora sela o `VOID` no D1 também quando `ALARM` chega diretamente em
+  `VOID`; antes o selo de finalização era feito apenas em `FINALIZING`. A rota
+  interna bounded `/reconcile` recupera alarmes vencidos/hibernação e salas
+  canceladas legadas. Não há polling, cron nem migration: `0008`/`0009` foram
+  preservadas e a migration `0010` não foi necessária.
+- A regra de dupla continua exatamente uma reserva ASYNC e uma DIRECT em
+  paralelo; terminais liberam somente o índice do seu tipo.
+- O card Social passou a usar duas linhas compactas (autoria; tema ·
+  dificuldade) e badge de presença real do outro amigo. `WAITING_FOR_SECOND`
+  segue sendo a única origem de `Jogar`/`Recusar`; presença é apenas visual.
+  Em 360/390/412px as ações ficam em área própria abaixo do resumo, sem disputar
+  largura com avatar, texto ou badge.
+
+Verificação local deste passe: lint, typecheck, regressões web (card, presença e
+360/390/412/desktop) e Worker/DO (DIRECT `FINISHED`/`VOID`, limpeza/liberação,
+reserva sem sala e primeira metade async sem socket) verdes. O gate completo,
+migrations, build, audit e diff review permanecem obrigatórios antes do push.
+
+### 2026-09-11 — M9C+M10: corrective #3 para ghost DIRECT e bundle obsoleto
+
+O smoke físico permanece **REPROVADO** e o milestone continua **ABERTO**. A causa
+confirmada do ghost DIRECT era tratar uma linha D1 `matches = PREPARING` como se
+ela comprovasse uma sala viva. Uma falha entre a reserva e a persistência do
+`MatchRoom` mantinha `hasNoRoom = false` indefinidamente.
+
+- `MatchRoom` expõe somente ao Worker a rota interna `POST /reconcile`. Ela lê a
+  fase persistida do DO, executa `alarm()` antes de responder para deadline
+  vencido, `FINALIZING` e terminais, e reaplica a convergência DIRECT. Logo, uma
+  linha D1 deixa de ser prova de liveness.
+- A reconciliação bounded de `GET /api/challenges`, criação e ações agora só
+  anula quando o DO responde `MISSING` **e** a reserva `PREPARING`, sem início,
+  já ultrapassou 7 s. O CAS faz `matches → VOID`, remove
+  `active_match_players`, devolve presença ao idle, limpa o desafio/payload e
+  emite `CHALLENGE_UPDATED` aos dois lados. Falha transitória do DO não apaga
+  nada; sala ativa continua intacta. Não há polling nem migration `0010`.
+- O build passa a carregar um fingerprint curto (`data-qg-build`) e o PWA
+  ativa worker novo de modo seguro. `controllerchange` recarrega imediatamente
+  em telas comuns, mas guarda a atualização e só recarrega depois de sair de
+  `/partida/*` ou `/desafio/*`; `index.html` também não fica cacheável entre
+  deploys. Isso evita aba/PWA presa indefinidamente no JS antigo sem interromper
+  uma sala competitiva.
+- O card Social permanece separado em autoria, `Tema · Dificuldade` e badge de
+  presença real do amigo. `challenge.status` não é apresentado como presença.
+
+Regressões adicionadas: MatchRoom ausente versus ativo, reserva DIRECT órfã
+`PREPARING`, locks liberados, novo DIRECT permitido, terminal real do MatchRoom
+convergindo o desafio e atualização PWA adiada durante gameplay. O gate completo,
+migrations, build, audit e diff review seguem obrigatórios antes do push.
+
+### 2026-09-17 — Reports de perguntas implementados e correção de auditoria
+
+Primeiro item do escopo restante autorizado pelo prompt de finalização. M8, M8.5,
+M9A.1, M9B e M9C+M10 permanecem FROZEN e não foram tocados; o único ponto de
+integração mínima foi um botão discreto novo sobreposto ao `MatchScreen` (fora do
+componente FROZEN) e uma seção nova e opcional no `MatchResultScreen`, ambos sem
+alterar o motor de rodadas, o timer ou o payload competitivo.
+
+- **Auditoria corretiva de autorização.** O conjunto de perguntas é selado antes
+  da partida, portanto participação + `match_questions`/`challenge_questions`
+  não provava que a rodada já havia sido recebida. A migration Core **`0011`**
+  adiciona o recibo idempotente `question_report_views` por
+  contexto/usuário/rodada. `MatchRoom` registra somente os sockets presentes
+  antes de projetar `ROUND_QUESTION`; `ChallengeRoom` registra o socket que
+  recebe CONNECTED/QUESTION_AVAILABLE/RESUMED. A criação de denúncia agora aceita
+  exclusivamente esse recibo e o `questionId` exato. Falha de telemetria não
+  altera timer, score, reconnect ou resultado; ela apenas não autoriza uma
+  denúncia que não possa ser comprovada.
+- **Migration `0010`**, forward-only a partir da `0009` intocada: tabela
+  `question_reports` em CORE_DB (motivo, nota ≤280, status, nota de resolução,
+  quem resolveu), índice único parcial `(reporter, contexto, rodada) WHERE status
+  IN ('OPEN','IN_REVIEW')` para idempotência real (reabre depois de
+  resolvida/dispensada), índice de paginação por status+data e índice de teto de
+  criação por usuário.
+- **Idempotência e rate limit técnico** (`REPORT_RATE_LIMIT = 20` por 10 min):
+  reenviar a mesma denúncia aberta devolve o registro existente inclusive após
+  atingir o teto; a inserção condicionada fecha a corrida básica entre abas e o
+  índice parcial continua a arbitrar duplicatas concorrentes.
+- **Web — durante a partida:** um ícone discreto no canto (`.report-trigger`,
+  `position: fixed`, fora do `.match-screen`) abre o diálogo sem enviar nenhum
+  comando ao socket da sala; o timer e a rodada não sabem que ele existe. **Pós-
+  partida:** o cliente lembra localmente (`seenQuestions`, nunca persistido, nunca
+  confiado pelo servidor) as perguntas realmente exibidas nesta sessão e o
+  `MatchResultScreen` ganhou uma seção opcional "Perguntas desta partida" para
+  denunciar qualquer uma delas.
+- **Moderação ADMIN** em "Criar": fila por status (OPEN/IN_REVIEW/RESOLVED/
+  DISMISSED) com paginação por cursor opaco (nunca `OFFSET`), snapshot selado da
+  pergunta com a alternativa correta marcada, tema/dificuldade, fontes HTTP(S)
+  seguras e estatísticas já existentes quando disponíveis. Mantém nota de quem
+  denunciou, CAS otimista sobre o status lido, nota de resolução opcional e
+  `audit_logs` (`RESOLVE_REPORT`) para cada decisão. Editar/desativar pergunta
+  permanece no CRUD editorial do M11, sem botão de ação fantasma nesta fila.
+- Sem R2, sem DO novo, sem WebSocket novo, sem polling e sem escrita periódica:
+  só rotas HTTP request/response de costume (`POST /api/reports`,
+  `GET /api/admin/reports`, `POST /api/admin/reports/:id/resolve`).
+
+Verificação inicial do item: `lint`, `typecheck`, 297 testes unitários e de
+domínio, 97 testes Worker/WebSocket, `test:migrations` até `0010`, `build` e
+`npm audit --omit=dev` sem vulnerabilidades. A auditoria acrescentou testes de
+rodada futura, retry no teto, entrega de MatchRoom/ChallengeRoom e upgrade
+`0010→0011`; a suite atualizada deve permanecer parte do gate completo. Nenhum
+smoke físico foi executado nem declarado.
+
+### 2026-09-17 — Corretiva: aceite DIRECT atômico/idempotente e ASYNC sem corrida no selo
+
+Corretiva pontual sobre o M9C+M10 (FROZEN), motivada por um bug físico observado:
+depois de aceitar um convite direto, um lado recebia "Este desafio não aguarda
+aceite" enquanto o outro ficava preso em "Aguardando". M8/M8.5/MatchRoom
+permanecem intocados; a mudança fica inteira em `acceptChallenge`,
+`DirectChallengeService`, `ChallengeRepository`, `ChallengeRoom` e no estado
+otimista do cliente.
+
+- **`roomId` nasce antes do CAS.** `PENDING_DIRECT → PREPARING` agora persiste
+  `match_id` na MESMA escrita: nunca mais existe uma janela com `PREPARING` e
+  sala nula, que antes deixava uma reconciliação `>7s` anular uma sala que já
+  estava viva.
+- **Aceite é idempotente.** Duplo aceite (double tap, outra aba) devolve a
+  MESMA sala em vez do erro genérico; `DirectChallengeService.start` recebe o
+  `roomId` já decidido (não gera mais o seu) e `ensureReserved` reconhece um
+  jogador já reservado nesta mesma sala, inclusive quando perde a corrida de
+  CAS do `PresenceHub` contra a própria tentativa vencedora — sem isso, duas
+  chamadas concorrentes para o mesmo desafio se anulavam uma à outra.
+  `deliverDirectRoom` só permite VOID por quem de fato tirou o desafio de
+  `PENDING_DIRECT` (CAS por revisão exata); uma chamada de recuperação nunca
+  encerra uma tentativa alheia nem cria uma segunda reserva.
+- **Reconciliação cobre a sala que nunca chegou a nascer.** Quando o `MatchRoom`
+  está `MISSING` e não existe linha em `matches` para converter (o processo
+  morreu entre o CAS e a chamada ao DO), a própria reserva do desafio se anula
+  após a graça de 7 s — antes disso a reconciliação nunca tocava uma reserva
+  sem `matches` row, deixando o desafio preso em `PREPARING` para sempre.
+- **`matches.kind` é sempre decidido pelo servidor.** `MatchRoom.initialize`
+  passa a exigir `kind: 'DIRECT_LIVE' | 'MATCHMAKING'` explícito nos dois pontos
+  de chamada (`DirectChallengeService`, `MatchmakingQueue`); antes a coluna
+  gravava sempre `'MATCHMAKING'`, inclusive para partidas nascidas de um
+  desafio.
+- **Recuperação sem depender só do push.** `GET /api/challenges` expõe `roomId`
+  para DIRECT em `PREPARING`/`ACTIVE`, restrito aos dois participantes; o
+  cliente entra na sala por essa lista tanto quanto pelo `CHALLENGE_STARTED`
+  em tempo real, pelo mesmo ponto único (`enterDirectRoom`), cobrindo reload,
+  reconexão e o desafiante perdendo o push.
+- **Estado otimista para de se autodestruir.** O efeito que limpa o convite
+  otimista comparava contra QUALQUER leitura autoritativa já concluída; se essa
+  leitura era anterior à criação do convite (a janela normal entre
+  `trackPendingDirect` e o `refreshChallenges` que o sucede), o convite recém-
+  criado era apagado e um aviso de "indisponível" aparecia por engano. Agora só
+  uma leitura que **começou depois** do otimista nascer conta como prova de que
+  ele terminou (sequência monotônica de fetches, não um booleano "já buscou
+  alguma vez"). Convite genuinamente encerrado sem virar sala mostra um toast
+  não bloqueante (`endedChallenge`) em vez de silêncio.
+- **ASYNC: `sealHalf`/`voidChallenge` retornam `APPLIED | ALREADY_APPLIED |
+  NOT_APPLICABLE`.** `ChallengeRoom.trySeal` só atualiza estado do DO, notifica
+  e anuncia terminal quando a persistência realmente confirmou; uma selagem que
+  perde a corrida contra um cancelamento/void concorrente é `NOT_APPLICABLE` e
+  tem a resposta residual explicitamente descartada — sem isso, o `INSERT` da
+  resposta sobrevivia mesmo com o `UPDATE` de status perdendo o CAS.
+- **FCM "sua vez de jogar" (ASYNC apenas).** Quando a primeira metade sela de
+  verdade, um push best-effort avisa o segundo jogador — nunca para DIRECT, que
+  já sincroniza ao vivo. Respeita mute e bloqueio, não duplica quando o canal
+  social do destinatário já está aberto (checado via `/online` no
+  `SocialRealtimeHub`) e ausência/falha de FCM nunca altera o desafio. Nenhum
+  service worker novo.
+- **Paginação por cursor em `forUser`.** Substituiu o `LIMIT 50` silencioso por
+  cursor opaco (`created_at, id`), usando os índices já existentes
+  (`idx_challenges_first_player`/`idx_challenges_second_player`, já compostos
+  por `status, created_at`); `reconcileChallengeLifecycle` converge as até 50
+  linhas vivas em paralelo (`Promise.all`) em vez de sequencialmente — mesma
+  contagem de chamadas ao DO, sem round-trips a mais.
+
+Sem migration nova: tudo reaproveita `challenges.match_id` e tabelas já
+existentes (`friendship_mutes`, `push_installations`, `user_blocks`).
+
+Regressões adicionadas (Worker): aceite duplo/multiaba convergindo para uma
+sala, falha do `PresenceHub` durante o `start()` sem modal preso e com locks
+liberados, reconciliação dentro e fora da graça de 7 s para uma reserva sem
+`matches` row, recuperação do `roomId` pela lista para os dois lados,
+persistência de `matches.kind = 'DIRECT_LIVE'`, corrida seal×cancelamento sem
+resposta/XP/evento duplicado, FCM nos cinco cenários (configurado, ausente,
+mutado, foreground, falha) e paginação de 55 desafios vivos por cursor.
+Regressões adicionadas (Web): o convite otimista sobrevive à janela entre sua
+própria criação e a atualização que a sucede, o aviso de "indisponível"
+aparece só quando essa atualização realmente confirma o fim, e o clique
+duplo no aceite trava sincronamente antes da resposta chegar.
+
+Duas das regressões acima capturaram bugs reais que não existiam antes desta
+corretiva ser escrita: a corrida perdida do `PresenceHub` entre duas
+chamadas concorrentes de `start()` para o mesmo desafio, e o apagamento
+prematuro do convite otimista antes da própria atualização confirmar. Ambos
+foram corrigidos como parte deste mesmo commit, não deixados como findings.
+
+Validação: `lint`, `typecheck`, 300 testes unitários/domínio (web incluído),
+115 testes Worker/WebSocket, `test:migrations` (banco vazio e upgrade completo
+`0003→…→0011`, incluindo rollback), `build` (domain + web + worker, um único
+service worker) e `npm audit --omit=dev` sem vulnerabilidades. Diff revisado
+por arquivo; nenhum segredo real no diff (só uma chave RSA sintética gerada em
+memória para assinar JWT de teste do FCM, mesmo padrão já usado em
+`social-foundation.worker.test.ts`). Nenhum smoke físico foi executado nem
+declarado — fica pendente a validação manual do proprietário nos cenários
+descritos no relatório de entrega.
+
+### 2026-09-17 — Corrective follow-up: paginação de desafios no cliente
+
+- O Worker já retornava `nextCursor` para desafios vivos, mas o `ChallengeProvider`
+  consumia apenas a primeira página. Agora ele segue o cursor até o fim em uma
+  fotografia autoritativa única, com proteção contra cursor repetido e resposta
+  antiga sobrescrevendo uma atualização mais nova. Assim, desafios acima da
+  primeira página — inclusive DIRECT em recuperação — não somem do cliente.
+- Regressão web cobre duas páginas. Continua sem polling: as páginas seguintes
+  são buscadas apenas durante refresh disparado por montagem, evento social,
+  foco/reconexão ou ação real.
+
+### 2026-09-21 — M11 finalizado (missões/streak, Perfil real, ADMIN web, paginação) e M12 como auditoria pontual
+
+Retomou o pipeline editorial de M11 (categorias, moderação de tema, CRUD/
+versionamento de pergunta, import JSON+CSV, estatísticas idempotentes)
+já concluído em sessão anterior e fechou o restante do milestone:
+
+- **Missões diárias e streak.** `MissionRepository`/`StreakRepository` sobre
+  `CORE_DB` aplicam as funções puras de domínio já testadas isoladamente
+  (`advanceMissionProgress`/`advanceThemeStreak`). As 3 missões do dia nascem
+  sob demanda (`INSERT OR IGNORE`); progresso nunca regride nem reabre missão
+  completa. Streak usa `INSERT ... ON CONFLICT ... DO UPDATE ... WHERE`
+  guardado pelo `last_active_day` lido como CAS. `recordValidPlay`
+  (progression-service) é chamado best-effort a partir dos dois únicos pontos
+  autoritativos de "partida válida": `MatchRoom.persistFinalized` (só quando
+  `FINISHED`, nunca `VOID`) e `ChallengeRoom.trySeal` (só quando
+  `outcome === 'APPLIED'`, nunca uma selagem perdedora). Nenhuma lógica FROZEN
+  foi alterada — só uma chamada adicional no fim do fluxo já existente.
+- **Perfil real.** `GET /api/profile/summary` passou a devolver, além do
+  melhor tema já existente: as missões do dia, o streak ativo com nome/tema
+  (`StreakRepository.activeStreakWithTheme`, fallback determinístico por
+  maior `current_streak`), partidas Ranqueadas totais
+  (`UserRepository.matchSummary`, soma de `theme_rankings`) e a média ordinal
+  por categoria (`UserRepository.categoryAverages`, reaproveitando a função
+  pura `categoryAverage` do domínio — já testada, nunca antes ligada a nenhum
+  endpoint — cap em Desafiante I, sem efeito competitivo, só temas com
+  Ranqueada). O Perfil ganhou os cards correspondentes.
+- **Superfícies ADMIN na Web.** Dentro de `CreatePage`, seguindo o padrão já
+  usado por Denúncias e Arte dos temas: categorias (CRUD com CAS),
+  moderação de tema (aprovar/rejeitar/desativar com nota), perguntas por
+  tema (abas por status, aprovar/rejeitar/desativar, formulário de criação),
+  usuários e papéis (busca paginada, conceder/revogar ADMIN — `UserRepository`
+  e rotas novas) e trilha de auditoria (leitura paginada de `audit_logs` —
+  `AuditLogRepository`, novo).
+- **Auditoria de paginação restante.** `blockedUsers` e os pedidos pendentes
+  (`incoming`/`outgoing`) tinham `LIMIT 100` fixo sem cursor — ao contrário de
+  amizades (`FRIEND_LIMIT`), nenhum dos dois tem cap de quantidade; acima de
+  100, o restante ficava simplesmente invisível, sem poder desbloquear nem
+  responder. Ambos agora paginam por cursor (`created_at` + chave de
+  desempate, página de 50); Social e Perfil ganharam "Carregar mais" nas três
+  listas. `/api/admin/themes` teve o teto elevado de 100 para 500 como
+  mitigação — não é paginação de verdade, fica registrado como lacuna
+  conhecida.
+- **M12 tratado como auditoria pontual**, não a suíte E2E completa
+  (`test:e2e`/`check:full`) pedida originalmente — essa suíte não existe.
+  Confirmado: cabeçalhos de segurança/CORS/`no-store` já cobrem toda rota
+  nova (infraestrutura de milestone anterior, sem alteração necessária);
+  `npm audit --omit=dev` limpo; scan manual de segredos no diff sem achados.
+  Corrigido: proposta de tema (`POST /api/themes`) não tinha nenhum limite
+  técnico, ao contrário de desafios/denúncias — adicionado 5/hora por
+  usuário. Esse mesmo trabalho revelou um bug de formato: comparar
+  `CURRENT_TIMESTAMP` nativo do SQLite (`"YYYY-MM-DD HH:MM:SS"`) contra um
+  ISO string gerado em JS (`"...T...Z"`) nunca bate na comparação
+  lexicográfica — corrigido com `datetime('now', ...)` no próprio SQL, e
+  capturado por um teste de regressão antes de ir para produção. Não
+  auditados nesta passada: multi-aba/dispositivo, offline/reload/retry,
+  restauração de sessão Firebase, atualização de PWA fora de partida,
+  orçamento de imagem, hibernação de DO, e a11y ponta a ponta das telas
+  novas além dos padrões já reaproveitados.
+
+Testes novos: 9 no domínio (missões/streak), ~30 no Worker (missões/streak,
+diretório ADMIN/auditoria, resumo de Perfil, paginação social, limite de
+propostas de tema) e ~20 na Web (painéis ADMIN, Perfil, Social). Validação
+completa a cada commit: `lint`, `typecheck`, `test:unit` (330+ testes),
+`test:worker` (165 testes), `test:migrations` (banco vazio e upgrade
+completo Core `0003→…→0012` e Questions `0002→…→0005`, incluindo rollback),
+`build` (domain + web + worker) e `npm audit --omit=dev` sem vulnerabilidades
+a cada etapa. Todos os commits foram publicados por fast-forward direto em
+`main`, sem PR. Nenhum smoke físico foi executado nem declarado — checklist
+específico em `docs/DEPLOYMENT.md` §7.
+
+### 2026-09-22 — Corretiva: DIRECT/ASYNC — graça de 7 s indevida, XP não resumível
+
+Cinco bugs corrigidos em `reconcileChallengeLifecycle`, no domínio de desafio
+e na conclusão do `ChallengeRoom`, todos vindos da mesma raiz: a graça de
+reconexão de 7 s do M8 (pensada só para uma partida/metade JÁ ABERTA) tinha
+vazado para estados que nunca deveriam expirar por ela.
+
+- **DIRECT cancelado aos 7 s.** `reconcileChallengeLifecycle` tratava
+  `PENDING_DIRECT` (`matchId === null`) como órfão elegível à graça de 7 s,
+  anulando um convite ainda dentro dos 30 s legítimos. Corrigido: o ramo de
+  anulação por graça só roda quando `matchId !== null` (sala já reservada);
+  um convite pendente só expira pelos 30 s de `expireStaleDirect`, sem
+  nenhuma chamada ao `MatchRoom` nesse caso.
+- **ASYNC encerrado antes de ser aberto.** `FIRST_PLAYER_ACTIVE`/
+  `SECOND_PLAYER_ACTIVE` com `ChallengeRoom` em `MISSING` por `>= 7 s` também
+  virava `VOID` — mas `MISSING` só significa que aquele jogador ainda não
+  abriu a própria metade, o que pode durar indefinidamente sem ser abandono.
+  Corrigido: o ramo ASYNC só usa o DO para recuperar uma metade travada em
+  `FINALIZING`/`VOID`; uma reserva sem sala nunca é anulada por aqui.
+- **Corrida aceite × cancelar/recusar.** `transitionChallenge` barrava CANCEL/
+  DECLINE/RELATIONSHIP_ENDED a partir de `secondPlayerStarted`, mas não
+  considerava `PREPARING` — o estado exato logo após o CAS de aceite
+  (`PENDING_DIRECT → PREPARING` com `roomId` já persistido) e antes da
+  segunda escrita que leva a `ACTIVE`. Um cancelamento/recusa que lesse o
+  estado fresco nessa janela conseguia encerrar uma tentativa já vencida pelo
+  aceite, podendo deixar uma `MatchRoom` viva convivendo com a linha
+  `CANCELLED`/`DECLINED`. Corrigido com um helper único (`challengeCommitted`
+  = `PREPARING` OU `secondPlayerStarted`), usado nos três casos. Uma corrida
+  ANTES do CAS (cancelamento vence primeiro) já era resolvida corretamente
+  pelo CAS por revisão — não precisou de mudança.
+- **Aceite DIRECT duplicado durante inicialização.** Dois aceites/retries do
+  mesmo `roomId` podiam atravessar o primeiro `await` de `MatchRoom.initialize`
+  antes de a sala ser gravada no storage; o segundo encontrava o lock D1 do
+  primeiro e recebia `PLAYER_BUSY`. Corrigido com uma única promessa de
+  inicialização compartilhada por instância: ambas as requisições convergem
+  para a mesma sala, sem nova reserva, polling ou nova regra de jogo.
+- **XP/estatística/progressão não resumíveis.** `sealHalf` gravava
+  `COMPLETED` e pagava XP na mesma chamada; uma falha entre os dois passos
+  perdia XP para sempre, sem nenhum jeito de tentar de novo. Migration
+  `0013_challenge_completion_ledger.sql` cria `challenge_xp_ledger` e
+  `challenge_progression_ledger` — mesmo desenho de `result_ledger`/
+  `question_statistics_ledger` já usados pelo `MatchRoom`. A corretiva
+  forward-only `0014` Core e `0006` Questions acrescenta o marcador `applied`:
+  entradas pendentes são retomadas e o incremento/recibo final é um batch
+  atômico, sem pagar ou progredir duas vezes.
+  `sealHalf` agora só faz a transição; `recordHalfEffects`/
+  `applyCompletionXp`, novos métodos puros de repositório, aplicam
+  estatística/missão/streak/XP e são chamados de novo a cada `trySeal` —
+  inclusive em retry após `ALREADY_APPLIED` — pelo alarme já existente do DO,
+  sem nenhum polling ou DO novo. Nunca muda score, XP/Conhecimento
+  retroativamente, nem expõe resposta.
+- **Performance/UX.** Confirmado: a reconciliação nunca chama nenhum DO para
+  `PENDING_DIRECT` ou `WAITING_FOR_SECOND` (nenhum dos dois cai em ramo
+  algum). A mensagem de convite encerrado no cliente já distinguia `EXPIRED`
+  (prazo autoritativo, conhecido localmente) de um genérico "não disponível"
+  para os demais terminais (a lista autoritativa nunca expõe qual — desenho
+  deliberado preexistente); o essencial da regra pedida — nunca mostrar
+  "encerrado" para um convite ainda válido — passa a valer estruturalmente
+  com os bugs #1/#2 corrigidos.
+
+Testes novos: 1 no domínio (`challengeCommitted` barra CANCEL/DECLINE/
+RELATIONSHIP_ENDED em `PREPARING`) e 11 no Worker — DIRECT pendente
+sobrevivendo a qualquer instante antes dos 30 s (7 s, 7,001 s, 29,999 s),
+convite cruzado aceito depois dos 7 s, ASYNC nunca `VOID` por `MISSING` em
+nenhum dos dois lados nem em `WAITING_FOR_SECOND`, cancelamento vencendo
+antes do CAS de aceite (bloqueia sem criar sala), cancelamento/recusa
+concorrente depois do CAS (nunca encerra a tentativa nem deixa sala
+convivendo com `CANCELLED`/`DECLINED`), uma corrida real via `Promise.allSettled`
+entre aceitar e cancelar, e retomada de efeitos pós-conclusão após falha
+simulada sem duplicar estatística/missão/streak/XP. Regressões confirmadas
+verdes sem alteração: 30 s do DIRECT, graça de 7 s de reconexão de sala já
+iniciada (M8), mesmas perguntas/ordem/alternativas/sigilo do ASYNC, cancelamento
+assíncrono e entrega realtime de `CHALLENGE_UPDATED`. Validação completa:
+`lint`, `typecheck` (domain+web+worker), `test:unit` (333 testes),
+`test:worker` (173 testes, incluindo 3 execuções consecutivas do arquivo de
+desafios para descartar flakiness), `test:migrations` (banco vazio e upgrade
+completo Core `0003→…→0014` e Questions `0002→…→0006`, incluindo os upgrades
+`0012→0013→0014` e `0005→0006`, além de rollback), `build` (domain + web + worker) e `npm audit
+--omit=dev` sem vulnerabilidades. Scan manual do diff sem segredos. Commit
+único publicado por fast-forward direto em `main`, sem PR. Nenhum smoke
+físico foi executado nem declarado.
+
+**Achado à parte, fora do escopo dos cinco bugs:** o commit `341a58b`
+("feat(nav): remove public create destination"), já em `main` antes desta
+sessão, gravou `docs/plans/QUIZ_GOMES_V1.md` como binário corrompido (125503
+→ 30060 bytes ilegíveis; `git show 341a58b:docs/plans/QUIZ_GOMES_V1.md` não
+abre como texto). Este commit restaura o conteúdo a partir do último estado
+bom (`2c63df8`) e reaplica por cima só as entradas descritas acima — nenhum
+outro conteúdo do diário foi alterado ou perdido. Vale conferir se o mesmo
+commit corrompeu algo mais.
+
+## Critério de saída desta execução
+
+- Milestones 8 e 8.5 aprovados fisicamente e congelados;
+- Social Foundation 9A e realtime global 9A.1 preservados; smoke físico do 9A.1 aprovado e registrado;
+- presença privada 9B implementada/validada localmente e publicada em commits lógicos na `main` por fast-forward;
+- suíte unitária, runtime Workers/WebSocket, PWA, Worker, migrations, rollback, npm audit e secrets verdes;
+- push FCM opcional sem impedir amizades/bloqueios quando não configurado;
+- smoke físico do 9B APROVADO em 2026-09-11 e o milestone CONCLUÍDO/FROZEN; o smoke físico completo do 9A continua pendente até confirmação externa do proprietário;
+- Milestone 9C+M10 unificado (Desafios entre amigos) concluído e FROZEN após aprovação física do corrective #3; a regressão integral é obrigação do M12;
+- M11 concluído (editorial/admin, estatísticas, missões/streak, Perfil real,
+  superfícies ADMIN web, paginação restante); M12 concluído como auditoria
+  pontual de segurança/resiliência/performance/a11y — não como a suíte E2E
+  `test:e2e`/`check:full` originalmente pedida, que não foi construída;
+  sem preview de branch, sem R2 provisionado, billing ou produto pago;
+  nenhum smoke físico executado — checklist em `docs/DEPLOYMENT.md` §7;
+- corretiva de 2026-09-22 concluída: os cinco bugs de DIRECT/ASYNC (graça de
+  7 s indevida em convite/reserva ASYNC, corrida aceite × cancelar/recusar em
+  `PREPARING`, XP/estatística/progressão não resumíveis após falha, chamadas
+  desnecessárias ao DO) corrigidos, testados e publicados por fast-forward em
+  `main`; `docs/plans/QUIZ_GOMES_V1.md` recuperado de uma corrupção binária
+  pré-existente do commit `341a58b`; nenhum smoke físico executado nem
+  declarado.
