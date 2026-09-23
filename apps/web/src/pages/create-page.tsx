@@ -167,8 +167,8 @@ export function CreatePage({ adminOnly = false }: { adminOnly?: boolean }) {
       {role === 'ADMIN' ? <AdminThemeArtworkManager getToken={getToken} refreshKey={catalogRefreshKey} /> : null}
       {role === 'ADMIN' ? <AdminQuestionEditorialPanel getToken={getToken} refreshKey={catalogRefreshKey} /> : null}
       {role === 'ADMIN' ? <AdminReportsPanel getToken={getToken} /> : null}
-      {role === 'ADMIN' ? <AdminUsersPanel getToken={getToken} /> : null}
-      {role === 'ADMIN' ? <AdminAuditLogPanel getToken={getToken} /> : null}
+      {role === 'ADMIN' ? <AdminUsersPanel currentUserId={profile?.userId ?? null} getToken={getToken} /> : null}
+      {role === 'ADMIN' ? <AdminAuditLogPanel getToken={getToken} refreshKey={catalogRefreshKey} /> : null}
     </section>
   );
 }
@@ -344,9 +344,16 @@ function ReportCard({
         <>
           <p className="report-card__prompt">{questionSnapshot.prompt}</p>
           <ol className="report-card__options">
-            {questionSnapshot.options.map((option, index) => (
-              <li className={index === questionSnapshot.correctOption ? 'report-card__option--correct' : ''} key={option}>{option}</li>
-            ))}
+            {questionSnapshot.options.map((option, index) => {
+              const correct = index === questionSnapshot.correctOption;
+              return (
+                <li className={correct ? 'report-card__option--correct' : ''} key={option}>
+                  {correct && <span aria-hidden="true">✓ </span>}
+                  {option}
+                  {correct && <span className="sr-only"> (alternativa correta)</span>}
+                </li>
+              );
+            })}
           </ol>
         </>
       )}

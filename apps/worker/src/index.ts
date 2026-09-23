@@ -444,7 +444,10 @@ async function adminImportRoute(request: Request, env: Env, url: URL): Promise<R
     const text = await readText(request, CSV_IMPORT_MAX_BYTES);
     const { diagnostics, questions: parsedQuestions } = parseQuestionsCsv(text, defaultThemeId);
     if (diagnostics.length > 0) {
-      throw new ApiError(400, 'CSV_VALIDATION_ERROR', 'Revise as linhas indicadas do CSV.', { diagnostics });
+      // `details` precisa ser o array em si: `apiErrorResponse` o repassa tal
+      // como está, e o cliente só reconhece diagnóstico por linha quando
+      // `Array.isArray(error.details)` é verdadeiro.
+      throw new ApiError(400, 'CSV_VALIDATION_ERROR', 'Revise as linhas indicadas do CSV.', diagnostics);
     }
     importedQuestions = parsedQuestions;
   } else {
@@ -456,6 +459,9 @@ async function adminImportRoute(request: Request, env: Env, url: URL): Promise<R
   const idempotencyKey = request.headers.get('Idempotency-Key') ?? '';
   const result = await new QuestionImportService(env.CORE_DB, env.QUESTIONS_DB)
     .import(profile.userId, idempotencyKey, importedQuestions);
+  await auditLog(env, profile.userId, 'IMPORT_QUESTIONS_BATCH', 'theme', defaultThemeId ?? 'multiple', {
+    imported: result.imported, questionCount: importedQuestions.length, status: result.status,
+  });
   return json(result, { status: result.status === 'APPLIED' ? 201 : 200 });
 }
 
@@ -543,6 +549,39 @@ async function adminUsersRoute(request: Request, env: Env, url: URL): Promise<Re
   return json(await new UserRepository(env.CORE_DB).listForAdmin({ cursor, search }));
 }
 
+/**
+ * Concede ou revoga ADMIN, já com o ator autenticado/autorizado resolvido.
+ * Separado de `adminUserRoleRoute` (que só cuida de auth/roteamento) para ser
+ * testável diretamente, no mesmo padrão de `acceptChallenge`.
+ */
+export async function setAdminRoleForUser(
+  env: Env, actorUserId: string, targetUserId: string, granted: boolean,
+): Promise<Response> {
+  const users = new UserRepository(env.CORE_DB);
+  if (!granted) {
+    // Ninguém revoga o próprio acesso: evita travar o painel para si mesmo por engano.
+    if (targetUserId === actorUserId) {
+      throw new ApiError(409, 'CANNOT_REVOKE_SELF', 'Você não pode revogar o próprio acesso de ADMIN.');
+    }
+    // UID de bootstrap (`ADMIN_FIREBASE_UIDS`) continua ADMIN mesmo sem a
+    // role no banco — revogar aqui só apagaria a linha sem tirar acesso
+    // nenhum, deixando a trilha de auditoria dizer algo que não aconteceu.
+    const targetUid = (await users.firebaseUidsFor([targetUserId])).get(targetUserId);
+    if (targetUid !== undefined && bootstrapAdminUids(env).has(targetUid)) {
+      throw new ApiError(
+        409, 'CANNOT_REVOKE_BOOTSTRAP_ADMIN',
+        'Este usuário é ADMIN por configuração do ambiente e não pode ser revogado por aqui.',
+      );
+    }
+  }
+  const outcome = await users.setAdminRole(targetUserId, granted, actorUserId);
+  if (outcome === 'LAST_ADMIN') {
+    throw new ApiError(409, 'LAST_ADMIN_ROLE', 'Pelo menos um ADMIN precisa continuar com acesso.');
+  }
+  await auditLog(env, actorUserId, granted ? 'GRANT_ADMIN_ROLE' : 'REVOKE_ADMIN_ROLE', 'user', targetUserId, {});
+  return json({ ok: true });
+}
+
 async function adminUserRoleRoute(request: Request, env: Env, targetUserId: string): Promise<Response> {
   if (request.method !== 'POST' && request.method !== 'DELETE') {
     throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Método não permitido.');
@@ -551,11 +590,7 @@ async function adminUserRoleRoute(request: Request, env: Env, targetUserId: stri
   await requireAdmin(identity, env);
   const profile = await new UserRepository(env.CORE_DB).findByFirebaseUid(identity.uid);
   if (profile === null) throw new ApiError(409, 'PROFILE_REQUIRED', 'Conclua seu perfil.');
-  const users = new UserRepository(env.CORE_DB);
-  const granted = request.method === 'POST';
-  await users.setAdminRole(targetUserId, granted, profile.userId);
-  await auditLog(env, profile.userId, granted ? 'GRANT_ADMIN_ROLE' : 'REVOKE_ADMIN_ROLE', 'user', targetUserId, {});
-  return json({ ok: true });
+  return setAdminRoleForUser(env, profile.userId, targetUserId, request.method === 'POST');
 }
 
 async function adminAuditLogRoute(request: Request, env: Env, url: URL): Promise<Response> {
@@ -761,12 +796,16 @@ async function editorialQuestionBatchApprovalRoute(request: Request, env: Env, t
 async function adminThemeArtworkRoute(request: Request, env: Env, themeId: string): Promise<Response> {
   const identity = await requireUser(request, env);
   await requireAdmin(identity, env);
+  const profile = await new UserRepository(env.CORE_DB).findByFirebaseUid(identity.uid);
+  if (profile === null) throw new ApiError(409, 'PROFILE_REQUIRED', 'Conclua seu perfil.');
   const themes = new ThemeRepository(env.CORE_DB);
   try {
     if (request.method === 'PATCH') {
       const parsed = themeArtworkChoiceSchema.safeParse(await readJson(request));
       if (!parsed.success) throw validationError(parsed.error);
-      return json({ theme: await themes.setArtworkChoice({ ...parsed.data, themeId }) });
+      const theme = await themes.setArtworkChoice({ ...parsed.data, themeId });
+      await auditLog(env, profile.userId, 'SET_THEME_ARTWORK_CHOICE', 'theme', themeId, { kind: parsed.data.kind });
+      return json({ theme });
     }
     if (request.method === 'PUT') {
       if (request.headers.get('Content-Type')?.split(';', 1)[0]?.trim().toLowerCase() !== 'image/webp') {
@@ -787,6 +826,9 @@ async function adminThemeArtworkRoute(request: Request, env: Env, themeId: strin
         height: dimensions.height,
         themeId,
         width: dimensions.width,
+      });
+      await auditLog(env, profile.userId, 'UPLOAD_THEME_ARTWORK', 'theme', themeId, {
+        bytes: data.byteLength, height: dimensions.height, width: dimensions.width,
       });
       return json({ theme });
     }
@@ -1619,6 +1661,10 @@ async function apiRoute(request: Request, env: Env, url: URL, context: Execution
   }
   if (url.pathname === '/api/themes' && request.method === 'POST') {
     const identity = await requireUser(request, env);
+    // Criação pública fica desativada na V1 (AGENTS.md): a UI já esconde o
+    // formulário para quem não é ADMIN, mas a rota precisa recusar por conta
+    // própria — nunca depender só de esconder a interface.
+    await requireAdmin(identity, env);
     const profile = await new UserRepository(env.CORE_DB).findByFirebaseUid(identity.uid);
     if (profile === null) throw new ApiError(409, 'PROFILE_REQUIRED', 'Conclua seu perfil antes de criar um tema.');
     const parsed = themeSubmissionSchema.safeParse(await readJson(request));

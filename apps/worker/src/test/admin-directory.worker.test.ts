@@ -23,6 +23,8 @@ describe('M11 — diretório ADMIN de usuários e papéis', () => {
     const target = userAt(users, 0);
     const actor = userAt(users, 1);
     const users_ = new UserRepository(env.CORE_DB);
+    // Ator também é ADMIN: revogar `target` não pode ser o único ADMIN restante.
+    await users_.setAdminRole(actor.id, true, actor.id);
 
     await users_.setAdminRole(target.id, true, actor.id);
     await users_.setAdminRole(target.id, true, actor.id);
@@ -33,6 +35,10 @@ describe('M11 — diretório ADMIN de usuários e papéis', () => {
     await users_.setAdminRole(target.id, false, actor.id);
     const afterRevoke = await users_.listForAdmin({ search: target.publicId });
     expect(afterRevoke.users[0]).toMatchObject({ role: 'PLAYER' });
+
+    // `user_roles` é global e a suíte roda com `--no-isolate`: sem isto, `actor`
+    // fica ADMIN residual e vaza para outros arquivos de teste da suíte.
+    await env.CORE_DB.prepare("DELETE FROM user_roles WHERE user_id = ?1 AND role = 'ADMIN'").bind(actor.id).run();
   });
 
   it('página de usuários é cursor-based: 60 usuários exigem duas páginas de 50', async () => {

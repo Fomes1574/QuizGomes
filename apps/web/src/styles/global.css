@@ -350,12 +350,14 @@ h1, h2, h3, .brand-lockup__name, .hero-stat strong, .level-card > strong, .count
 .admin-panel { display: grid; gap: 16px; padding: 24px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-sm); }
 .admin-panel__form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; }
 .admin-panel__form .field { flex: 1 1 140px; }
-.admin-panel__option-row { display: flex; align-items: center; gap: 10px; }
-.admin-panel__option-row input { flex: 1; }
+.admin-panel__option-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.admin-panel__option-row input { flex: 1 1 140px; min-width: 0; }
 .admin-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
 .admin-list__row { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--background-subtle); font-size: .78rem; }
+.admin-list__row > *:first-child { min-width: 0; }
 .admin-list__row--audit { grid-template-columns: 1fr auto auto; }
 .admin-list__row--audit time { color: var(--text-secondary); font-size: .68rem; white-space: nowrap; }
+.admin-list__row--audit small { overflow-wrap: anywhere; }
 .admin-card-list { display: grid; gap: 14px; }
 .admin-card { display: grid; gap: 10px; padding: 16px; border: 1px solid var(--border); border-radius: 16px; background: var(--background-subtle); }
 .admin-card > header { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
@@ -410,6 +412,8 @@ h1, h2, h3, .brand-lockup__name, .hero-stat strong, .level-card > strong, .count
 .social-person__actions > small { color: var(--text-secondary); font-size: .76rem; }
 .button--accept { color: #fff; background: var(--correct); box-shadow: 0 9px 20px color-mix(in srgb, var(--correct) 20%, transparent); }
 .button--accept:hover:not(:disabled) { background: var(--correct); box-shadow: 0 12px 26px color-mix(in srgb, var(--correct) 28%, transparent); }
+.button--danger { color: #fff; background: var(--incorrect); box-shadow: 0 9px 20px color-mix(in srgb, var(--incorrect) 20%, transparent); }
+.button--danger:hover:not(:disabled) { background: var(--incorrect); box-shadow: 0 12px 26px color-mix(in srgb, var(--incorrect) 28%, transparent); }
 .social-person__quiet-action { min-height: 36px; padding: 6px 9px; border-radius: 10px; color: var(--text-secondary); cursor: pointer; background: transparent; font-size: .74rem; font-weight: 650; transition: color 160ms ease, background 160ms ease; }
 .social-person__quiet-action:hover:not(:disabled) { color: var(--brand); background: var(--surface-soft); }
 .social-person__quiet-action:disabled { cursor: not-allowed; opacity: .5; }

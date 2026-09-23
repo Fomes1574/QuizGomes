@@ -330,14 +330,31 @@ export class UserRepository {
     };
   }
 
-  async setAdminRole(userId: string, granted: boolean, actorUserId: string): Promise<void> {
+  /**
+   * Concede ou revoga ADMIN. A revogação nunca esvazia `user_roles` de ADMIN:
+   * a checagem de que sobra pelo menos um outro ADMIN vive na própria
+   * cláusula `WHERE` do `DELETE`, então corre atomicamente com a escrita —
+   * duas revogações concorrentes nunca zeram a tabela juntas.
+   */
+  async setAdminRole(userId: string, granted: boolean, actorUserId: string): Promise<'GRANTED' | 'LAST_ADMIN' | 'REVOKED'> {
     if (granted) {
       await this.db.prepare(
         'INSERT OR IGNORE INTO user_roles (user_id, role, granted_by_user_id) VALUES (?1, \'ADMIN\', ?2)',
       ).bind(userId, actorUserId).run();
-      return;
+      return 'GRANTED';
     }
-    await this.db.prepare("DELETE FROM user_roles WHERE user_id = ?1 AND role = 'ADMIN'").bind(userId).run();
+    const result = await this.db.prepare(
+      `DELETE FROM user_roles
+        WHERE user_id = ?1 AND role = 'ADMIN'
+          AND (SELECT COUNT(*) FROM user_roles WHERE role = 'ADMIN') > 1`,
+    ).bind(userId).run();
+    if ((result.meta.changes ?? 0) === 1) return 'REVOKED';
+    // Nada mudou: ou o alvo já não era ADMIN (revogação idempotente, sem erro),
+    // ou ele é o único ADMIN restante — só o segundo caso é bloqueado.
+    const stillAdmin = await this.db.prepare(
+      "SELECT 1 FROM user_roles WHERE user_id = ?1 AND role = 'ADMIN'",
+    ).bind(userId).first();
+    return stillAdmin === null ? 'REVOKED' : 'LAST_ADMIN';
   }
 }
 

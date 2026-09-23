@@ -66,6 +66,34 @@ e de smokes; quando divergirem, não voltam a ser regra.
   sai do sorteio até a aprovação. O filtro de status agora é aplicado no Worker,
   não apenas sugerido pela aba visual. Smoke físico desta melhoria permanece
   pendente.
+- A corretiva ADMIN de 2026-09-23 (segurança/performance) fechou os achados
+  críticos e altos de uma auditoria somente-leitura anterior: `deploy:cloudflare`
+  não roda mais `test:migrations` duas vezes (já corre dentro de `build:cloudflare`
+  → `check`; economiza ~6,5 min por deploy sem perder cobertura, migration
+  `0015_admin_user_search_index.sql` indexa `users(disabled_at, created_at DESC,
+  id DESC)` para a paginação ADMIN. `UserRepository.setAdminRole` nunca mais
+  zera `user_roles` de ADMIN — a checagem de que sobra outro ADMIN corre na
+  própria cláusula `WHERE` do `DELETE`, atomicamente com a escrita; a rota
+  também bloqueia auto-revogação e revogar um UID de bootstrap (`ADMIN_FIREBASE_UIDS`)
+  que nunca teve a role gravada no banco. `POST /api/themes` agora recusa
+  quem não é ADMIN também no Worker, não só escondendo o formulário na UI
+  (criação pública continua desativada na V1). Import CSV/JSON e mutação de
+  arte de tema passam a gravar auditoria (faltava); o diagnóstico por linha do
+  CSV voltou a chegar no formato que o cliente espera (`details` como array).
+  Na Web, revogar ADMIN, rejeitar/desativar tema e aprovar lote passam por um
+  `ConfirmDialog` acessível (mesmo padrão de foco/`showModal` das telas de
+  desafio) antes de irem à API; corrigidos overflow/wrap dos painéis ADMIN em
+  telas estreitas e o indicador ✓/× que faltava num dos cards de denúncia.
+  Cobertura nova: 5 testes de Worker isolados para as guardas de revogação (em
+  arquivo próprio, com limpeza de estado a cada teste — `user_roles`/
+  `audit_logs` são tabelas globais e a suíte roda com `--no-isolate`,
+  compartilhando D1 entre arquivos) e 2 testes de Web para o fluxo de
+  confirmação. Adiado deliberadamente por risco/esforço, sem regra de produto
+  envolvida: N+1 em `adminReportsRoute`, paginação por cursor real de
+  `/api/admin/themes` (já um gap aceito), reabrir denúncia automaticamente ao
+  editar a pergunta reportada, OWNER editar um tema `DISABLED`, e uma reescrita
+  de performance de `validate-d1-migrations.mjs`. Nenhum smoke físico
+  executado nem declarado.
 - Nenhum smoke físico foi executado nesta sessão. O checklist específico de
   M11/M12 está em `docs/DEPLOYMENT.md` §7, além da regressão física do
   M8–M10 já pendente de longa data. Conteúdo editorial real passa por revisão
@@ -74,6 +102,17 @@ e de smokes; quando divergirem, não voltam a ser regra.
 
 ## Histórico de progresso
 
+- [x] 2026-09-23 — corretiva ADMIN de segurança/performance a partir de
+  auditoria: pipeline de deploy sem `test:migrations` redundante (migration
+  `0015` adiciona índice de listagem ADMIN); `UserRepository.setAdminRole` com
+  guarda atômica de último ADMIN, bloqueio de auto-revogação e de revogar UID
+  de bootstrap; `POST /api/themes` recusando não-ADMIN também no Worker;
+  auditoria gravada em import e mutação de arte (faltava); diagnóstico por
+  linha do CSV corrigido; `ConfirmDialog` acessível antes de revogar ADMIN,
+  rejeitar/desativar tema ou aprovar lote na Web; correções de overflow/wrap
+  e de indicador ✓/× nos painéis ADMIN; 7 testes novos (5 Worker + 2 Web);
+  lint, typecheck, `test:unit`, `test:worker`, `test:migrations`, build e
+  `npm audit` verdes; smoke físico pendente.
 - [x] 2026-09-23 — corretiva ADMIN: sincronização local de catálogo sem F5 e
   compatibilidade segura de arte WebP reencodada pelo navegador (perfil ICC
   técnico permitido; EXIF/XMP/animação/chunks desconhecidos bloqueados), coberta

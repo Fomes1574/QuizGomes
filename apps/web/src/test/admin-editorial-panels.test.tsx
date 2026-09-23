@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AdminCategoriesPanel, AdminQuestionEditorialPanel, AdminThemeModerationPanel } from '../pages/admin-editorial-panels.js';
 
@@ -119,6 +119,8 @@ describe('AdminQuestionEditorialPanel', () => {
     await screen.findByText('Pergunta em revisão?');
     fireEvent.click(screen.getByLabelText('Selecionar todas as perguntas desta página'));
     fireEvent.click(screen.getByRole('button', { name: 'Aprovar selecionadas (1)' }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Aprovar 1 pergunta' }));
 
     await waitFor(() => expect(mocks.apiRequest).toHaveBeenCalledWith('/api/editorial/themes/theme-1/questions/approve', expect.objectContaining({
       body: { questionIds: ['question-1'] }, method: 'POST',

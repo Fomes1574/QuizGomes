@@ -169,7 +169,7 @@ function assertFinalSchema(scenario) {
        'idx_question_reports_question', 'idx_question_reports_reporter_created',
        'idx_question_report_views_proof', 'user_daily_missions', 'user_theme_streaks',
        'idx_user_daily_missions_user_day', 'idx_user_theme_streaks_active',
-       'challenge_xp_ledger', 'challenge_progression_ledger'
+       'challenge_xp_ledger', 'challenge_progression_ledger', 'idx_users_admin_listing'
      )
         OR type = 'trigger'
      ORDER BY type, name
@@ -214,6 +214,7 @@ function assertFinalSchema(scenario) {
     'idx_question_reports_question',
     'idx_question_reports_reporter_created', 'idx_question_report_views_proof',
     'idx_user_daily_missions_user_day', 'idx_user_theme_streaks_active',
+    'idx_users_admin_listing',
   ]) {
     assert(
       schemaObjects.some(({ name, type }) => name === indexName && type === 'index'),
@@ -259,8 +260,8 @@ function assertFinalSchema(scenario) {
 
   const appliedMigrations = query(scenario, 'SELECT name FROM d1_migrations ORDER BY id');
   assert(
-    appliedMigrations.at(-1)?.name === '0014_challenge_progression_retry.sql',
-    `${scenario.name}: 0014 da retomada de progressão não foi registrada como última migration`,
+    appliedMigrations.at(-1)?.name === '0015_admin_user_search_index.sql',
+    `${scenario.name}: 0015 do índice de busca de usuários não foi registrada como última migration`,
   );
   const upgradedTheme = query(scenario, `
     SELECT artwork_kind, artwork_icon_key, artwork_version, active_question_count
@@ -972,6 +973,10 @@ try {
     migrationNames.includes('0014_challenge_progression_retry.sql'),
     'Migration Core 0014 de retomada da progressão ausente',
   );
+  assert(
+    migrationNames.includes('0015_admin_user_search_index.sql'),
+    'Migration Core 0015 do índice de busca de usuários ausente',
+  );
   assert(questionMigrationNames.includes('0003_expand_synthetic_smoke_test.sql'), 'Migration Questions 0003 ausente');
   assert(
     questionMigrationNames.includes('0004_question_editorial_versioning.sql'),
@@ -1016,6 +1021,7 @@ try {
       '0012_editorial_missions_streak.sql',
       '0013_challenge_completion_ledger.sql',
       '0014_challenge_progression_retry.sql',
+      '0015_admin_user_search_index.sql',
     ].includes(name)),
   );
   console.log('Validando upgrade D1 exato de 0003 para 0004...');
@@ -1126,8 +1132,18 @@ try {
     join(upgradeDatabase.migrationsDirectory, '0014_challenge_progression_retry.sql'),
   );
   applyMigrations(upgradeDatabase);
-  assertFinalSchema(upgradeDatabase);
   assertChallengeCompletionLedgerInvariants(upgradeDatabase);
+  console.log('Validando upgrade D1 atual exato de 0014 para 0015 índice de busca de usuários...');
+  assert(
+    !query(upgradeDatabase, "SELECT name FROM sqlite_master WHERE name = 'idx_users_admin_listing'").length,
+    'upgrade-0003: índice de usuários já existia antes da 0015',
+  );
+  await copyFile(
+    join(coreSourceMigrationsDirectory, '0015_admin_user_search_index.sql'),
+    join(upgradeDatabase.migrationsDirectory, '0015_admin_user_search_index.sql'),
+  );
+  applyMigrations(upgradeDatabase);
+  assertFinalSchema(upgradeDatabase);
   console.log('Validando rollback transacional de migration com erro...');
   await assertRollback(upgradeDatabase);
 
@@ -1204,7 +1220,7 @@ try {
   assertFinalQuestionDataset(upgradeQuestions, '0006_question_statistics_retry.sql');
   assertQuestionStatisticsInvariants(upgradeQuestions);
 
-  console.log('Migrations D1 aprovadas: parser Wrangler, bancos vazios, upgrades Core 0003→0004→0005→0006→0007→0008→0009→0010→0011→0012→0013→0014 e Questions 0002→0003→0004→0005→0006, invariantes sociais, de desafio, de ledger de conclusão, de denúncia e editoriais, rollback e schemas finais.');
+  console.log('Migrations D1 aprovadas: parser Wrangler, bancos vazios, upgrades Core 0003→0004→0005→0006→0007→0008→0009→0010→0011→0012→0013→0014→0015 e Questions 0002→0003→0004→0005→0006, invariantes sociais, de desafio, de ledger de conclusão, de denúncia e editoriais, rollback e schemas finais.');
 } finally {
   await rm(temporaryRoot, { force: true, recursive: true });
 }

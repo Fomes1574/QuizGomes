@@ -19,7 +19,7 @@
     "db:migrate:remote": "npm run db:migrate:remote -w @quiz-gomes/worker",
     "dev:web": "npm run dev -w @quiz-gomes/web",
     "dev:worker": "npm run dev -w @quiz-gomes/worker",
-    "deploy:cloudflare": "node scripts/assert-cloudflare-production.mjs && npm run test:migrations && npm run db:migrate:remote && npm run deploy:cloudflare -w @quiz-gomes/worker",
+    "deploy:cloudflare": "node scripts/assert-cloudflare-production.mjs && npm run db:migrate:remote && npm run deploy:cloudflare -w @quiz-gomes/worker",
     "lint": "eslint . --max-warnings=0",
     "test": "npm run test:unit && npm run test:worker",
     "test:migrations": "WRANGLER_WRITE_LOGS=false node scripts/validate-d1-migrations.mjs",

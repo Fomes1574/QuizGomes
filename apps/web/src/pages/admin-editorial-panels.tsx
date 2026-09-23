@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Button } from '../components/button.js';
+import { ConfirmDialog } from '../components/confirm-dialog.js';
 import { ClientApiError, apiRequest, apiUpload } from '../lib/api.js';
 import { DIFFICULTY_LABEL } from '../lib/challenges.js';
 import type {
@@ -92,13 +93,18 @@ export function AdminCategoriesPanel({ getToken, onCatalogChanged }: { getToken:
       <ul className="admin-list">
         {categories.map((category) => (
           <li className="admin-list__row" key={category.id}>
+            <div>
+              <input
+                aria-label={`Nome da categoria ${category.name}`}
+                onBlur={(event) => event.target.value.trim() !== category.name && save(category, { name: event.target.value.trim() })}
+                defaultValue={category.name}
+                key={`${category.id}:${category.revision}:name`}
+                maxLength={60}
+              />
+              <small>{category.slug}</small>
+            </div>
             <input
-              onBlur={(event) => event.target.value.trim() !== category.name && save(category, { name: event.target.value.trim() })}
-              defaultValue={category.name}
-              key={`${category.id}:${category.revision}:name`}
-              maxLength={60}
-            />
-            <input
+              aria-label={`Ordem de ${category.name}`}
               onBlur={(event) => Number(event.target.value) !== category.sortOrder && save(category, { sortOrder: Number(event.target.value) })}
               defaultValue={category.sortOrder}
               key={`${category.id}:${category.revision}:order`}
@@ -106,6 +112,7 @@ export function AdminCategoriesPanel({ getToken, onCatalogChanged }: { getToken:
               type="number"
             />
             <select
+              aria-label={`Status da categoria ${category.name}`}
               disabled={savingId === category.id}
               onChange={(event) => save(category, { status: event.target.value as CategoryAdmin['status'] })}
               value={category.status}
@@ -113,7 +120,6 @@ export function AdminCategoriesPanel({ getToken, onCatalogChanged }: { getToken:
               <option value="ACTIVE">Ativa</option>
               <option value="DISABLED">Desativada</option>
             </select>
-            <small>{category.slug}</small>
           </li>
         ))}
       </ul>
@@ -141,6 +147,7 @@ export function AdminThemeModerationPanel({
   const [message, setMessage] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [note, setNote] = useState<Record<string, string>>({});
+  const [pendingAction, setPendingAction] = useState<{ action: 'deactivate' | 'reject'; theme: AdminThemeSummary } | null>(null);
 
   function load() {
     setLoading(true);
@@ -171,6 +178,7 @@ export function AdminThemeModerationPanel({
       setMessage(errorText(actError, 'Não foi possível concluir a ação.'));
     } finally {
       setBusyId(null);
+      setPendingAction(null);
     }
   }
 
@@ -188,7 +196,7 @@ export function AdminThemeModerationPanel({
       </div>
       {message !== null && <p className="form-message form-message--error" role="status">{message}</p>}
       {loading ? <p className="inline-notice">Carregando temas…</p> : null}
-      {!loading && visible.length === 0 ? <p className="inline-notice">Nenhum tema {THEME_STATUS_LABEL[status].toLowerCase()}.</p> : null}
+      {!loading && visible.length === 0 && message === null ? <p className="inline-notice">Nenhum tema {THEME_STATUS_LABEL[status].toLowerCase()}.</p> : null}
       <div className="admin-card-list">
         {visible.map((theme) => (
           <article className="admin-card" key={theme.id}>
@@ -199,19 +207,31 @@ export function AdminThemeModerationPanel({
               <>
                 <label className="field"><span>Nota de rejeição (opcional)</span><textarea maxLength={280} onChange={(event) => setNote((current) => ({ ...current, [theme.id]: event.target.value }))} rows={2} value={note[theme.id] ?? ''} /></label>
                 <div className="admin-card__actions">
-                  <Button disabled={busyId !== null} onClick={() => void act(theme, 'reject')} type="button" variant="ghost">{busyId === theme.id ? 'Aguarde…' : 'Rejeitar'}</Button>
+                  <Button disabled={busyId !== null} onClick={() => setPendingAction({ action: 'reject', theme })} type="button" variant="ghost">{busyId === theme.id ? 'Aguarde…' : 'Rejeitar'}</Button>
                   <Button disabled={busyId !== null} onClick={() => void act(theme, 'approve')} type="button">{busyId === theme.id ? 'Aguarde…' : 'Aprovar'}</Button>
                 </div>
               </>
             ) : null}
             {status === 'ACTIVE' ? (
               <div className="admin-card__actions">
-                <Button disabled={busyId !== null} onClick={() => void act(theme, 'deactivate')} type="button" variant="ghost">{busyId === theme.id ? 'Aguarde…' : 'Desativar'}</Button>
+                <Button disabled={busyId !== null} onClick={() => setPendingAction({ action: 'deactivate', theme })} type="button" variant="ghost">{busyId === theme.id ? 'Aguarde…' : 'Desativar'}</Button>
               </div>
             ) : null}
           </article>
         ))}
       </div>
+      {pendingAction !== null && (
+        <ConfirmDialog
+          body={pendingAction.action === 'deactivate'
+            ? `“${pendingAction.theme.name}” some do catálogo e do sorteio de partidas.`
+            : `“${pendingAction.theme.name}” volta para quem propôs como rejeitado.`}
+          busy={busyId === pendingAction.theme.id}
+          confirmLabel={pendingAction.action === 'deactivate' ? 'Desativar tema' : 'Rejeitar tema'}
+          onCancel={() => setPendingAction(null)}
+          onConfirm={() => void act(pendingAction.theme, pendingAction.action)}
+          title={pendingAction.action === 'deactivate' ? `Desativar “${pendingAction.theme.name}”?` : `Rejeitar “${pendingAction.theme.name}”?`}
+        />
+      )}
     </section>
   );
 }
@@ -226,19 +246,39 @@ const CSV_IMPORT_TEMPLATE = [
   'EASY,"Exemplo de pergunta?",Alternativa A,Alternativa B,Alternativa C,Alternativa D,0',
 ].join('\n');
 
+/** Referência de campo `questions.N.campo` do Zod vira "Pergunta N+1 (campo)". */
+function jsonImportFieldLabel(field: string): string {
+  const match = /^questions\.(\d+)\.(.+)$/.exec(field);
+  if (match?.[1] === undefined) return field;
+  return `Pergunta ${Number(match[1]) + 1}${match[2] !== undefined ? ` (${match[2]})` : ''}`;
+}
+
 function importErrorText(error: unknown): string {
   if (error instanceof ClientApiError && Array.isArray(error.details)) {
     const diagnostics = error.details
-      .filter((detail): detail is { messages?: unknown; row?: unknown } => typeof detail === 'object' && detail !== null)
+      .filter((detail): detail is Record<string, unknown> => typeof detail === 'object' && detail !== null)
       .slice(0, 3)
       .map((detail) => {
-        const messages = Array.isArray(detail.messages) ? detail.messages.filter((message): message is string => typeof message === 'string').join(' ') : '';
-        return `Linha ${typeof detail.row === 'number' ? detail.row : '?'}: ${messages}`;
+        // Diagnóstico de linha do CSV: `{ row, messages: string[] }`.
+        if (Array.isArray(detail.messages)) {
+          const messages = detail.messages.filter((message): message is string => typeof message === 'string').join(' ');
+          return messages === '' ? '' : `Linha ${typeof detail.row === 'number' ? detail.row : '?'}: ${messages}`;
+        }
+        // Erro de validação de campo do JSON: `{ field, message }`.
+        if (typeof detail.message === 'string') {
+          const field = typeof detail.field === 'string' && detail.field !== '' ? jsonImportFieldLabel(detail.field) : '';
+          return field === '' ? detail.message : `${field}: ${detail.message}`;
+        }
+        return '';
       })
       .filter((detail) => detail !== '');
     if (diagnostics.length > 0) return `${error.message} ${diagnostics.join(' ')}`;
   }
   return errorText(error, 'Não foi possível importar o lote.');
+}
+
+function truncate(text: string, max: number): string {
+  return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
 }
 
 function downloadCsvTemplate(): void {
@@ -270,9 +310,16 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
   const [creating, setCreating] = useState(false);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importFileKey, setImportFileKey] = useState(0);
+  // Nasce junto com o arquivo escolhido, não a cada clique: um retry manual
+  // do MESMO arquivo (após timeout/falha aparente) precisa reusar a mesma
+  // chave para o servidor deduplicar de verdade — gerar uma chave nova a
+  // cada tentativa anularia a própria proteção de idempotência.
+  const [importIdempotencyKey, setImportIdempotencyKey] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
   const [selectedQuestionIds, setSelectedQuestionIds] = useState<string[]>([]);
   const [batchApproving, setBatchApproving] = useState(false);
+  const [confirmingBatchApproval, setConfirmingBatchApproval] = useState(false);
+  const [pendingDeactivation, setPendingDeactivation] = useState<EditorialQuestion | null>(null);
   const [editingQuestion, setEditingQuestion] = useState<EditorialQuestion | null>(null);
   const [editDraft, setEditDraft] = useState(emptyDraft());
   const [savingEdit, setSavingEdit] = useState(false);
@@ -281,7 +328,10 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
     const delay = window.setTimeout(() => {
       void apiRequest<{ themes: AdminThemeSummary[] }>(`/api/admin/themes?search=${encodeURIComponent(themeSearch.trim())}`, { getToken })
         .then((result) => setThemeOptions(result.themes))
-        .catch(() => setThemeOptions([]));
+        .catch((searchError: unknown) => {
+          setThemeOptions([]);
+          setMessage({ kind: 'error', text: errorText(searchError, 'Não foi possível buscar temas.') });
+        });
     }, 180);
     return () => window.clearTimeout(delay);
   }, [getToken, refreshKey, themeSearch]);
@@ -320,6 +370,7 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
       setMessage({ kind: 'error', text: errorText(actError, 'Não foi possível concluir a ação.') });
     } finally {
       setBusyId(null);
+      setPendingDeactivation(null);
     }
   }
 
@@ -412,6 +463,7 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
       setMessage({ kind: 'error', text: errorText(approvalError, 'Não foi possível aprovar o lote.') });
     } finally {
       setBatchApproving(false);
+      setConfirmingBatchApproval(false);
     }
   }
 
@@ -460,7 +512,7 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
     setMessage(null);
     try {
       const importPath = `/api/admin/questions/import?themeId=${encodeURIComponent(themeId)}`;
-      const headers = { 'Idempotency-Key': crypto.randomUUID() };
+      const headers = { 'Idempotency-Key': importIdempotencyKey ?? crypto.randomUUID() };
       const isCsv = importFile.name.toLowerCase().endsWith('.csv') || importFile.type === 'text/csv';
       let result: { imported: number; status: 'ALREADY_APPLIED' | 'APPLIED' };
       if (isCsv) {
@@ -476,6 +528,7 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
       }
       setImportFile(null);
       setImportFileKey((current) => current + 1);
+      setImportIdempotencyKey(null);
       setMessage({ kind: 'success', text: result.status === 'ALREADY_APPLIED' ? 'Este lote já havia sido importado.' : `${result.imported} ${result.imported === 1 ? 'pergunta enviada' : 'perguntas enviadas'} para revisão.` });
       if (status === 'IN_REVIEW') loadQuestions(themeId, status, null, true);
     } catch (importError) {
@@ -509,13 +562,18 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
                   type="checkbox"
                 /> Selecionar todas desta página
               </label>
-              <Button disabled={batchApproving || busyId !== null || selectedQuestionIds.length === 0} onClick={() => void approveSelected()} type="button">
+              <span aria-live="polite" className="sr-only">
+                {selectedQuestionIds.length === 0
+                  ? 'Nenhuma pergunta selecionada'
+                  : `${selectedQuestionIds.length} ${selectedQuestionIds.length === 1 ? 'pergunta selecionada' : 'perguntas selecionadas'}`}
+              </span>
+              <Button disabled={batchApproving || busyId !== null || selectedQuestionIds.length === 0} onClick={() => setConfirmingBatchApproval(true)} type="button">
                 {batchApproving ? 'Aprovando…' : `Aprovar selecionadas (${selectedQuestionIds.length})`}
               </Button>
             </div>
           )}
           {loading && page.questions.length === 0 ? <p className="inline-notice">Carregando perguntas…</p> : null}
-          {!loading && page.questions.length === 0 ? <p className="inline-notice">Nenhuma pergunta {QUESTION_STATUS_LABEL[status].toLowerCase()}.</p> : null}
+          {!loading && page.questions.length === 0 && message?.kind !== 'error' ? <p className="inline-notice">Nenhuma pergunta {QUESTION_STATUS_LABEL[status].toLowerCase()}.</p> : null}
           <div className="admin-card-list">
             {page.questions.map((question) => (
               <article className="admin-card" key={question.id}>
@@ -523,6 +581,7 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
                 {question.status === 'IN_REVIEW' && (
                   <label className="field">
                     <input
+                      aria-label={`Selecionar “${truncate(question.prompt, 60)}” para aprovação em lote`}
                       checked={selectedQuestionIds.includes(question.id)}
                       disabled={batchApproving || busyId !== null}
                       onChange={() => toggleQuestionSelection(question.id)}
@@ -531,7 +590,16 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
                   </label>
                 )}
                 <ol className="report-card__options">
-                  {question.options.map((option, index) => <li className={index === question.correctOption ? 'report-card__option--correct' : ''} key={option}>{option}</li>)}
+                  {question.options.map((option, index) => {
+                    const correct = index === question.correctOption;
+                    return (
+                      <li className={correct ? 'report-card__option--correct' : ''} key={option}>
+                        {correct && <span aria-hidden="true">✓ </span>}
+                        {option}
+                        {correct && <span className="sr-only"> (alternativa correta)</span>}
+                      </li>
+                    );
+                  })}
                 </ol>
                 {question.sources.length > 0 && (
                   <ul className="report-card__sources" aria-label="Fontes da pergunta">
@@ -550,7 +618,7 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
                   {question.status === 'ACTIVE' && (
                     <>
                       <Button disabled={busyId !== null || batchApproving || savingEdit} onClick={() => beginEdit(question)} type="button" variant="ghost">Criar revisão</Button>
-                      <Button disabled={busyId !== null} onClick={() => void act(question, 'deactivate')} type="button" variant="ghost">{busyId === question.id ? 'Aguarde…' : 'Desativar'}</Button>
+                      <Button disabled={busyId !== null} onClick={() => setPendingDeactivation(question)} type="button" variant="ghost">{busyId === question.id ? 'Aguarde…' : 'Desativar'}</Button>
                     </>
                   )}
                 </div>
@@ -563,6 +631,26 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
             </Button>
           )}
           {message !== null && <p className={`form-message form-message--${message.kind}`} role="status">{message.text}</p>}
+          {pendingDeactivation !== null && (
+            <ConfirmDialog
+              body={`“${truncate(pendingDeactivation.prompt, 90)}” some do sorteio de partidas.`}
+              busy={busyId === pendingDeactivation.id}
+              confirmLabel="Desativar pergunta"
+              onCancel={() => setPendingDeactivation(null)}
+              onConfirm={() => void act(pendingDeactivation, 'deactivate')}
+              title="Desativar esta pergunta?"
+            />
+          )}
+          {confirmingBatchApproval && (
+            <ConfirmDialog
+              body={`${selectedQuestionIds.length} ${selectedQuestionIds.length === 1 ? 'pergunta vai ser publicada' : 'perguntas vão ser publicadas'} e passa${selectedQuestionIds.length === 1 ? '' : 'm'} a valer em partidas.`}
+              busy={batchApproving}
+              confirmLabel={`Aprovar ${selectedQuestionIds.length} ${selectedQuestionIds.length === 1 ? 'pergunta' : 'perguntas'}`}
+              onCancel={() => setConfirmingBatchApproval(false)}
+              onConfirm={() => void approveSelected()}
+              title="Aprovar o lote selecionado?"
+            />
+          )}
           {editingQuestion !== null && (
             <form className="form-card" onSubmit={(event) => { event.preventDefault(); void saveEdit(); }}>
               <h3>{editingQuestion.status === 'ACTIVE' ? 'Criar revisão da pergunta publicada' : 'Revisar pergunta'}</h3>
@@ -598,7 +686,11 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
           <section className="form-card" aria-labelledby="admin-question-import-title">
             <h3 id="admin-question-import-title">Importar perguntas</h3>
             <p>Envie CSV ou JSON com no máximo 100 perguntas. O tema selecionado acima é aplicado ao lote; fontes são opcionais.</p>
-            <label className="field"><span>Arquivo CSV ou JSON</span><input accept=".csv,application/json,text/csv" key={importFileKey} onChange={(event) => setImportFile(event.target.files?.[0] ?? null)} type="file" /></label>
+            <label className="field"><span>Arquivo CSV ou JSON</span><input accept=".csv,application/json,text/csv" key={importFileKey} onChange={(event) => {
+              const file = event.target.files?.[0] ?? null;
+              setImportFile(file);
+              setImportIdempotencyKey(file === null ? null : crypto.randomUUID());
+            }} type="file" /></label>
             <div className="admin-card__actions">
               <Button onClick={downloadCsvTemplate} type="button" variant="ghost">Baixar modelo CSV</Button>
               <Button disabled={importing || importFile === null} onClick={() => void importQuestions()} type="button">

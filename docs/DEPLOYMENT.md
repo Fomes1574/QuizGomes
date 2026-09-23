@@ -122,18 +122,20 @@ O evento nunca contém ID Token, refresh token, cookie, UID, email, payload ou c
 
 ## 4. Migrations
 
+`npm run test:migrations` já roda uma vez dentro do **Build command** (`build:cloudflare` → `check`), sobre o mesmo commit que o **Deploy command** vai publicar. Repeti-lo dentro de `deploy:cloudflare` era puro desperdício (a mesma validação local de ~6 minutos, sem cobrir nada novo) e consumia uma fração relevante do timeout de 20 min do Workers Builds Free (`docs/FREE_TIER_GUARDRAILS.md`) — corrigido: `deploy:cloudflare` não roda mais `test:migrations`. O gate `assert-cloudflare-production.mjs` já impede que este comando rode fora de `WORKERS_CI=1`/`WORKERS_CI_BRANCH=main`, e nesse ambiente o Deploy command só executa depois que o Build command (que inclui `test:migrations`) já passou no mesmo pipeline; não existe caminho de produção em que `deploy:cloudflare` rode sem essa validação ter acabado de passar sobre o mesmo commit.
+
 O pipeline executa, nessa ordem e antes do deploy:
 
 ```bash
-npm run test:migrations
+npm run build:cloudflare   # inclui test:migrations, entre outros checks
 npm run db:migrate:remote
 npm run deploy:cloudflare -w @quiz-gomes/worker
 ```
 
-O primeiro comando aplica somente migrations pendentes:
+`test:migrations` aplica somente migrations pendentes:
 
 - `QUESTIONS_DB`: `0001_questions.sql` até `0006_question_statistics_retry.sql`;
-- `CORE_DB`: `0001_core.sql` até `0014_challenge_progression_retry.sql`.
+- `CORE_DB`: `0001_core.sql` até `0015_admin_user_search_index.sql`.
 
 Questions é aplicado primeiro para que o tema temporário só fique visível depois que seu pool estiver pronto. Wrangler registra o histórico em `d1_migrations`; retries não reaplicam versões concluídas. Se uma migration falhar, o D1 reverte integralmente aquela migration, preserva as anteriores e o deploy não começa. Arquivos já aplicados são imutáveis e qualquer correção posterior é forward-only. Uma migration que falhou e não foi registrada, como a primeira tentativa remota da `0004_theme_artwork.sql`, continua pendente e deve ser corrigida no próprio arquivo antes do retry — não recebe uma compensação vazia ou manual.
 
@@ -141,8 +143,8 @@ Questions é aplicado primeiro para que o tema temporário só fique visível de
 
 - lê e passa todas as migrations pelo splitter SQL exportado pelo Wrangler, incluindo o statement de tracking;
 - exige LF e bloqueia `CREATE TRIGGER`, pois compound statements continuam sujeitos a diferenças entre o splitter local e o parser multi-statement do endpoint D1 `/query` usado por migrations remotas;
-- aplica Core `0001–0014` e Questions `0001–0006` em bancos vazios e isolados;
-- prova os upgrades Core `0003→0004→0005→0006→0007→0008→0009→0010→0011→0012→0013→0014` e Questions `0002→0003→0004→0005→0006`, incluindo a passagem exata do pool sintético de 30 para 250 slots;
+- aplica Core `0001–0015` e Questions `0001–0006` em bancos vazios e isolados;
+- prova os upgrades Core `0003→0004→0005→0006→0007→0008→0009→0010→0011→0012→0013→0014→0015` e Questions `0002→0003→0004→0005→0006`, incluindo a passagem exata do pool sintético de 30 para 250 slots;
 - valida pedidos cruzados, constraints direcionais de recusas/bloqueios e instalações FCM no schema social;
 - inspeciona colunas, índice e FK composta, e tenta estados inválidos de metadata/BLOB;
 - injeta uma migration temporária que falha depois de criar/escrever e comprova rollback de schema e de `d1_migrations`.
