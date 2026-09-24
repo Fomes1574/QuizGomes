@@ -1446,6 +1446,21 @@ Core `0003→…→0016` e Questions `0002→…→0007`, incluindo os novos upg
 descoberta, além de rollback), `build` (domain + web + worker) verdes. Scan
 manual do diff sem segredos. Nenhum smoke físico foi executado nem declarado.
 
+### 2026-09-24 — corretiva de auditoria da unificação Normal/Rankeada
+
+Auditoria independente do commit de unificação encontrou três falhas de
+transição: a banda Rankeada só era avaliada na chegada de socket (duas pessoas
+já esperando nunca eram reavaliadas nos marcos 15/30/45 s); a migration de
+pool único não descartava `pool_slot_migrations`, cuja FK podia impedir apagar
+um pool irmão; e hashes gravados antes da unificação ainda incluíam
+`difficulty`, permitindo reimportar o mesmo conteúdo. A fila agora agenda e
+executa reavaliações nos marcos da banda, a migration elimina mapas de slots
+que ficaram inválidos pela renumeração e criação/importação também consultam
+os três hashes legados. Testes focados cobrem reavaliação por alarme,
+deduplicação legada e a fixture de migration com mapa de slots. Validados:
+lint, typecheck, `test:unit` (342), `test:worker` (192) e build; nenhum smoke
+físico/deploy foi executado.
+
 ## Critério de saída desta execução
 
 - Milestones 8 e 8.5 aprovados fisicamente e congelados;

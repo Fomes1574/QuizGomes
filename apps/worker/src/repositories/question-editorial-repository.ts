@@ -1,5 +1,5 @@
 import { ApiError } from '../http/api-error.js';
-import { questionContentHash, questionPoolId } from '../services/question-content.js';
+import { questionContentHash, questionContentHashCandidates, questionPoolId } from '../services/question-content.js';
 
 export interface QuestionSourceInput {
   kind: string;
@@ -130,7 +130,8 @@ export class QuestionEditorialRepository {
   }): Promise<{ questionId: string }> {
     const targetPoolId = questionPoolId(input.themeId);
     const questionId = crypto.randomUUID();
-    const contentHash = await questionContentHash(input);
+    const [contentHash, ...legacyHashes] = await questionContentHashCandidates(input);
+    await this.assertNoLegacyDuplicate([contentHash, ...legacyHashes]);
     const statements: D1PreparedStatement[] = [
       // `difficulty` é legado físico do schema (nunca lido de volta); todo pool novo nasce com o mesmo valor fixo.
       this.db.prepare("INSERT OR IGNORE INTO question_pools (id, theme_id, difficulty) VALUES (?1, ?2, 'MEDIUM')")
@@ -420,6 +421,16 @@ export class QuestionEditorialRepository {
       throw new ApiError(409, 'QUESTION_CONFLICT', 'Esta pergunta mudou de estado. Atualize a tela.');
     }
     return { themeId: current.themeId };
+  }
+
+  private async assertNoLegacyDuplicate(hashes: readonly string[]): Promise<void> {
+    const placeholders = hashes.map((_, index) => `?${index + 1}`).join(',');
+    const duplicate = await this.db.prepare(
+      `SELECT 1 FROM questions WHERE content_hash IN (${placeholders}) LIMIT 1`,
+    ).bind(...hashes).first();
+    if (duplicate !== null) {
+      throw new ApiError(409, 'DUPLICATE_QUESTION', 'Uma pergunta com este conteúdo já existe.');
+    }
   }
 
   private async runOrDuplicate(statements: D1PreparedStatement[]): Promise<void> {

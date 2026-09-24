@@ -1,6 +1,6 @@
 import type { ImportedQuestion } from '../http/schemas.js';
 import { ApiError } from '../http/api-error.js';
-import { questionContentHash, questionPoolId } from './question-content.js';
+import { questionContentHashCandidates, questionPoolId } from './question-content.js';
 
 export class QuestionImportService {
   constructor(
@@ -33,9 +33,18 @@ export class QuestionImportService {
     const missing = themeIds.filter((id) => !foundThemeIds.has(id));
     if (missing.length > 0) throw new ApiError(400, 'UNKNOWN_THEME', 'O lote contém tema inexistente.', { themeIds: missing });
 
-    const hashes = await Promise.all(questions.map((question) => questionContentHash(question)));
+    const hashCandidates = await Promise.all(questions.map((question) => questionContentHashCandidates(question)));
+    const hashes = hashCandidates.map(([canonical]) => canonical);
     if (new Set(hashes).size !== hashes.length) {
       throw new ApiError(400, 'DUPLICATE_IN_BATCH', 'O lote contém perguntas duplicadas.');
+    }
+    const allHashCandidates = [...new Set(hashCandidates.flat())];
+    const hashPlaceholders = allHashCandidates.map((_, index) => `?${index + 1}`).join(',');
+    const existingDuplicate = await this.questionsDb.prepare(
+      `SELECT 1 FROM questions WHERE content_hash IN (${hashPlaceholders}) LIMIT 1`,
+    ).bind(...allHashCandidates).first();
+    if (existingDuplicate !== null) {
+      throw new ApiError(409, 'DUPLICATE_QUESTION', 'Uma ou mais perguntas já existem.');
     }
 
     const batchId = crypto.randomUUID();

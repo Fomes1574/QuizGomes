@@ -1,3 +1,4 @@
+import { runInDurableObject } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import { describe, expect, it } from 'vitest';
 
@@ -152,5 +153,27 @@ describe('MatchmakingQueue — pareamento por tema/Conhecimento', () => {
     // Nenhum dos dois foi pareado: ambos continuam esperando na fila.
     low.socket.close(1_000, 'Fixture concluída');
     high.socket.close(1_000, 'Fixture concluída');
+  });
+
+  it('reavalia a banda rankeada pelo alarme sem precisar de um terceiro jogador', async () => {
+    const { themeId, uids } = await seedFixture(`mmqa-${crypto.randomUUID().slice(0, 8)}`);
+    const resource = `${themeId}:RANKED`;
+    const queue = env.MATCHMAKING_QUEUE.get(env.MATCHMAKING_QUEUE.idFromName(resource));
+
+    const low = await openQueue(resource, uids[0], 0);
+    await low.waitFor('SEARCHING');
+    const high = await openQueue(resource, uids[1], 999_999);
+    await high.waitFor('SEARCHING');
+
+    await runInDurableObject(queue, async (instance, state) => {
+      for (const socket of state.getWebSockets()) {
+        const value = socket.deserializeAttachment() as { joinedAt: number };
+        socket.serializeAttachment({ ...value, joinedAt: Date.now() - 45_001 });
+      }
+      await (instance as unknown as { alarm: () => Promise<void> }).alarm();
+    });
+
+    const [foundLow, foundHigh] = await Promise.all([low.waitFor('MATCH_FOUND'), high.waitFor('MATCH_FOUND')]);
+    expect(foundLow.roomId).toBe(foundHigh.roomId);
   });
 });

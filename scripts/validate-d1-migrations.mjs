@@ -999,6 +999,8 @@ function seedQuestionPoolMergeFixture(scenario) {
       ('${themeId}-easy-1', '${themeId}:easy', 1, 'x', 'a', 'b', 'c', 'd', 0, 'hash-${themeId}-easy-1', 'ACTIVE'),
       ('${themeId}-easy-2', '${themeId}:easy', 2, 'x', 'a', 'b', 'c', 'd', 0, 'hash-${themeId}-easy-2', 'ACTIVE'),
       ('${themeId}-medium-1', '${themeId}:medium', 1, 'x', 'a', 'b', 'c', 'd', 0, 'hash-${themeId}-medium-1', 'ACTIVE');
+    INSERT INTO pool_slot_migrations (id, pool_id, from_version, to_version, slot_map_blob, status)
+      VALUES ('${themeId}-stale-slot-map', '${themeId}:hard', 1, 2, X'00', 'DONE');
     INSERT INTO questions (
       id, pool_id, prompt, option_a, option_b, option_c, option_d,
       correct_option, content_hash, status
@@ -1032,6 +1034,11 @@ function assertQuestionPoolMergeInvariants(scenario, themeId) {
   assert(
     draft.length === 1 && draft[0].pool_id === `${themeId}:pool` && draft[0].active_slot === null && draft[0].status === 'IN_REVIEW',
     `${scenario.name}: rascunho IN_REVIEW não foi repontado para o pool unificado sem ganhar slot`,
+  );
+  const staleSlotMaps = query(scenario, `SELECT 1 FROM pool_slot_migrations WHERE id = '${themeId}-stale-slot-map'`);
+  assert(
+    staleSlotMaps.length === 0,
+    `${scenario.name}: mapa de slots antigo sobreviveu à renumeração do pool único`,
   );
 }
 

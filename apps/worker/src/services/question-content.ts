@@ -18,13 +18,36 @@ export function questionPoolId(themeId: string): string {
   return `${themeId}:pool`;
 }
 
-export async function questionContentHash(question: QuestionContentKey): Promise<string> {
-  const normalized = JSON.stringify({
+async function hashContent(value: Record<string, unknown>): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(value)));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function normalizedContent(question: QuestionContentKey): Record<string, unknown> {
+  return {
     options: question.options.map((option) => option.normalize('NFKC').trim().toLocaleLowerCase('pt-BR')),
     prompt: question.prompt.normalize('NFKC').trim().toLocaleLowerCase('pt-BR'),
     ...(question.revisionOf === undefined ? {} : { revisionOf: question.revisionOf }),
     themeId: question.themeId,
-  });
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(normalized));
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+  };
+}
+
+export async function questionContentHash(question: QuestionContentKey): Promise<string> {
+  return hashContent(normalizedContent(question));
+}
+
+/**
+ * Perguntas gravadas antes da unificação têm hash com uma das três
+ * dificuldades antigas. D1 não fornece SHA-256 para recalcular a coluna em
+ * migration, então entradas novas também conferem estes hashes legados até o
+ * catálogo pré-unificação ser naturalmente revisado.
+ */
+export async function questionContentHashCandidates(question: QuestionContentKey): Promise<[string, string, string, string]> {
+  const normalized = normalizedContent(question);
+  const canonical = await hashContent(normalized);
+  const legacy = await Promise.all(['EASY', 'MEDIUM', 'HARD'].map((difficulty) => hashContent({
+    difficulty,
+    ...normalized,
+  })));
+  return [canonical, legacy[0]!, legacy[1]!, legacy[2]!];
 }

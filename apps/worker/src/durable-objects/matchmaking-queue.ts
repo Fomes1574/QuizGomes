@@ -27,6 +27,8 @@ const SAFE_MATCH_FAILURE_CODES = new Set([
   'QUESTION_POOL_INCONSISTENT',
   'QUESTION_POOL_INSUFFICIENT',
 ]);
+const QUEUE_TIMEOUT_MS = 60_000;
+const RANKED_RECHECK_MS = [15_000, 30_000, 45_000] as const;
 
 function safeMatchFailureCode(value: unknown): string {
   return typeof value === 'string' && SAFE_MATCH_FAILURE_CODES.has(value)
@@ -59,20 +61,29 @@ export class MatchmakingQueue {
     const current: QueueAttachment = { joinedAt: Date.now(), knowledge, resource, uid };
     server.serializeAttachment(current);
     this.ctx.acceptWebSocket(server);
-    const existingAlarm = await this.ctx.storage.getAlarm();
-    const timeoutAt = current.joinedAt + 60_000;
-    if (existingAlarm === null || existingAlarm > timeoutAt) await this.ctx.storage.setAlarm(timeoutAt);
+    const timeoutAt = current.joinedAt + QUEUE_TIMEOUT_MS;
     server.send(JSON.stringify({ type: 'SEARCHING', timeoutAt }));
+    await this.tryPair(server);
+    await this.scheduleNextAlarm();
+    return new Response(null, { status: 101, webSocket: client });
+  }
 
+  /**
+   * Fecha uma dupla quando o socket informado encontra candidato elegível.
+   * Também é chamado pelo alarme: sem isso, duas pessoas que entram antes da
+   * banda rankeada alargar só seriam reavaliadas se uma terceira entrasse.
+   */
+  private async tryPair(server: WebSocket): Promise<boolean> {
+    if (!this.ctx.getWebSockets().includes(server)) return false;
+    const current = attachment(server);
+    if (current === null) return false;
     // O recurso já validado pela rota é sempre `themeId:mode`: todo socket
     // desta instância de DO compartilha o mesmo tema e modo.
-    const isRanked = resource.split(':')[1] === 'RANKED';
+    const isRanked = current.resource.split(':')[1] === 'RANKED';
     const currentDivision = divisionIndexForKnowledge(current.knowledge);
     const now = Date.now();
-    const candidates = this.ctx.getWebSockets()
-      .filter((socket) => socket !== server)
-      .map((socket) => ({ socket, value: attachment(socket) }))
-      .filter((entry): entry is { socket: WebSocket; value: QueueAttachment } => entry.value !== null && entry.value.uid !== uid)
+    const candidates = this.waitingSockets()
+      .filter((entry) => entry.socket !== server && entry.value.uid !== current.uid)
       .filter((entry) => (
         // Partida normal nunca usa Conhecimento: qualquer candidato do mesmo tema serve.
         !isRanked || Math.abs(divisionIndexForKnowledge(entry.value.knowledge) - currentDivision)
@@ -89,12 +100,13 @@ export class MatchmakingQueue {
 
     let opponent: (typeof candidates)[number] | undefined;
     for (const candidate of candidates) {
-      if (await this.sociallyCompatible(uid, candidate.value.uid)) {
+      if (await this.sociallyCompatible(current.uid, candidate.value.uid)) {
         opponent = candidate;
         break;
       }
     }
-    if (opponent !== undefined) {
+    if (opponent === undefined) return false;
+
       const roomId = crypto.randomUUID();
       const room = this.env.MATCH_ROOM.get(this.env.MATCH_ROOM.idFromName(roomId));
       let initialization: RoomInitializationResult | null;
@@ -103,10 +115,10 @@ export class MatchmakingQueue {
         const response = await room.fetch('https://room.internal/initialize', {
           body: JSON.stringify({
             createdAtMs: Date.now(),
-            firebaseUids: [opponent.value.uid, uid],
+            firebaseUids: [opponent.value.uid, current.uid],
             kind: 'MATCHMAKING',
             matchId: roomId,
-            resource,
+            resource: current.resource,
           }),
           method: 'POST',
         });
@@ -116,7 +128,7 @@ export class MatchmakingQueue {
       } catch {
         initialization = null;
       }
-      const currentPresentation = initialization?.presentations?.find((entry) => entry.uid === uid)?.presentation;
+      const currentPresentation = initialization?.presentations?.find((entry) => entry.uid === current.uid)?.presentation;
       const opponentPresentation = initialization?.presentations?.find((entry) => entry.uid === opponent.value.uid)?.presentation;
       if (currentPresentation === undefined || opponentPresentation === undefined) {
         const payload = JSON.stringify({ code: initializationFailureCode, type: 'MATCH_FAILED' });
@@ -124,15 +136,15 @@ export class MatchmakingQueue {
         opponent.socket.send(payload);
         await Promise.all([
           this.transition(opponent.value.uid, ['matchmaking'], 'idle', null, opponent.value.resource),
-          this.transition(uid, ['matchmaking'], 'idle', null, resource),
+          this.transition(current.uid, ['matchmaking'], 'idle', null, current.resource),
         ]);
         server.close(4_101, 'Partida indisponível');
         opponent.socket.close(4_101, 'Partida indisponível');
-        return new Response(null, { status: 101, webSocket: client });
+        return true;
       }
       const reservations = await Promise.all([
         this.transition(opponent.value.uid, ['matchmaking'], 'preparing', roomId, opponent.value.resource),
-        this.transition(uid, ['matchmaking'], 'preparing', roomId, resource),
+        this.transition(current.uid, ['matchmaking'], 'preparing', roomId, current.resource),
       ]);
       if (!reservations.every(Boolean)) {
         try {
@@ -145,18 +157,17 @@ export class MatchmakingQueue {
         opponent.socket.send(payload);
         await Promise.all([
           this.release(opponent.value.uid, opponent.value.resource, roomId),
-          this.release(uid, resource, roomId),
+          this.release(current.uid, current.resource, roomId),
         ]);
         server.close(4_101, 'Reserva inválida');
         opponent.socket.close(4_101, 'Reserva inválida');
-        return new Response(null, { status: 101, webSocket: client });
+        return true;
       }
       server.send(JSON.stringify({ ...currentPresentation, type: 'MATCH_FOUND', roomId }));
       opponent.socket.send(JSON.stringify({ ...opponentPresentation, type: 'MATCH_FOUND', roomId }));
       server.close(1000, 'Pareado');
       opponent.socket.close(1000, 'Pareado');
-    }
-    return new Response(null, { status: 101, webSocket: client });
+      return true;
   }
 
   async webSocketClose(socket: WebSocket): Promise<void> {
@@ -170,16 +181,38 @@ export class MatchmakingQueue {
 
   async alarm(): Promise<void> {
     const now = Date.now();
-    const waiting = this.ctx.getWebSockets()
-      .map((socket) => ({ socket, value: attachment(socket) }))
-      .filter((entry): entry is { socket: WebSocket; value: QueueAttachment } => entry.value !== null);
+    const waiting = this.waitingSockets();
     for (const entry of waiting) {
-      if (entry.value.joinedAt + 60_000 <= now) {
+      if (entry.value.joinedAt + QUEUE_TIMEOUT_MS <= now) {
         entry.socket.send(JSON.stringify({ type: 'TIMEOUT' }));
         entry.socket.close(1000, 'Tempo de busca encerrado');
       }
     }
-    const next = waiting.map((entry) => entry.value.joinedAt + 60_000).filter((deadline) => deadline > now).sort((a, b) => a - b)[0];
+    // Reavaliar nos marcos 15/30/45 s é o que torna a expansão da banda
+    // efetiva mesmo quando nenhum jogador novo entra na fila.
+    for (const entry of this.waitingSockets()) {
+      if (entry.value.joinedAt + QUEUE_TIMEOUT_MS > now && await this.tryPair(entry.socket)) break;
+    }
+    await this.scheduleNextAlarm();
+  }
+
+  private waitingSockets(): Array<{ socket: WebSocket; value: QueueAttachment }> {
+    return this.ctx.getWebSockets()
+      .map((socket) => ({ socket, value: attachment(socket) }))
+      .filter((entry): entry is { socket: WebSocket; value: QueueAttachment } => entry.value !== null);
+  }
+
+  private async scheduleNextAlarm(): Promise<void> {
+    const now = Date.now();
+    const deadlines = this.waitingSockets().flatMap((entry) => {
+      const base = entry.value.joinedAt;
+      const ranked = entry.value.resource.split(':')[1] === 'RANKED';
+      return [
+        ...(ranked ? RANKED_RECHECK_MS.map((offset) => base + offset) : []),
+        base + QUEUE_TIMEOUT_MS,
+      ];
+    }).filter((deadline) => deadline > now);
+    const next = deadlines.sort((left, right) => left - right)[0];
     if (next !== undefined) await this.ctx.storage.setAlarm(next);
   }
 

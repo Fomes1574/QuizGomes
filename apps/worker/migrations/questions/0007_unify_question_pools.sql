@@ -52,6 +52,13 @@ UPDATE questions
    )
  WHERE status <> 'ACTIVE';
 
+-- A tabela registra mapas de slots entre versões do pool. Como esta migração
+-- troca a identidade do pool e renumera todos os slots, qualquer mapa anterior
+-- fica semanticamente inválido e também impediria apagar/renomear os pools por
+-- sua FK. A descoberta do usuário é reinicializada pela Core 0016, portanto
+-- descartar estes mapas é a única preservação íntegra possível.
+DELETE FROM pool_slot_migrations;
+
 -- 2) soma a contagem final no canônico e remove os pools irmãos do mesmo
 --    tema, já sem nenhuma pergunta apontando para eles.
 UPDATE question_pools

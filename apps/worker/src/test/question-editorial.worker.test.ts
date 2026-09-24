@@ -1,6 +1,7 @@
 import { env } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
 import { QuestionEditorialRepository } from '../repositories/question-editorial-repository.js';
+import { questionContentHashCandidates, questionPoolId } from '../services/question-content.js';
 
 const SOURCE = { kind: 'WEB', title: 'Fonte', url: 'https://example.test/fonte' } as const;
 
@@ -49,6 +50,25 @@ describe('M11 — CRUD e versionamento de pergunta', () => {
     await questions.create(questionInput(themeId, 'Pergunta única?', 'actor-1'));
     await expect(questions.create(questionInput(themeId, 'Pergunta única?', 'actor-2')))
       .rejects.toMatchObject({ code: 'DUPLICATE_QUESTION' });
+  });
+
+  it('recusa duplicata cujo hash foi gravado antes da unificação por dificuldade', async () => {
+    const themeId = `theme-editorial-legacy-hash-${crypto.randomUUID()}`;
+    const input = questionInput(themeId, 'Pergunta já existente?', 'actor-1');
+    const [, legacyEasyHash] = await questionContentHashCandidates(input);
+    const poolId = questionPoolId(themeId);
+    await env.QUESTIONS_DB.batch([
+      env.QUESTIONS_DB.prepare(
+        "INSERT INTO question_pools (id, theme_id, difficulty) VALUES (?1, ?2, 'MEDIUM')",
+      ).bind(poolId, themeId),
+      env.QUESTIONS_DB.prepare(
+        `INSERT INTO questions
+          (id, pool_id, prompt, option_a, option_b, option_c, option_d, correct_option, content_hash, status)
+         VALUES (?1, ?2, ?3, 'A', 'B', 'C', 'D', 0, ?4, 'ACTIVE')`,
+      ).bind(`${themeId}-legacy`, poolId, input.prompt, legacyEasyHash),
+    ]);
+    const questions = new QuestionEditorialRepository(env.QUESTIONS_DB);
+    await expect(questions.create(input)).rejects.toMatchObject({ code: 'DUPLICATE_QUESTION' });
   });
 
   it('aprovar pergunta nova ocupa o próximo slot denso e atualiza active_count/version', async () => {
