@@ -14,7 +14,7 @@ describe('import CSV de perguntas', () => {
     expect(diagnostics).toEqual([]);
     expect(questions).toHaveLength(2);
     expect(questions[0]).toMatchObject({
-      correctOption: 0, difficulty: 'EASY', prompt: 'Qual a capital do Brasil?', themeId: 'tema-1',
+      correctOption: 0, prompt: 'Qual a capital do Brasil?', themeId: 'tema-1',
     });
     expect(questions[0]?.sources).toEqual([{ kind: 'WEB', title: 'Fonte A', url: 'https://fonte.test/a' }]);
     expect(questions[1]?.sources).toEqual([{ kind: 'PRIMARY', url: 'https://fonte.test/b' }]);
@@ -28,7 +28,7 @@ describe('import CSV de perguntas', () => {
     const { diagnostics, questions } = parseQuestionsCsv(csv, 'tema-escolhido');
     expect(diagnostics).toEqual([]);
     expect(questions).toEqual([expect.objectContaining({
-      correctOption: 1, difficulty: 'EASY', sources: [], themeId: 'tema-escolhido',
+      correctOption: 1, sources: [], themeId: 'tema-escolhido',
     })]);
   });
 
@@ -71,7 +71,7 @@ describe('import CSV de perguntas', () => {
     const csv = [
       HEADER,
       'tema-1,EASY,"Pergunta OK?",A,B,C,D,0,https://fonte.test/ok,,WEB',
-      'tema-1,DIFICIL,"Dificuldade inválida?",A,B,C,D,0,https://fonte.test/x,,WEB',
+      'tema-1,EASY,"Alternativa correta fora do intervalo?",A,B,C,D,9,https://fonte.test/x,,WEB',
       'tema-1,EASY,"Faltando colunas",A,B,C',
     ].join('\n');
     const { diagnostics } = parseQuestionsCsv(csv);

@@ -44,24 +44,24 @@ export async function fixture(count: number): Promise<{ themeSlug: string; users
        VALUES (?1, 'challenge-category', ?2, ?3, 'Fixture.', 'ACTIVE', 'OFFICIAL', 'questions-01', 40)`,
     ).bind(themeId, themeSlug, `Tema ${prefix}`),
   ]);
-  // Pools reais em QUESTIONS_DB para os desafios assíncronos poderem selar o conjunto.
-  for (const difficulty of ['EASY', 'MEDIUM', 'HARD'] as const) {
-    const poolId = `${prefix}-pool-${difficulty.toLowerCase()}`;
-    const count = 16;
-    const statements = [env.QUESTIONS_DB.prepare(
-      `INSERT INTO question_pools (id, theme_id, difficulty, active_count)
-       VALUES (?1, ?2, ?3, ?4)`,
-    ).bind(poolId, themeId, difficulty, count)];
-    for (let index = 1; index <= count; index += 1) {
-      statements.push(env.QUESTIONS_DB.prepare(
-        `INSERT INTO questions
-          (id, pool_id, active_slot, prompt, option_a, option_b, option_c, option_d,
-           correct_option, content_hash, status)
-         VALUES (?1, ?2, ?3, ?4, 'Correta', 'B', 'C', 'D', 0, ?5, 'ACTIVE')`,
-      ).bind(`${poolId}-q-${index}`, poolId, index, `[FIXTURE] ${difficulty} ${index}?`, `${poolId}-hash-${index}`));
-    }
-    await env.QUESTIONS_DB.batch(statements);
+  // Pool único e real em QUESTIONS_DB (um pool por tema) para os desafios
+  // assíncronos poderem selar o conjunto. `difficulty` permanece só como
+  // coluna física herdada, sem significado para o sorteio nem para o desafio.
+  const poolId = `${themeId}:pool`;
+  const poolQuestionCount = 16;
+  const statements = [env.QUESTIONS_DB.prepare(
+    `INSERT INTO question_pools (id, theme_id, difficulty, active_count)
+     VALUES (?1, ?2, 'MEDIUM', ?3)`,
+  ).bind(poolId, themeId, poolQuestionCount)];
+  for (let index = 1; index <= poolQuestionCount; index += 1) {
+    statements.push(env.QUESTIONS_DB.prepare(
+      `INSERT INTO questions
+        (id, pool_id, active_slot, prompt, option_a, option_b, option_c, option_d,
+         correct_option, content_hash, status)
+       VALUES (?1, ?2, ?3, ?4, 'Correta', 'B', 'C', 'D', 0, ?5, 'ACTIVE')`,
+    ).bind(`${poolId}-q-${index}`, poolId, index, `[FIXTURE] ${index}?`, `${poolId}-hash-${index}`));
   }
+  await env.QUESTIONS_DB.batch(statements);
   return { themeSlug, users };
 }
 

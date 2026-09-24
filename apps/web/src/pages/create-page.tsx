@@ -5,7 +5,6 @@ import { ThemeArtwork as ThemeArtworkPreview } from '../components/theme-artwork
 import { useAuth } from '../features/auth-context.js';
 import { apiRequest, apiUpload } from '../lib/api.js';
 import type { AdminQuestionReportEntry, AdminThemeSummary, Category, ThemeSummary } from '../lib/models.js';
-import { DIFFICULTY_LABEL } from '../lib/challenges.js';
 import { REPORT_REASON_LABEL } from '../lib/reports.js';
 import type { ThemeArtworkDraft } from '../components/theme-artwork-editor.js';
 import { AdminAuditLogPanel, AdminUsersPanel } from './admin-directory-panels.js';
@@ -359,7 +358,7 @@ function ReportCard({
       )}
       {questionMetadata !== null && (
         <div className="report-card__metadata">
-          <p><strong>{questionMetadata.themeName}</strong> · {DIFFICULTY_LABEL[questionMetadata.difficulty]}</p>
+          <p><strong>{questionMetadata.themeName}</strong></p>
           {questionMetadata.statistics === null ? (
             <p>Sem estatísticas registradas para esta pergunta.</p>
           ) : (

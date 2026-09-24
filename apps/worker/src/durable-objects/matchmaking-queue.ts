@@ -1,5 +1,9 @@
 import type { Env } from '../env.js';
-import type { LiveMatchPresentationProjection } from '@quiz-gomes/domain';
+import {
+  divisionIndexForKnowledge,
+  rankedMatchmakingDivisionBand,
+  type LiveMatchPresentationProjection,
+} from '@quiz-gomes/domain';
 
 interface QueueAttachment {
   joinedAt: number;
@@ -60,13 +64,27 @@ export class MatchmakingQueue {
     if (existingAlarm === null || existingAlarm > timeoutAt) await this.ctx.storage.setAlarm(timeoutAt);
     server.send(JSON.stringify({ type: 'SEARCHING', timeoutAt }));
 
+    // O recurso já validado pela rota é sempre `themeId:mode`: todo socket
+    // desta instância de DO compartilha o mesmo tema e modo.
+    const isRanked = resource.split(':')[1] === 'RANKED';
+    const currentDivision = divisionIndexForKnowledge(current.knowledge);
+    const now = Date.now();
     const candidates = this.ctx.getWebSockets()
       .filter((socket) => socket !== server)
       .map((socket) => ({ socket, value: attachment(socket) }))
       .filter((entry): entry is { socket: WebSocket; value: QueueAttachment } => entry.value !== null && entry.value.uid !== uid)
+      .filter((entry) => (
+        // Partida normal nunca usa Conhecimento: qualquer candidato do mesmo tema serve.
+        !isRanked || Math.abs(divisionIndexForKnowledge(entry.value.knowledge) - currentDivision)
+          <= rankedMatchmakingDivisionBand(now - entry.value.joinedAt)
+      ))
       .sort((left, right) => {
-        const distance = Math.abs(left.value.knowledge - current.knowledge) - Math.abs(right.value.knowledge - current.knowledge);
-        return distance !== 0 ? distance : left.value.joinedAt - right.value.joinedAt;
+        if (isRanked) {
+          const distance = Math.abs(divisionIndexForKnowledge(left.value.knowledge) - currentDivision)
+            - Math.abs(divisionIndexForKnowledge(right.value.knowledge) - currentDivision);
+          if (distance !== 0) return distance;
+        }
+        return left.value.joinedAt - right.value.joinedAt;
       });
 
     let opponent: (typeof candidates)[number] | undefined;

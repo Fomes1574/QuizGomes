@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { Button } from '../components/button.js';
 import { ConfirmDialog } from '../components/confirm-dialog.js';
 import { ClientApiError, apiRequest, apiUpload } from '../lib/api.js';
-import { DIFFICULTY_LABEL } from '../lib/challenges.js';
 import type {
   AdminThemeSummary, CategoryAdmin, EditorialQuestion, EditorialQuestionPage, QuestionSourceInput,
 } from '../lib/models.js';
@@ -242,8 +241,8 @@ const QUESTION_STATUS_LABEL: Record<EditorialQuestion['status'], string> = {
 const QUESTION_STATUS_TABS: EditorialQuestion['status'][] = ['IN_REVIEW', 'ACTIVE', 'REJECTED', 'DISABLED'];
 const EMPTY_SOURCE: QuestionSourceInput = { kind: 'WEB', title: '', url: '' };
 const CSV_IMPORT_TEMPLATE = [
-  'difficulty,prompt,optionA,optionB,optionC,optionD,correctOption',
-  'EASY,"Exemplo de pergunta?",Alternativa A,Alternativa B,Alternativa C,Alternativa D,0',
+  'prompt,optionA,optionB,optionC,optionD,correctOption',
+  '"Exemplo de pergunta?",Alternativa A,Alternativa B,Alternativa C,Alternativa D,0',
 ].join('\n');
 
 /** Referência de campo `questions.N.campo` do Zod vira "Pergunta N+1 (campo)". */
@@ -291,10 +290,10 @@ function downloadCsvTemplate(): void {
 }
 
 function emptyDraft(): {
-  correctOption: number; difficulty: 'EASY' | 'HARD' | 'MEDIUM'; options: [string, string, string, string];
+  correctOption: number; options: [string, string, string, string];
   prompt: string; sources: QuestionSourceInput[];
 } {
-  return { correctOption: 0, difficulty: 'EASY', options: ['', '', '', ''], prompt: '', sources: [{ ...EMPTY_SOURCE }] };
+  return { correctOption: 0, options: ['', '', '', ''], prompt: '', sources: [{ ...EMPTY_SOURCE }] };
 }
 
 export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getToken: GetToken; refreshKey?: number }) {
@@ -379,7 +378,6 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
     setEditingQuestion(question);
     setEditDraft({
       correctOption: question.correctOption,
-      difficulty: question.difficulty,
       options: [...question.options] as [string, string, string, string],
       prompt: question.prompt,
       sources: question.sources.map((source) => source.title === undefined
@@ -486,7 +484,7 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
     try {
       await apiRequest(`/api/editorial/themes/${encodeURIComponent(themeId)}/questions`, {
         body: {
-          correctOption: draft.correctOption, difficulty: draft.difficulty, options: draft.options, prompt: draft.prompt,
+          correctOption: draft.correctOption, options: draft.options, prompt: draft.prompt,
           sources: draft.sources.filter((source) => source.url.trim() !== ''),
         },
         getToken,
@@ -577,7 +575,7 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
           <div className="admin-card-list">
             {page.questions.map((question) => (
               <article className="admin-card" key={question.id}>
-                <header><strong>{question.prompt}</strong><small>{DIFFICULTY_LABEL[question.difficulty]}</small></header>
+                <header><strong>{question.prompt}</strong></header>
                 {question.status === 'IN_REVIEW' && (
                   <label className="field">
                     <input
@@ -655,7 +653,6 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
             <form className="form-card" onSubmit={(event) => { event.preventDefault(); void saveEdit(); }}>
               <h3>{editingQuestion.status === 'ACTIVE' ? 'Criar revisão da pergunta publicada' : 'Revisar pergunta'}</h3>
               {editingQuestion.status === 'ACTIVE' && <p>A versão publicada continua disponível até que este rascunho seja aprovado.</p>}
-              <p className="inline-notice">Dificuldade: {DIFFICULTY_LABEL[editingQuestion.difficulty]}</p>
               <label className="field"><span>Enunciado</span><textarea aria-label="Enunciado da revisão" maxLength={360} minLength={1} onChange={(event) => setEditDraft((current) => ({ ...current, prompt: event.target.value }))} required rows={3} value={editDraft.prompt} /></label>
               {editDraft.options.map((option, index) => (
                 <label className="field" key={index}>
@@ -700,7 +697,6 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
           </section>
           <form className="form-card" onSubmit={(event) => { event.preventDefault(); void createQuestion(); }}>
             <h3>Nova pergunta</h3>
-            <label className="field"><span>Dificuldade</span><select onChange={(event) => setDraft((current) => ({ ...current, difficulty: event.target.value as typeof draft.difficulty }))} value={draft.difficulty}><option value="EASY">Fácil</option><option value="MEDIUM">Média</option><option value="HARD">Difícil</option></select></label>
             <label className="field"><span>Enunciado</span><textarea maxLength={360} minLength={1} onChange={(event) => setDraft((current) => ({ ...current, prompt: event.target.value }))} required rows={2} value={draft.prompt} /></label>
             {draft.options.map((option, index) => (
               <label className="field" key={index}>

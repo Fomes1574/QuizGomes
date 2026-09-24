@@ -1,4 +1,3 @@
-import type { Difficulty } from '@quiz-gomes/domain';
 import { useCallback, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../features/auth-context.js';
@@ -30,7 +29,6 @@ export function useFriendChallenge(themeSlug: string) {
   const [error, setError] = useState<string | null>(null);
 
   const challenge = useCallback(async (input: {
-    difficulty: Difficulty;
     displayName: string;
     kind: ChallengeKind;
     publicId: string;
@@ -40,7 +38,6 @@ export function useFriendChallenge(themeSlug: string) {
     try {
       const response = await apiRequest<CreateChallengeResponse>('/api/challenges', {
         body: {
-          difficulty: input.difficulty,
           kind: input.kind,
           publicId: input.publicId,
           themeSlug,

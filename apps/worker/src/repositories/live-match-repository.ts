@@ -3,13 +3,12 @@ import {
   createLiveMatchState,
   encodePoolState,
   markAnswered,
-  questionsForDifficulty,
+  questionsForMode,
   rankedAbandonmentLoss,
   resolveKnowledge,
   resultFromScores,
   TOTAL_XP_TO_MAX_LEVEL,
   xpAward,
-  type Difficulty,
   type LiveMatchState,
   type LivePlayer,
   type LiveQuestion,
@@ -93,17 +92,15 @@ export interface OrphanedPreparingMatch {
 }
 
 export interface ParsedMatchResource {
-  difficulty: Difficulty;
   mode: MatchMode;
   themeId: string;
 }
 
 export function parseMatchResource(resource: string): ParsedMatchResource | null {
-  const [themeId, difficulty, mode, extra] = resource.split(':');
+  const [themeId, mode, extra] = resource.split(':');
   if (themeId === undefined || themeId.length === 0 || themeId.length > 128 || extra !== undefined) return null;
-  if (difficulty !== 'EASY' && difficulty !== 'MEDIUM' && difficulty !== 'HARD') return null;
   if (mode !== 'CASUAL' && mode !== 'RANKED') return null;
-  return { difficulty, mode, themeId };
+  return { mode, themeId };
 }
 
 function mapInitializationPlayer(row: InitializationPlayerRow): Omit<LivePlayer, 'connected' | 'lobbyReady' | 'roundReady' | 'score' | 'seat'> {
@@ -203,8 +200,7 @@ export class LiveMatchRepository {
       new QuestionRepository(this.questionsDb),
     ).select(
       parsed.themeId,
-      parsed.difficulty,
-      questionsForDifficulty(parsed.difficulty),
+      questionsForMode(parsed.mode),
     );
     const liveQuestions: LiveQuestion[] = selected.questions.map((question) => ({
       correctOption: question.correctOption,
@@ -216,7 +212,6 @@ export class LiveMatchRepository {
     }));
     const state = createLiveMatchState({
       createdAtMs: input.createdAtMs,
-      difficulty: parsed.difficulty,
       matchId: input.matchId,
       mode: parsed.mode,
       players: [mapInitializationPlayer(firstRow), mapInitializationPlayer(secondRow)],
@@ -227,11 +222,12 @@ export class LiveMatchRepository {
     });
 
     const statements: D1PreparedStatement[] = [
+      // `difficulty` é legado físico do schema (nunca lido de volta); a contagem de perguntas vem só de `mode`.
       this.coreDb.prepare(
         `INSERT INTO matches
           (id, theme_id, difficulty, mode, kind, status, question_shard_id, room_key, pool_id, pool_version)
-         VALUES (?1, ?2, ?3, ?4, ?5, 'PREPARING', ?6, ?1, ?7, ?8)`,
-      ).bind(input.matchId, parsed.themeId, parsed.difficulty, parsed.mode, input.kind, configuration.question_shard_id, selected.poolId, selected.poolVersion),
+         VALUES (?1, ?2, 'MEDIUM', ?3, ?4, 'PREPARING', ?5, ?1, ?6, ?7)`,
+      ).bind(input.matchId, parsed.themeId, parsed.mode, input.kind, configuration.question_shard_id, selected.poolId, selected.poolVersion),
     ];
     for (const player of state.players) {
       statements.push(
@@ -362,11 +358,11 @@ export class LiveMatchRepository {
       const result = results[index] ?? 'VOID';
       let knowledgeDelta = 0;
       if (outcome.kind === 'COMPLETED') {
-        knowledgeDelta = resolveKnowledge(before, state.difficulty, result, state.mode).appliedDelta;
+        knowledgeDelta = resolveKnowledge(before, result, state.mode).appliedDelta;
       } else if (outcome.penalizedSeat === player.seat && state.mode === 'RANKED') {
         knowledgeDelta = rankedAbandonmentLoss(before).appliedDelta;
       }
-      const requestedXp = outcome.kind === 'COMPLETED' ? xpAward(state.difficulty, result) : 0;
+      const requestedXp = outcome.kind === 'COMPLETED' ? xpAward(state.mode, result) : 0;
       const xpBefore = progress[index]?.total_xp ?? 0;
       const xpDelta = Math.max(0, Math.min(TOTAL_XP_TO_MAX_LEVEL, xpBefore + requestedXp) - xpBefore);
       return { knowledgeBefore: before, knowledgeDelta, result, xpDelta };

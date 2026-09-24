@@ -20,7 +20,6 @@ function view(overrides: Partial<ChallengeView> = {}): ChallengeView {
   return {
     challenged: ana,
     challenger: gomes,
-    difficulty: 'MEDIUM',
     expiresAt: null,
     id: 'challenge-1',
     kind: 'ASYNC',
@@ -33,12 +32,12 @@ function view(overrides: Partial<ChallengeView> = {}): ChallengeView {
 }
 
 describe('texto e ações do card de desafio', () => {
-  it('separa descrição compacta de tema e dificuldade', () => {
+  it('descreve o desafio pelo nome do tema, sem dificuldade', () => {
     expect(challengeCardCopy(view()).headline)
       .toBe('Você desafiou Ana');
     expect(challengeCardCopy(view({ role: 'CHALLENGED' })).headline)
       .toBe('Gomes te desafiou');
-    expect(challengeCardCopy(view()).subtitle).toBe('Elden Ring · Médio');
+    expect(challengeCardCopy(view()).subtitle).toBe('Elden Ring');
   });
 
   it('não concatena status de gameplay na descrição', () => {

@@ -5,17 +5,17 @@ import {
   projectLiveMatchForSeat,
   projectLiveMatchPresentationForSeat,
   QUESTION_DURATION_MS,
-  questionsForDifficulty,
+  questionsForMode,
   RECONNECT_GRACE_MS,
   transitionLiveMatch,
-  type Difficulty,
   type LiveMatchState,
   type LiveQuestion,
+  type MatchMode,
 } from '../index.js';
 import { describe, expect, it } from 'vitest';
 
-function questions(difficulty: Difficulty): LiveQuestion[] {
-  const count = questionsForDifficulty(difficulty);
+function questions(mode: MatchMode): LiveQuestion[] {
+  const count = questionsForMode(mode);
   return Array.from({ length: count }, (_, index) => ({
     correctOption: index % 4,
     id: `q-${index + 1}`,
@@ -26,19 +26,18 @@ function questions(difficulty: Difficulty): LiveQuestion[] {
   }));
 }
 
-function match(difficulty: Difficulty = 'EASY'): LiveMatchState {
+function match(mode: MatchMode = 'RANKED'): LiveMatchState {
   return createLiveMatchState({
     createdAtMs: 1_000,
-    difficulty,
     matchId: 'match-1',
-    mode: 'RANKED',
+    mode,
     players: [
       { customAvatarUrl: null, displayName: 'Jogador 1', firebaseUid: 'firebase-1', frameId: null, knowledgeBefore: 2_500, photoUrl: null, userId: 'user-1' },
       { customAvatarUrl: null, displayName: 'Jogador 2', firebaseUid: 'firebase-2', frameId: null, knowledgeBefore: 5_000, photoUrl: null, userId: 'user-2' },
     ],
     poolId: 'pool-1',
     poolVersion: 1,
-    questions: questions(difficulty),
+    questions: questions(mode),
     themeId: 'theme-1',
   });
 }
@@ -47,8 +46,8 @@ function command(state: LiveMatchState, input: Parameters<typeof transitionLiveM
   return transitionLiveMatch(state, input, nowMs).state;
 }
 
-function startFirstRound(difficulty: Difficulty = 'EASY'): { now: number; state: LiveMatchState } {
-  let state = match(difficulty);
+function startFirstRound(mode: MatchMode = 'RANKED'): { now: number; state: LiveMatchState } {
+  let state = match(mode);
   state = command(state, { seat: 1, type: 'CONNECT' }, 1_100);
   state = command(state, { seat: 2, type: 'CONNECT' }, 1_101);
   state = command(state, { seat: 1, type: 'LOBBY_READY' }, 1_102);
@@ -120,7 +119,7 @@ describe('partida simultânea autoritativa', () => {
   it('entrega somente a pergunta pública atual', () => {
     const { now, state } = startFirstRound();
     const projection = projectLiveMatchForSeat(state, 1, now);
-    expect(projection.round).toEqual({ number: 1, total: 5 });
+    expect(projection.round).toEqual({ number: 1, total: 10 });
     expect(projection.question?.id).toBe('q-1');
     expect(JSON.stringify(projection)).not.toContain('correctOption');
     expect(JSON.stringify(projection)).not.toContain('q-2');
@@ -196,10 +195,10 @@ describe('partida simultânea autoritativa', () => {
     });
   });
 
-  it.each([['EASY', 5], ['MEDIUM', 8], ['HARD', 12]] as const)(
+  it.each([['CASUAL', 7], ['RANKED', 10]] as const)(
     'finaliza %s após exatamente %i perguntas e aceita empate real',
-    (difficulty, total) => {
-      let { now, state } = startFirstRound(difficulty);
+    (mode, total) => {
+      let { now, state } = startFirstRound(mode);
       for (let round = 1; round <= total; round += 1) {
         const answerDeadline = state.phaseDeadlineMs ?? now;
         state = command(state, { type: 'ALARM' }, answerDeadline);

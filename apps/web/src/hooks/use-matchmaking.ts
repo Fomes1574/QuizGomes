@@ -1,4 +1,4 @@
-import type { Difficulty, MatchMode, PublicQuestion } from '@quiz-gomes/domain';
+import type { MatchMode, PublicQuestion } from '@quiz-gomes/domain';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../features/auth-context.js';
@@ -61,7 +61,6 @@ interface RealtimeMessage {
 }
 
 interface MatchOrigin {
-  difficulty: Difficulty;
   mode: MatchMode;
   returnTo: string;
 }
@@ -204,9 +203,8 @@ export function useMatchmaking() {
     }
   }, [getToken, navigate, setStatus]);
 
-  const start = useCallback(async (themeId: string, difficulty: Difficulty, mode: MatchMode, themeSlug?: string) => {
+  const start = useCallback(async (themeId: string, mode: MatchMode, themeSlug?: string) => {
     originRef.current = themeSlug === undefined ? null : {
-      difficulty,
       mode,
       returnTo: `/temas/${encodeURIComponent(themeSlug)}`,
     };
@@ -224,7 +222,7 @@ export function useMatchmaking() {
       setError('Sua sessão expirou. Entre novamente.');
       return;
     }
-    const resource = `${themeId}:${difficulty}:${mode}`;
+    const resource = `${themeId}:${mode}`;
     try {
       const ticket = await apiRequest<{ expiresAt: number; ticket: string }>('/api/realtime/tickets', {
         body: { resource, scope: 'matchmaking' }, getToken, method: 'POST', token,

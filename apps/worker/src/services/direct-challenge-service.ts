@@ -105,7 +105,7 @@ export class DirectChallengeService {
     firebaseUids: readonly [string, string],
     roomId: string,
   ): Promise<DirectChallengeStart> {
-    const resource = `${challenge.themeId}:${challenge.difficulty}:${CHALLENGE_MODE}`;
+    const resource = `${challenge.themeId}:${CHALLENGE_MODE}`;
     const room = this.env.MATCH_ROOM.get(this.env.MATCH_ROOM.idFromName(roomId));
 
     let initialization: RoomInitializationResult | null;

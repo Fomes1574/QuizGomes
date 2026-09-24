@@ -49,7 +49,7 @@ Não existe Home separada. Temas é a entrada principal. A barra desaparece comp
 - busca por nome;
 - categorias administradas pelo sistema;
 - temas agrupados por categoria;
-- hierarquia única: Categoria → Tema → Dificuldade → Pergunta;
+- hierarquia única: Categoria → Tema → Pergunta;
 - não existem subtemas.
 
 A página do tema contém capa opcional, nome, descrição curta, total de perguntas ativas, Top 5 do tema e cartão pessoal com foto/moldura, elo, Conhecimento, posição e descoberta histórica.
@@ -93,40 +93,40 @@ Conhecimento é um escalar acumulado por usuário+tema. Thresholds são derivado
 
 O início de Desafiante I é 105.500. Overflow é preservado; perdas rebaixam; piso 0; sem proteção artificial. Desafiante I continua acumulando até 999.999, sem pontos ocultos acima do cap.
 
-Ganhos/perdas usam o elo anterior à resolução:
+Ganhos/perdas usam o elo anterior à resolução. Só a Rankeada altera Conhecimento; a tabela é a que, até 2026-09-24, pertencia exclusivamente à extinta dificuldade Difícil (decisão de produto: Fácil/Médio deixaram de existir como conceito operacional, e a Rankeada herdou os valores de Difícil):
 
-| Elo | Vitória F/M/D | Derrota F/M/D |
-|---|---|---|
-| Latão | +25/+50/+75 | -10/-20/-30 |
-| Bronze | +23/+46/+69 | -11/-22/-33 |
-| Prata | +21/+42/+63 | -12/-24/-36 |
-| Ouro | +19/+38/+57 | -13/-26/-39 |
-| Platina | +17/+34/+51 | -14/-28/-42 |
-| Diamante | +15/+30/+45 | -15/-30/-45 |
-| Mestre | +13/+26/+39 | -16/-32/-48 |
-| Desafiante | +11/+22/+33 | -18/-36/-54 |
+| Elo | Vitória | Derrota |
+|---|---:|---:|
+| Latão | +75 | -30 |
+| Bronze | +69 | -33 |
+| Prata | +63 | -36 |
+| Ouro | +57 | -39 |
+| Platina | +51 | -42 |
+| Diamante | +45 | -45 |
+| Mestre | +39 | -48 |
+| Desafiante | +33 | -54 |
 
-Empate e Casual alteram 0. Top 5 ordena principalmente por Conhecimento; valores iguais compartilham posição lógica, sem desempate oculto.
+Empate, Anulada e Normal (Casual) alteram 0 — só a Rankeada altera. Top 5 ordena principalmente por Conhecimento; valores iguais compartilham posição lógica, sem desempate oculto.
 
-Uma simulação perfeita apenas em Difícil deve exigir aproximadamente 2.457 vitórias para chegar a Desafiante I e nunca menos de 1.000.
+Uma simulação perfeita na Rankeada deve exigir aproximadamente 2.457 vitórias para chegar a Desafiante I e nunca menos de 1.000. Abandonar uma partida Rankeada aplica a mesma derrota desta tabela (a que antes era exclusiva de Difícil); desafios entre amigos são sempre Casual e nunca alteram Conhecimento.
 
 Média de categoria é estatística: entram somente temas com ao menos uma Ranqueada. Calcula-se a média da posição ordinal fracionária nas 40 divisões e exibe-se a divisão que contém a média, limitada a Desafiante I. Não afeta matchmaking ou Conhecimento.
 
 ## 6. XP global
 
-Vitória Fácil/Média/Difícil concede 10/20/30 XP em Casual ou Ranqueada. Derrota, empate e partida anulada concedem 0. No assíncrono, XP só é finalizado após o segundo jogador.
+Vitória concede 20 XP na Normal (Casual) e 30 XP na Rankeada. Derrota, empate e partida anulada concedem 0. No assíncrono (sempre Casual), XP só é finalizado após o segundo jogador.
 
 Para passar de L para L+1, L de 1 a 998:
 
 `XP(L) = 100 + 2 × (L - 1) + ceil((L - 1)² / 80)`
 
-Nível máximo 999 (`MAX`), total 5.230.904 XP e mínimo teórico de 174.364 vitórias difíceis. XP é cosmético.
+Nível máximo 999 (`MAX`), total 5.230.904 XP e mínimo teórico de 174.364 vitórias na Rankeada. XP é cosmético.
 
 ## 7. Perguntas e sorteio
 
-Quantidade por partida: Fácil 5, Médio 8, Difícil 12. Cada pergunta tem 10 segundos.
+Fácil/Médio/Difícil não existem mais como conceito operacional (decisão de produto de 2026-09-24): a UI pública mostra só Partida normal e Partida rankeada. Quantidade por partida: Normal 7, Rankeada 10. Cada pergunta tem 10 segundos. Um tema libera Normal com 7 perguntas ativas e Rankeada com 10.
 
-Toda pergunta possui enunciado, quatro alternativas, exatamente uma correta, tema, dificuldade, status, fontes, imagem opcional e metadata administrativa. Publicada exige evidência. Conteúdo enviado por usuários entra em revisão.
+Toda pergunta possui enunciado, quatro alternativas, exatamente uma correta, tema, status, fontes, imagem opcional e metadata administrativa. Publicada exige evidência. Conteúdo enviado por usuários entra em revisão.
 
 Regra editorial: pergunta até 3 linhas no menor viewport; resposta ideal até 1,5 linha. O validador usa medição visual, não apenas caracteres. Excesso impede publicação automática e é sinalizado no admin.
 
@@ -148,11 +148,11 @@ Empate é resultado final válido: 0 Conhecimento e 0 XP.
 
 ### Matchmaking público
 
-Somente simultâneo e humano. Fila exige mesmo tema, dificuldade e modo. Entre vários candidatos, escolhe o elo daquele tema mais próximo; empate técnico favorece maior espera. Se só há um compatível, pareia independentemente da distância. Timeout 60 s, cancelamento sempre disponível e sem penalidade. Não há segundo aceite nem fallback assíncrono/bot.
+Somente simultâneo e humano. Fila exige mesmo tema e modo (Normal ou Rankeada). Partida Normal pareia só por tema, na ordem de chegada, sem usar Conhecimento. Partida Rankeada pareia por tema e Conhecimento, com banda de divisão que se alarga pelo tempo de espera: mesma divisão até 15 s, divisões vizinhas até 30 s, até duas divisões até 45 s e qualquer divisão do tema depois disso. Timeout 60 s, cancelamento sempre disponível e sem penalidade. Não há segundo aceite nem fallback assíncrono/bot.
 
 ### Desafio simultâneo
 
-Amigo ONLINE recebe convite Casual com tema e dificuldade por até 30 s. Ao aceitar: “PREPARE-SE PARA A PARTIDA”, 3–2–1 e cancelamento curto. Cancelamento anula sem consequência.
+Amigo ONLINE recebe convite Casual (7 perguntas, nunca ranqueado) com o tema por até 30 s. Ao aceitar: “PREPARE-SE PARA A PARTIDA”, 3–2–1 e cancelamento curto. Cancelamento anula sem consequência.
 
 ### Assíncrono
 

@@ -1,8 +1,6 @@
-import { questionsForDifficulty, type Difficulty } from '@quiz-gomes/domain';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useFriendPresence } from '../features/social-context.js';
-import { DIFFICULTY_LABEL } from '../lib/challenges.js';
 import type { FriendPresence, SocialFriend } from '../lib/social.js';
 import { Avatar } from './avatar.js';
 import { AvatarFrame } from './avatar-frame.js';
@@ -35,14 +33,13 @@ export function FriendChallengeDialog({
 }: {
   busy: boolean;
   friends: SocialFriend[];
-  onAsync: (friend: SocialFriend, difficulty: Difficulty) => void;
+  onAsync: (friend: SocialFriend) => void;
   onClose: () => void;
-  onDirect: (friend: SocialFriend, difficulty: Difficulty) => void;
+  onDirect: (friend: SocialFriend) => void;
   themeName: string;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const presence = useFriendPresence();
-  const [difficulty, setDifficulty] = useState<Difficulty>('EASY');
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -85,23 +82,7 @@ export function FriendChallengeDialog({
       <section className="dialog dialog--challenge">
         <div className="dialog__intro">
           <h1 id="friend-challenge-title">Desafiar amigo</h1>
-          <p>{themeName} · desafios entre amigos são sempre Casual e não alteram seu Conhecimento.</p>
-        </div>
-
-        <div className="difficulty-grid difficulty-grid--compact" role="radiogroup" aria-label="Dificuldade">
-          {(['EASY', 'MEDIUM', 'HARD'] as Difficulty[]).map((value) => (
-            <button
-              aria-checked={difficulty === value}
-              className={difficulty === value ? 'difficulty difficulty--active' : 'difficulty'}
-              key={value}
-              onClick={() => setDifficulty(value)}
-              role="radio"
-              type="button"
-            >
-              <strong>{DIFFICULTY_LABEL[value]}</strong>
-              <small>{questionsForDifficulty(value)} perguntas</small>
-            </button>
-          ))}
+          <p>{themeName} · desafios entre amigos são sempre Casual, com 7 perguntas, e não alteram seu Conhecimento.</p>
         </div>
 
         {ordered.length === 0 ? (
@@ -128,7 +109,7 @@ export function FriendChallengeDialog({
                     <button
                       className="challenge-friend__action"
                       disabled={busy || !available}
-                      onClick={() => onDirect(friend, difficulty)}
+                      onClick={() => onDirect(friend)}
                       title={available ? undefined : 'Este amigo não está disponível agora.'}
                       type="button"
                     >Agora</button>
@@ -136,7 +117,7 @@ export function FriendChallengeDialog({
                     <button
                       className="challenge-friend__action challenge-friend__action--quiet"
                       disabled={busy}
-                      onClick={() => onAsync(friend, difficulty)}
+                      onClick={() => onAsync(friend)}
                       type="button"
                     >Depois</button>
                   </span>

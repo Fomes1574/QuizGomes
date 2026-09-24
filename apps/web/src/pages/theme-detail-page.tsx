@@ -1,4 +1,4 @@
-import { questionsForDifficulty, type Difficulty, type MatchMode } from '@quiz-gomes/domain';
+import { questionsForMode, type MatchMode } from '@quiz-gomes/domain';
 import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useParams } from 'react-router-dom';
 import { Avatar } from '../components/avatar.js';
@@ -18,18 +18,13 @@ import { consumePlayAuthIntent, savePlayAuthIntent } from '../lib/auth-intent.js
 import type { ThemeDetailResponse } from '../lib/models.js';
 import type { SocialFriend, SocialSnapshot } from '../lib/social.js';
 
-const difficultyLabel: Record<Difficulty, string> = { EASY: 'Fácil', MEDIUM: 'Médio', HARD: 'Difícil' };
-
 export function ThemeDetailPage() {
   const { slug = '' } = useParams();
   const location = useLocation();
-  const restored = location.state as { difficulty?: Difficulty; mode?: MatchMode } | null;
+  const restored = location.state as { mode?: MatchMode } | null;
   const { getToken, profile, signIn } = useAuth();
   const [data, setData] = useState<ThemeDetailResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [difficulty, setDifficulty] = useState<Difficulty>(
-    restored?.difficulty === 'MEDIUM' || restored?.difficulty === 'HARD' ? restored.difficulty : 'EASY',
-  );
   const [mode, setMode] = useState<MatchMode>(restored?.mode === 'RANKED' ? 'RANKED' : 'CASUAL');
   const [reload, setReload] = useState(0);
   const [friends, setFriends] = useState<SocialFriend[]>([]);
@@ -64,14 +59,14 @@ export function ThemeDetailPage() {
     const intent = consumePlayAuthIntent();
     consumedIntent.current = true;
     if (intent === null || intent.themeId !== data.theme.id || intent.themeSlug !== slug) return;
-    void startMatchmaking(intent.themeId, intent.difficulty, intent.mode, intent.themeSlug);
+    void startMatchmaking(intent.themeId, intent.mode, intent.themeSlug);
   }, [data, profile, slug, startMatchmaking]);
 
   if (data === null && error === null) return <LoadingState label="Abrindo o tema" />;
   if (error !== null || data === null) return <ErrorState message={error ?? 'Tema indisponível.'} onRetry={() => setReload((value) => value + 1)} />;
 
-  const required = questionsForDifficulty(difficulty);
-  const available = data.questionCounts[difficulty];
+  const required = questionsForMode(mode);
+  const available = data.theme.activeQuestionCount;
   const canPlay = available >= required;
   const realtimeEnabled = import.meta.env.VITE_ENABLE_REALTIME_MATCHES === 'true';
 
@@ -86,32 +81,28 @@ export function ThemeDetailPage() {
       <div className="theme-layout">
         <div className="play-card">
           <div><span className="eyebrow">Nova partida</span><h2>Escolha o desafio</h2></div>
-          <div className="difficulty-grid">
-            {(['EASY', 'MEDIUM', 'HARD'] as Difficulty[]).map((value) => (
-              <button className={difficulty === value ? 'difficulty difficulty--active' : 'difficulty'} key={value} onClick={() => setDifficulty(value)} type="button"><strong>{difficultyLabel[value]}</strong><small>{questionsForDifficulty(value)} perguntas · {data.questionCounts[value]} disponíveis</small></button>
-            ))}
-          </div>
           <div className="segmented segmented--wide" role="radiogroup" aria-label="Modo de partida">
             {(['CASUAL', 'RANKED'] as MatchMode[]).map((value) => <button aria-checked={mode === value} className={mode === value ? 'segmented__active' : ''} key={value} onClick={() => {
               setMode(value);
               // Desafio entre amigos é sempre Casual: sair do Casual fecha o seletor aberto.
               if (value !== 'CASUAL') setChallengePickerOpen(false);
-            }} role="radio" type="button">{value === 'CASUAL' ? 'Casual' : 'Ranqueada'}</button>)}
+            }} role="radio" type="button">{value === 'CASUAL' ? 'Partida normal' : 'Partida rankeada'}</button>)}
           </div>
-          {!canPlay && <p className="inline-notice">Este pool ainda precisa de {required} perguntas ativas para uma partida {difficultyLabel[difficulty]}.</p>}
+          <p className="inline-notice">{required} perguntas · {available} {available === 1 ? 'disponível' : 'disponíveis'}</p>
+          {!canPlay && <p className="inline-notice">Este tema ainda precisa de {required} perguntas ativas para uma {mode === 'RANKED' ? 'partida rankeada' : 'partida normal'}.</p>}
           {!realtimeEnabled && canPlay && <p className="inline-notice">O catálogo está pronto; partidas online serão liberadas após a validação do servidor de rodadas.</p>}
           {matchmaking.error && <p className="form-error">{matchmaking.error}</p>}
           {friendChallenge.error && <p className="form-error">{friendChallenge.error}</p>}
           {profile === null
             ? <Button onClick={() => {
-              savePlayAuthIntent({ difficulty, mode, themeId: data.theme.id, themeSlug: slug });
+              savePlayAuthIntent({ mode, themeId: data.theme.id, themeSlug: slug });
               void signIn();
             }}>Entrar para jogar</Button>
             : (
               <div className="play-card__actions">
                 <Button
                   disabled={!canPlay || !realtimeEnabled}
-                  onClick={() => void matchmaking.start(data.theme.id, difficulty, mode, slug)}
+                  onClick={() => void matchmaking.start(data.theme.id, mode, slug)}
                 >Puxar partida</Button>
                 {mode === 'CASUAL' && (
                   <Button
@@ -138,20 +129,18 @@ export function ThemeDetailPage() {
         <FriendChallengeDialog
           busy={friendChallenge.status !== 'idle'}
           friends={friends}
-          onAsync={(friend, chosenDifficulty) => {
+          onAsync={(friend) => {
             setChallengePickerOpen(false);
             void friendChallenge.challenge({
-              difficulty: chosenDifficulty,
               displayName: friend.displayName,
               kind: 'ASYNC',
               publicId: friend.publicId,
             });
           }}
           onClose={() => setChallengePickerOpen(false)}
-          onDirect={(friend, chosenDifficulty) => {
+          onDirect={(friend) => {
             setChallengePickerOpen(false);
             void friendChallenge.challenge({
-              difficulty: chosenDifficulty,
               displayName: friend.displayName,
               kind: 'DIRECT',
               publicId: friend.publicId,
@@ -161,7 +150,6 @@ export function ThemeDetailPage() {
         />
       )}
       {matchmaking.status !== 'idle' && <MatchmakingDialog
-        difficulty={difficulty}
         elapsedSeconds={matchmaking.elapsedSeconds}
         mode={mode}
         onCancel={matchmaking.cancel}

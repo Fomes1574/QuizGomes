@@ -26,7 +26,6 @@ const NOW = 1_700_000_000_000;
 
 function challenge(overrides: Partial<ChallengeRecord> = {}): ChallengeRecord {
   return {
-    difficulty: 'MEDIUM',
     expiresAtMs: null,
     firstPlayerUserId: 'user-a',
     id: 'challenge-1',

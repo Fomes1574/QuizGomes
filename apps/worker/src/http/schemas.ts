@@ -64,7 +64,9 @@ const sourceSchema = z.object({
 
 export const importedQuestionSchema = z.object({
   correctOption: z.number().int().min(0).max(3),
-  difficulty: z.enum(['EASY', 'MEDIUM', 'HARD']),
+  // Compatibilidade com CSV/JSON antigos que ainda trazem a coluna: aceita
+  // qualquer valor e nunca é lido — o pool é único por tema desde 2026-09-24.
+  difficulty: z.string().max(16).optional(),
   options: z.tuple([
     z.string().trim().min(1).max(180),
     z.string().trim().min(1).max(180),
@@ -108,7 +110,6 @@ const questionOptionsTuple = z.tuple([
 
 export const questionEditorialSchema = z.object({
   correctOption: z.number().int().min(0).max(3),
-  difficulty: z.enum(['EASY', 'MEDIUM', 'HARD']),
   options: questionOptionsTuple,
   prompt: z.string().trim().min(1).max(360),
   sources: z.array(sourceSchema).max(5).default([]),

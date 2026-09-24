@@ -118,7 +118,8 @@ async function seedMatchFixture(
   prefix: string,
   knowledge = 500,
   mode: 'CASUAL' | 'RANKED' = 'RANKED',
-  questionCount = 5,
+  // 10 cobre RANKED (questionsForMode = 10), o maior modo, então cobre CASUAL (7) também.
+  questionCount = 10,
 ): Promise<{
   poolId: string;
   resource: string;
@@ -127,7 +128,9 @@ async function seedMatchFixture(
   userIds: [string, string];
 }> {
   const themeId = `${prefix}-theme`;
-  const poolId = `${prefix}-pool`;
+  // Pool único por tema (id determinístico, mesmo formato de `questionPoolId`/
+  // `question-content.ts`); `difficulty` é coluna legada física, sem leitura.
+  const poolId = `${themeId}:pool`;
   const uids: [string, string] = [`${prefix}-firebase-1`, `${prefix}-firebase-2`];
   const userIds: [string, string] = [`${prefix}-user-1`, `${prefix}-user-2`];
   await env.CORE_DB.batch([
@@ -162,7 +165,7 @@ async function seedMatchFixture(
   const questionStatements: D1PreparedStatement[] = [
     env.QUESTIONS_DB.prepare(
       `INSERT INTO question_pools (id, theme_id, difficulty, active_count)
-       VALUES (?1, ?2, 'EASY', ?3)`,
+       VALUES (?1, ?2, 'MEDIUM', ?3)`,
     ).bind(poolId, themeId, questionCount),
   ];
   for (let index = 1; index <= questionCount; index += 1) {
@@ -173,7 +176,7 @@ async function seedMatchFixture(
     ).bind(`${prefix}-q-${index}`, poolId, index, `[FIXTURE] Pergunta realtime ${index}?`, `${prefix}-hash-${index}`));
   }
   await env.QUESTIONS_DB.batch(questionStatements);
-  return { poolId, resource: `${themeId}:EASY:${mode}`, themeId, uids, userIds };
+  return { poolId, resource: `${themeId}:${mode}`, themeId, uids, userIds };
 }
 
 async function presenceState(uid: string): Promise<{ activity: string; resource: string | null }> {
@@ -267,9 +270,10 @@ function startStoredMatch(initial: LiveMatchState): LiveMatchState {
   return apply(state, { roundNumber: 1, seat: 2, type: 'ROUND_READY' }, (state.phaseDeadlineMs ?? 0) - 1);
 }
 
-function finishStoredEasyMatch(initial: LiveMatchState, winnerSeat: 1 | null): LiveMatchState {
+function finishStoredMatch(initial: LiveMatchState, winnerSeat: 1 | null): LiveMatchState {
   let state = startStoredMatch(initial);
-  for (let round = 1; round <= 5; round += 1) {
+  const totalRounds = initial.questions.length;
+  for (let round = 1; round <= totalRounds; round += 1) {
     const answerDeadline = state.phaseDeadlineMs ?? 0;
     if (round === 1 && winnerSeat === 1) {
       const question = state.questions[state.roundIndex];
@@ -292,7 +296,7 @@ function finishStoredEasyMatch(initial: LiveMatchState, winnerSeat: 1 | null): L
       state = apply(state, { type: 'ALARM' }, answerDeadline);
     }
     state = apply(state, { type: 'ALARM' }, state.phaseDeadlineMs ?? answerDeadline);
-    if (round < 5) {
+    if (round < totalRounds) {
       state = apply(state, { roundNumber: round + 1, seat: 1, type: 'ROUND_READY' }, (state.phaseDeadlineMs ?? 0) - 2);
       state = apply(state, { roundNumber: round + 1, seat: 2, type: 'ROUND_READY' }, (state.phaseDeadlineMs ?? 0) - 1);
     }
@@ -480,11 +484,11 @@ describe('Milestone 8 no runtime Workers simulado', () => {
     });
     expect(secondSearching.timeoutAt).toBeGreaterThan(Date.now());
     const firstQuestionId = firstFound.preload?.firstQuestion.id;
-    expect(firstQuestionId).toMatch(/^matchfound-q-[1-5]$/);
+    expect(firstQuestionId).toMatch(/^matchfound-q-(10|[1-9])$/);
     expect(secondFound.preload?.firstQuestion.id).toBe(firstQuestionId);
     expect(JSON.stringify(firstFound)).not.toContain('correctOption');
     expect(JSON.stringify(firstFound)).not.toContain('selectedOption');
-    for (let index = 1; index <= 5; index += 1) {
+    for (let index = 1; index <= 10; index += 1) {
       const questionId = `matchfound-q-${index}`;
       if (questionId !== firstQuestionId) expect(JSON.stringify(firstFound)).not.toContain(questionId);
     }
@@ -607,7 +611,7 @@ describe('Milestone 8 no runtime Workers simulado', () => {
     const storedQuestions = await env.CORE_DB.prepare(
       'SELECT public_snapshot_json FROM match_questions WHERE match_id = ?1 ORDER BY round_number',
     ).bind(roomId).all<{ public_snapshot_json: string }>();
-    expect(storedQuestions.results).toHaveLength(5);
+    expect(storedQuestions.results).toHaveLength(10);
     expect(storedQuestions.results.every((row) => !row.public_snapshot_json.includes('correctOption'))).toBe(true);
     expect(await env.CORE_DB.prepare('SELECT COUNT(*) AS total FROM active_match_players WHERE match_id = ?1')
       .bind(roomId).first<{ total: number }>()).toEqual({ total: 2 });
@@ -633,7 +637,7 @@ describe('Milestone 8 no runtime Workers simulado', () => {
     ]);
     expect(JSON.stringify(firstQuestion)).not.toContain('correctOption');
     expect(JSON.stringify(secondQuestion)).not.toContain('correctOption');
-    expect(firstQuestion.match?.round).toEqual({ number: 1, total: 5 });
+    expect(firstQuestion.match?.round).toEqual({ number: 1, total: 10 });
     const questionId = firstQuestion.match?.question?.id;
     expect(questionId).toBeTypeOf('string');
     if (questionId === undefined) throw new Error('Pergunta da primeira rodada ausente.');
@@ -698,7 +702,7 @@ describe('Milestone 8 no runtime Workers simulado', () => {
     expect(firstResolved.match?.opponent).not.toHaveProperty('selectedOption');
     expect(secondResolved.match?.opponent).not.toHaveProperty('selectedOption');
 
-    for (let round = 2; round <= 5; round += 1) {
+    for (let round = 2; round <= 10; round += 1) {
       await expireAlarm(stub);
       const [nextFirst, nextSecond] = await Promise.all([
         firstReconnected.waitFor('ROUND_QUESTION'), second.waitFor('ROUND_QUESTION'),
@@ -725,8 +729,8 @@ describe('Milestone 8 no runtime Workers simulado', () => {
     const [firstFinished, secondFinished] = await Promise.all([
       firstReconnected.waitFor('MATCH_FINISHED'), second.waitFor('MATCH_FINISHED'),
     ]);
-    expect(firstFinished.result?.viewer).toMatchObject({ knowledgeAfter: 525, knowledgeDelta: 25, result: 'WIN', xpDelta: 10 });
-    expect(secondFinished.result?.viewer).toMatchObject({ knowledgeAfter: 490, knowledgeDelta: -10, result: 'LOSS', xpDelta: 0 });
+    expect(firstFinished.result?.viewer).toMatchObject({ knowledgeAfter: 575, knowledgeDelta: 75, result: 'WIN', xpDelta: 30 });
+    expect(secondFinished.result?.viewer).toMatchObject({ knowledgeAfter: 470, knowledgeDelta: -30, result: 'LOSS', xpDelta: 0 });
 
     const matchRow = await env.CORE_DB.prepare(
       'SELECT status, result_version, winner_user_id FROM matches WHERE id = ?1',
@@ -735,7 +739,7 @@ describe('Milestone 8 no runtime Workers simulado', () => {
     expect(await env.CORE_DB.prepare('SELECT COUNT(*) AS total, SUM(applied) AS applied FROM result_ledger WHERE match_id = ?1')
       .bind(roomId).first<{ applied: number; total: number }>()).toEqual({ applied: 2, total: 2 });
     expect(await env.CORE_DB.prepare('SELECT COUNT(*) AS total FROM match_answers WHERE match_id = ?1')
-      .bind(roomId).first<{ total: number }>()).toEqual({ total: 10 });
+      .bind(roomId).first<{ total: number }>()).toEqual({ total: 20 });
     expect(await env.CORE_DB.prepare('SELECT COUNT(*) AS total FROM active_match_players WHERE match_id = ?1')
       .bind(roomId).first<{ total: number }>()).toEqual({ total: 0 });
 
@@ -744,22 +748,23 @@ describe('Milestone 8 no runtime Workers simulado', () => {
     const allQuestionIds = await env.CORE_DB.prepare(
       'SELECT DISTINCT question_id FROM match_questions WHERE match_id = ?1',
     ).bind(roomId).all<{ question_id: string }>();
-    expect(allQuestionIds.results).toHaveLength(5);
+    expect(allQuestionIds.results).toHaveLength(10);
     for (const { question_id: otherQuestionId } of allQuestionIds.results) {
       const stats = await env.QUESTIONS_DB.prepare(
         'SELECT use_count, answer_count FROM question_statistics WHERE question_id = ?1',
       ).bind(otherQuestionId).first<{ answer_count: number; use_count: number }>();
-      // Só a pergunta da rodada 1 foi realmente respondida pelos dois; 2-5 esgotaram o tempo dos dois.
+      // Só a pergunta da rodada 1 foi realmente respondida pelos dois; 2-10 esgotaram o tempo dos dois.
       const expectedAnswers = otherQuestionId === questionId ? 2 : 0;
       expect(stats, otherQuestionId).toEqual({ answer_count: expectedAnswers, use_count: 2 });
     }
     expect(await env.QUESTIONS_DB.prepare(
       "SELECT COUNT(*) AS total FROM question_statistics_ledger WHERE context_kind = 'MATCH' AND context_id = ?1",
-    ).bind(roomId).first()).toEqual({ total: 10 });
+    ).bind(roomId).first()).toEqual({ total: 20 });
 
     // M11 — missões/streak: partida FINISHED avança missão "1 partida válida"
     // (completa para os dois) e "respostas"/"acertos" a partir de match_answers
-    // já persistido (5 rodadas contadas para cada um, só a rodada 1 foi acerto/erro real).
+    // já persistido (10 rodadas contadas para cada um, só a rodada 1 foi acerto/erro
+    // real — as 10 respostas saturam a meta de 8 de ANSWER_QUESTIONS para os dois).
     const dayKey = new Date().toISOString().slice(0, 10);
     for (const [userId, expectedCorrect] of [[fixture.userIds[0], 1], [fixture.userIds[1], 0]] as const) {
       const missions = await env.CORE_DB.prepare(
@@ -767,7 +772,7 @@ describe('Milestone 8 no runtime Workers simulado', () => {
            FROM user_daily_missions WHERE user_id = ?1 AND day_key = ?2 ORDER BY mission_type`,
       ).bind(userId, dayKey).all<{ completed: number; mission_type: string; progress: number; target: number }>();
       expect(missions.results).toEqual([
-        { completed: 0, mission_type: 'ANSWER_QUESTIONS', progress: 5, target: 8 },
+        { completed: 1, mission_type: 'ANSWER_QUESTIONS', progress: 8, target: 8 },
         { completed: expectedCorrect >= 5 ? 1 : 0, mission_type: 'CORRECT_ANSWERS', progress: expectedCorrect, target: 5 },
         { completed: 1, mission_type: 'PLAY_MATCH', progress: 1, target: 1 },
       ]);
@@ -784,7 +789,7 @@ describe('Milestone 8 no runtime Workers simulado', () => {
       ).bind(userId, fixture.poolId).first<{ state_blob: ArrayBuffer }>();
       expect(row).not.toBeNull();
       const poolState = decodePoolState(new Uint8Array(row?.state_blob ?? new ArrayBuffer(0)));
-      expect(discoveredCount(poolState, 5)).toBe(5);
+      expect(discoveredCount(poolState, 10)).toBe(10);
     }
 
     const finishedState = await runInDurableObject(stub, async (_instance, state) => {
@@ -796,12 +801,12 @@ describe('Milestone 8 no runtime Workers simulado', () => {
     await duplicateRepository.finalize(retryState);
     await duplicateRepository.finalize(retryState);
     expect(await env.CORE_DB.prepare('SELECT total_xp FROM user_profiles WHERE user_id = ?1')
-      .bind(fixture.userIds[0]).first<{ total_xp: number }>()).toEqual({ total_xp: 10 });
+      .bind(fixture.userIds[0]).first<{ total_xp: number }>()).toEqual({ total_xp: 30 });
     expect(await env.CORE_DB.prepare('SELECT knowledge FROM theme_rankings WHERE user_id = ?1 AND theme_id = ?2')
-      .bind(fixture.userIds[0], fixture.themeId).first<{ knowledge: number }>()).toEqual({ knowledge: 525 });
+      .bind(fixture.userIds[0], fixture.themeId).first<{ knowledge: number }>()).toEqual({ knowledge: 575 });
   });
 
-  it('aplica somente derrota Média ao desconectado depois dos 7 segundos', async () => {
+  it('aplica ao desconectado, depois dos 7 segundos, a derrota que antes era de HARD', async () => {
     const fixture = await seedMatchFixture('abandon');
     const { roomId, stub } = await initializeRoom(fixture);
     const first = await openRoom(stub, fixture.uids[0]);
@@ -825,7 +830,7 @@ describe('Milestone 8 no runtime Workers simulado', () => {
       'SELECT user_id, knowledge_delta, xp_delta FROM match_players WHERE match_id = ?1 ORDER BY seat',
     ).bind(roomId).all<{ knowledge_delta: number; user_id: string; xp_delta: number }>();
     expect(players.results).toEqual([
-      { knowledge_delta: -20, user_id: fixture.userIds[0], xp_delta: 0 },
+      { knowledge_delta: -30, user_id: fixture.userIds[0], xp_delta: 0 },
       { knowledge_delta: 0, user_id: fixture.userIds[1], xp_delta: 0 },
     ]);
 
@@ -842,7 +847,7 @@ describe('Milestone 8 no runtime Workers simulado', () => {
     const selectedSlots = await env.CORE_DB.prepare(
       'SELECT pool_slot FROM match_questions WHERE match_id = ?1 ORDER BY round_number',
     ).bind(firstMatch.roomId).all<{ pool_slot: number }>();
-    expect(selectedSlots.results).toHaveLength(5);
+    expect(selectedSlots.results).toHaveLength(10);
 
     const playing = await startRoomAtAnswering(firstMatch.stub, fixture.uids);
     playing.first.socket.close(1_000, 'Queda do smoke obrigatório');
@@ -1086,7 +1091,7 @@ describe('Milestone 8 no runtime Workers simulado', () => {
       env.MATCH_ROOM.get(env.MATCH_ROOM.idFromName(genericRoomId)),
       generic,
       genericRoomId,
-      'theme-that-does-not-exist:EASY:RANKED',
+      'theme-that-does-not-exist:RANKED',
     );
     expect(genericResponse.status).toBe(500);
     await expect(genericResponse.json()).resolves.toEqual({ error: { code: 'MATCH_INITIALIZATION_FAILED' } });
@@ -1119,7 +1124,7 @@ describe('Milestone 8 no runtime Workers simulado', () => {
     const initial = await repository.initialize({
       createdAtMs: Date.now(), firebaseUids: fixture.uids, kind: 'MATCHMAKING', matchId, resource: fixture.resource,
     });
-    const finalizing = finishStoredEasyMatch(initial, null);
+    const finalizing = finishStoredMatch(initial, null);
     await repository.markStarted(matchId);
     const concurrentResults = await Promise.all([
       repository.finalize(finalizing),
@@ -1156,10 +1161,10 @@ describe('Milestone 8 no runtime Workers simulado', () => {
     const initial = await repository.initialize({
       createdAtMs: Date.now(), firebaseUids: fixture.uids, kind: 'MATCHMAKING', matchId, resource: fixture.resource,
     });
-    const finalizing = finishStoredEasyMatch(initial, 1);
+    const finalizing = finishStoredMatch(initial, 1);
     await repository.markStarted(matchId);
     const result = await repository.finalize(finalizing);
-    expect(result.players[0]).toMatchObject({ knowledgeAfter: 500, knowledgeDelta: 0, result: 'WIN', xpDelta: 10 });
+    expect(result.players[0]).toMatchObject({ knowledgeAfter: 500, knowledgeDelta: 0, result: 'WIN', xpDelta: 20 });
     expect(result.players[1]).toMatchObject({ knowledgeAfter: 500, knowledgeDelta: 0, result: 'LOSS', xpDelta: 0 });
     const rankings = await env.CORE_DB.prepare(
       'SELECT knowledge, ranked_matches FROM theme_rankings WHERE theme_id = ?1 ORDER BY user_id',

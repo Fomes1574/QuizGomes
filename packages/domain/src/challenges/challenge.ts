@@ -1,5 +1,3 @@
-import type { Difficulty } from '../types.js';
-
 /**
  * Regras de desafio entre amigos, unificando o desafio simultâneo (DIRECT) e o
  * desafio assíncrono (ASYNC).
@@ -55,7 +53,6 @@ export const TERMINAL_CHALLENGE_STATUSES: readonly ChallengeStatus[] = [
 export type FriendPresence = 'IN_MATCH' | 'MATCHMAKING' | 'OFFLINE' | 'ONLINE' | 'RECONNECTING';
 
 export interface ChallengeRecord {
-  difficulty: Difficulty;
   expiresAtMs: number | null;
   firstPlayerUserId: string;
   id: string;

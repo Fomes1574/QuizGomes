@@ -491,12 +491,11 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
   useEffect(() => () => clearDuelHandoff(), []);
 
   const matchOrigin = (location.state as {
-    matchOrigin?: { difficulty?: string; mode?: string; returnTo?: string };
+    matchOrigin?: { mode?: string; returnTo?: string };
   } | null)?.matchOrigin;
 
   const cancelledChallenge = isChallenge && terminal?.voidReason === 'CANCELLED';
   const returnTo = matchOrigin?.returnTo;
-  const returnDifficulty = matchOrigin?.difficulty;
   const returnMode = matchOrigin?.mode;
   useEffect(() => {
     // Cancelamento explícito do próprio desafio não vira tela de resultado anulado:
@@ -504,16 +503,16 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
     if (!cancelledChallenge) return;
     if (typeof returnTo === 'string' && returnTo.startsWith('/temas/')) {
       // Volta exatamente ao contexto de origem, como no cancelamento da partida.
-      void navigate(returnTo, { state: { difficulty: returnDifficulty, mode: returnMode } });
+      void navigate(returnTo, { state: { mode: returnMode } });
       return;
     }
     void navigate('/social');
-  }, [cancelledChallenge, navigate, returnDifficulty, returnMode, returnTo]);
+  }, [cancelledChallenge, navigate, returnMode, returnTo]);
 
   const backToTheme = () => {
     if (typeof matchOrigin?.returnTo === 'string' && matchOrigin.returnTo.startsWith('/temas/')) {
       void navigate(matchOrigin.returnTo, {
-        state: { difficulty: matchOrigin.difficulty, mode: matchOrigin.mode },
+        state: { mode: matchOrigin.mode },
       });
       return;
     }

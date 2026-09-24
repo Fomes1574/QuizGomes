@@ -3,7 +3,7 @@ import {
   MAX_LEVEL,
   TOTAL_XP_TO_MAX_LEVEL,
   levelProgress,
-  minimumHardWinsToMaxLevel,
+  minimumRankedWinsToMaxLevel,
   totalXpForLevel,
   xpAward,
   xpForNextLevel,
@@ -36,8 +36,8 @@ describe('XP global', () => {
     expect(totalXpForLevel(MAX_LEVEL)).toBe(TOTAL_XP_TO_MAX_LEVEL);
   });
 
-  it('exige no mínimo 174.364 vitórias difíceis teóricas', () => {
-    expect(minimumHardWinsToMaxLevel()).toBe(174_364);
+  it('exige no mínimo 174.364 vitórias Ranqueadas teóricas', () => {
+    expect(minimumRankedWinsToMaxLevel()).toBe(174_364);
   });
 
   it('não cria nível 1000 e mantém MAX', () => {
@@ -46,11 +46,10 @@ describe('XP global', () => {
   });
 
   it('concede XP apenas em vitória', () => {
-    expect(xpAward('EASY', 'WIN')).toBe(10);
-    expect(xpAward('MEDIUM', 'WIN')).toBe(20);
-    expect(xpAward('HARD', 'WIN')).toBe(30);
-    expect(xpAward('HARD', 'LOSS')).toBe(0);
-    expect(xpAward('HARD', 'DRAW')).toBe(0);
-    expect(xpAward('HARD', 'VOID')).toBe(0);
+    expect(xpAward('CASUAL', 'WIN')).toBe(20);
+    expect(xpAward('RANKED', 'WIN')).toBe(30);
+    expect(xpAward('RANKED', 'LOSS')).toBe(0);
+    expect(xpAward('RANKED', 'DRAW')).toBe(0);
+    expect(xpAward('RANKED', 'VOID')).toBe(0);
   });
 });

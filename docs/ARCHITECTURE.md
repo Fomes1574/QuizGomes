@@ -1,12 +1,20 @@
 # Arquitetura
 
-> Regras vigentes: EASY/MEDIUM/HARD = 5/8/12; 10 s por pergunta; seleção uniforme
-> sem histórico entre partidas e sem repetição somente dentro da partida. DIRECT é
-> Casual e expira em 30 s — só o convite `PENDING_DIRECT` ainda não aceito, nunca
-> a sala já reservada; ASYNC é Casual, nunca expira (uma metade `MISSING`, ainda
-> não aberta, é normal e pode durar indefinidamente) e pode coexistir com um DIRECT
-> vivo da mesma dupla. A graça de 7 s do M8 é exclusiva de reconexão de uma partida
-> ou metade JÁ iniciada; não é TTL de criação, aceite nem abertura.
+> Regras vigentes: Fácil/Médio/Difícil não existem mais como conceito operacional
+> (decisão de produto de 2026-09-24). Só há Normal (Casual, 7 perguntas, 20 XP na
+> vitória, nunca altera Conhecimento) e Rankeada (10 perguntas, 30 XP na vitória,
+> altera Conhecimento pela tabela que antes pertencia só a HARD). Ambas usam 10 s
+> por pergunta; seleção uniforme sobre o pool único do tema, sem histórico entre
+> partidas e sem repetição somente dentro da partida. Matchmaking Normal pareia só
+> por tema; Rankeado pareia por tema e Conhecimento com banda de divisão que se
+> alarga pelo tempo de espera (0-15 s mesma divisão, 15-30 s vizinhas, 30-45 s até
+> duas divisões, depois qualquer divisão do tema). DIRECT é Casual e expira em
+> 30 s — só o convite `PENDING_DIRECT` ainda não aceito, nunca a sala já reservada;
+> ASYNC é Casual, nunca expira (uma metade `MISSING`, ainda não aberta, é normal e
+> pode durar indefinidamente) e pode coexistir com um DIRECT vivo da mesma dupla;
+> nenhum dos dois admite modalidade ranqueada. A graça de 7 s do M8 é exclusiva de
+> reconexão de uma partida ou metade JÁ iniciada; não é TTL de criação, aceite nem
+> abertura.
 
 ## Visão geral
 

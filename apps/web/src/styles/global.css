@@ -471,7 +471,6 @@ h1, h2, h3, .brand-lockup__name, .hero-stat strong, .level-card > strong, .count
 .play-card, .leaderboard-card, .personal-theme-card { padding: 22px; }
 .play-card { display: grid; gap: 18px; }
 .play-card h2 { margin-bottom: 0; font-size: 1.35rem; }
-.difficulty-grid { display: grid; gap: 8px; }
 .difficulty { display: grid; gap: 4px; padding: 14px 15px; border: 1px solid var(--border); border-radius: 15px; text-align: left; cursor: pointer; background: var(--background); transition: 90ms ease; }
 .difficulty strong { font-size: .86rem; }
 .difficulty small { color: var(--text-secondary); font-size: .7rem; }
@@ -500,8 +499,6 @@ h1, h2, h3, .brand-lockup__name, .hero-stat strong, .level-card > strong, .count
 .social-challenge__presence { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 5px; max-width: 142px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .social-challenge__presence i { width: 7px; height: 7px; flex: none; border-radius: 50%; background: currentColor; }
 .social-challenge__actions { min-width: 0; padding-left: 0; }
-.difficulty-grid--compact { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-.difficulty-grid--compact .difficulty { padding: 10px 11px; }
 .challenge-empty { color: var(--text-secondary); font-size: .82rem; line-height: 1.5; }
 .challenge-friends { display: grid; max-height: 320px; overflow-y: auto; gap: 8px; margin: 0; padding: 0; list-style: none; }
 /*
@@ -661,7 +658,6 @@ h1, h2, h3, .brand-lockup__name, .hero-stat strong, .level-card > strong, .count
 .match-found--duel { inset: 118px 18px 20px; grid-template-rows: auto minmax(0, 1fr) auto; place-items: stretch; align-content: stretch; gap: 10px; animation: fade-in 260ms ease both; }
 .duel-context { display: grid; justify-items: center; gap: 6px; }
 .duel-context .eyebrow { margin: 0; }
-.duel-context__setup { color: var(--text-secondary); font-size: .74rem; }
 .duel-context__mode { padding: 4px 10px; border-radius: 8px; color: var(--text-on-brand); background: var(--brand); font: 800 .58rem/1 Sora, sans-serif; letter-spacing: .12em; text-transform: uppercase; }
 .duel-arena { position: relative; display: grid; grid-template-rows: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 6px; }
 .duel-arena__seam { position: absolute; top: 50%; right: -4px; left: -4px; height: 1px; background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--brand) 55%, transparent), transparent); transform: translateY(-.5px) rotate(-3deg); }
@@ -901,7 +897,6 @@ h1, h2, h3, .brand-lockup__name, .hero-stat strong, .level-card > strong, .count
   .theme-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .theme-hero { grid-template-columns: 140px 1fr; }
   .theme-hero__art { width: 140px; height: 140px; border-radius: 38px; }
-  .difficulty-grid { grid-template-columns: repeat(3, 1fr); }
   .personal-theme-card { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
   .profile-grid { grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr); }
   .settings-card { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }

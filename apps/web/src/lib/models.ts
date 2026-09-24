@@ -50,7 +50,6 @@ export interface EditorialQuestion {
   correctOption: number;
   createdAt: string;
   createdByUserId: string | null;
-  difficulty: 'EASY' | 'HARD' | 'MEDIUM';
   id: string;
   options: readonly [string, string, string, string];
   poolId: string;
@@ -130,7 +129,6 @@ export interface ThemeDetailResponse {
     position: number | null;
     rankedMatches: number;
   };
-  questionCounts: { EASY: number; HARD: number; MEDIUM: number };
   theme: ThemeSummary;
   topFive: LeaderboardEntry[];
 }
@@ -152,7 +150,6 @@ export interface AdminQuestionReport {
 
 export interface AdminQuestionReportEntry {
   questionMetadata: {
-    difficulty: 'EASY' | 'MEDIUM' | 'HARD';
     sources: Array<{ sourceKind: string; title: string | null; url: string }>;
     statistics: {
       answerCount: number;

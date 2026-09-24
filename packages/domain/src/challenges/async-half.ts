@@ -1,10 +1,9 @@
-import { canRevealFirstPlayerRound, type SealedRoundAnswer } from './challenge.js';
+import { canRevealFirstPlayerRound, CHALLENGE_MODE, type SealedRoundAnswer } from './challenge.js';
 import { RECONNECT_GRACE_MS } from '../match/connection.js';
 import { LIVE_ROUND_RESULT_MS, type LiveMatchProjection, type LiveQuestion } from '../match/live-match.js';
 import { publicQuestion } from '../match/projection.js';
-import { questionsForDifficulty } from '../match/rules.js';
+import { questionsForMode } from '../match/rules.js';
 import { QUESTION_DURATION_MS, remainingAt, scoreAnswer } from '../match/scoring.js';
-import type { Difficulty } from '../types.js';
 
 /**
  * Metade selada do desafio assíncrono: um jogador por vez contra o relógio.
@@ -51,7 +50,6 @@ export interface AsyncHalfState {
   answers: (AsyncHalfAnswer | null)[];
   challengeId: string;
   connected: boolean;
-  difficulty: Difficulty;
   opponent: AsyncHalfParticipant;
   pause: AsyncHalfPause | null;
   phase: AsyncHalfPhase;
@@ -186,7 +184,6 @@ function alarm(state: AsyncHalfState, nowMs: number): AsyncHalfTransition {
 export function createAsyncHalfState(input: {
   challengeId: string;
   createdAtMs: number;
-  difficulty: Difficulty;
   opponent: AsyncHalfParticipant;
   questions: readonly LiveQuestion[];
   seat: AsyncHalfSeat;
@@ -194,9 +191,10 @@ export function createAsyncHalfState(input: {
   viewer: AsyncHalfParticipant;
 }): AsyncHalfState {
   assertNow(input.createdAtMs);
-  const expected = questionsForDifficulty(input.difficulty);
+  // Desafio entre amigos é sempre Casual (CHALLENGE_MODE): 7 perguntas fixas.
+  const expected = questionsForMode(CHALLENGE_MODE);
   if (input.questions.length !== expected) {
-    throw new RangeError(`A dificuldade exige exatamente ${expected} perguntas.`);
+    throw new RangeError(`O desafio exige exatamente ${expected} perguntas.`);
   }
   if (input.seat === 'SECOND' && input.sealedOpponent === null) {
     throw new Error('A segunda metade exige a metade selada do primeiro jogador.');
@@ -213,7 +211,6 @@ export function createAsyncHalfState(input: {
     answers: Array.from({ length: input.questions.length }, () => null),
     challengeId: input.challengeId,
     connected: false,
-    difficulty: input.difficulty,
     opponent: input.opponent,
     pause: null,
     phase: 'ROUND_READY',

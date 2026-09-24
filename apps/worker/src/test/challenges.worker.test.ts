@@ -67,7 +67,6 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
     for (const presence of ['OFFLINE', 'MATCHMAKING', 'IN_MATCH', 'RECONNECTING'] as const) {
       await expect(repository.create({
         actorUserId: challenger.id,
-        difficulty: 'EASY',
         kind: 'DIRECT',
         targetPresence: presence,
         targetUserId: friend.id,
@@ -77,7 +76,6 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
 
     const async = await repository.create({
       actorUserId: challenger.id,
-      difficulty: 'HARD',
       kind: 'ASYNC',
       targetPresence: 'OFFLINE',
       targetUserId: friend.id,
@@ -99,7 +97,7 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
     await befriend(second, third);
     const repository = new ChallengeRepository(env.CORE_DB);
     const themeId = await themeIdOf(themeSlug);
-    const base = { difficulty: 'EASY', kind: 'ASYNC', targetPresence: 'ONLINE', themeId } as const;
+    const base = { kind: 'ASYNC', targetPresence: 'ONLINE', themeId } as const;
 
     const created = await repository.create({ ...base, actorUserId: first.id, targetUserId: second.id });
     expect(created.created).toBe(true);
@@ -132,7 +130,6 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
     const themeId = await themeIdOf(themeSlug);
     const created = await repository.create({
       actorUserId: challenger.id,
-      difficulty: 'EASY',
       kind: 'ASYNC',
       targetPresence: 'ONLINE',
       targetUserId: friend.id,
@@ -172,7 +169,6 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
     // A dupla volta a aceitar desafio depois do encerramento.
     await expect(repository.create({
       actorUserId: challenger.id,
-      difficulty: 'EASY',
       kind: 'ASYNC',
       targetPresence: 'ONLINE',
       targetUserId: friend.id,
@@ -190,7 +186,6 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
     const repository = new ChallengeRepository(env.CORE_DB, () => new Date(now));
     const created = await repository.create({
       actorUserId: challenger.id,
-      difficulty: 'EASY',
       kind: 'DIRECT',
       targetPresence: 'ONLINE',
       targetUserId: friend.id,
@@ -215,7 +210,6 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
 
     const again = await repository.create({
       actorUserId: challenger.id,
-      difficulty: 'EASY',
       kind: 'DIRECT',
       targetPresence: 'ONLINE',
       targetUserId: friend.id,
@@ -233,7 +227,7 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
       const repository = new ChallengeRepository(env.CORE_DB);
       const themeId = await themeIdOf(themeSlug);
       const created = await repository.create({
-        actorUserId: first.id, difficulty: 'EASY', kind: 'DIRECT',
+        actorUserId: first.id, kind: 'DIRECT',
         targetPresence: 'ONLINE', targetUserId: second.id, themeId,
       });
       const matchId = crypto.randomUUID();
@@ -255,7 +249,7 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
       });
       expect((await repository.forUser(first.id)).challenges).toEqual([]);
       await expect(repository.create({
-        actorUserId: first.id, difficulty: 'EASY', kind: 'DIRECT',
+        actorUserId: first.id, kind: 'DIRECT',
         targetPresence: 'ONLINE', targetUserId: second.id, themeId,
       })).resolves.toMatchObject({ created: true });
     }
@@ -269,7 +263,7 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
     const challenges = new ChallengeRepository(env.CORE_DB);
     const themeId = await themeIdOf(themeSlug);
     const created = await challenges.create({
-      actorUserId: first.id, difficulty: 'EASY', kind: 'DIRECT',
+      actorUserId: first.id, kind: 'DIRECT',
       targetPresence: 'ONLINE', targetUserId: second.id, themeId,
     });
     const matchId = crypto.randomUUID();
@@ -304,7 +298,7 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
       .bind(matchId).first()).toEqual({ total: 0 });
     expect(await challenges.byId(created.challengeId)).toMatchObject({ status: 'VOID' });
     await expect(challenges.create({
-      actorUserId: first.id, difficulty: 'EASY', kind: 'DIRECT',
+      actorUserId: first.id, kind: 'DIRECT',
       targetPresence: 'ONLINE', targetUserId: second.id, themeId,
     })).resolves.toMatchObject({ created: true });
   });
@@ -317,7 +311,7 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
     const challenges = new ChallengeRepository(env.CORE_DB);
     const themeId = await themeIdOf(themeSlug);
     const created = await challenges.create({
-      actorUserId: first.id, difficulty: 'EASY', kind: 'DIRECT',
+      actorUserId: first.id, kind: 'DIRECT',
       targetPresence: 'ONLINE', targetUserId: second.id, themeId,
     });
     const pending = await challenges.byId(created.challengeId);
@@ -346,11 +340,11 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
     const repository = new ChallengeRepository(env.CORE_DB, () => new Date(now));
     const themeId = await themeIdOf(themeSlug);
     const direct = await repository.create({
-      actorUserId: first.id, difficulty: 'EASY', kind: 'DIRECT',
+      actorUserId: first.id, kind: 'DIRECT',
       targetPresence: 'ONLINE', targetUserId: second.id, themeId,
     });
     const async = await repository.create({
-      actorUserId: first.id, difficulty: 'EASY', kind: 'ASYNC',
+      actorUserId: first.id, kind: 'ASYNC',
       targetPresence: 'OFFLINE', targetUserId: second.id, themeId,
     });
     await env.CORE_DB.prepare(
@@ -374,7 +368,6 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
       const social = new SocialRepository(env.CORE_DB);
       const created = await repository.create({
         actorUserId: challenger.id,
-        difficulty: 'MEDIUM',
         kind: 'ASYNC',
         targetPresence: 'ONLINE',
         targetUserId: friend.id,
@@ -400,7 +393,6 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
     const repository = new ChallengeRepository(env.CORE_DB);
     const created = await repository.create({
       actorUserId: challenger.id,
-      difficulty: 'MEDIUM',
       kind: 'ASYNC',
       targetPresence: 'ONLINE',
       targetUserId: friend.id,
@@ -421,7 +413,7 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
     for (const target of targets) await befriend(challenger, target);
     const repository = new ChallengeRepository(env.CORE_DB);
     const themeId = await themeIdOf(themeSlug);
-    const base = { actorUserId: challenger.id, difficulty: 'EASY', kind: 'ASYNC', targetPresence: 'ONLINE', themeId } as const;
+    const base = { actorUserId: challenger.id, kind: 'ASYNC', targetPresence: 'ONLINE', themeId } as const;
 
     for (let index = 0; index < CHALLENGE_RATE_LIMIT; index += 1) {
       const target = targets[index];
@@ -451,17 +443,17 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
     const repository = new ChallengeRepository(env.CORE_DB);
     const themeId = await themeIdOf(themeSlug);
     const created = await repository.create({
-      actorUserId: first.id, difficulty: 'MEDIUM', kind: 'ASYNC',
+      actorUserId: first.id, kind: 'ASYNC',
       targetPresence: 'OFFLINE', targetUserId: second.id, themeId,
     });
 
-    await repository.sealQuestionSet(created.challengeId, themeId, 'MEDIUM', env.QUESTIONS_DB);
+    await repository.sealQuestionSet(created.challengeId, themeId, env.QUESTIONS_DB);
     const sealedOnce = await repository.questionSet(created.challengeId);
-    expect(sealedOnce).toHaveLength(8);
-    expect(new Set(sealedOnce.map((question) => question.id)).size).toBe(8);
+    expect(sealedOnce).toHaveLength(7);
+    expect(new Set(sealedOnce.map((question) => question.id)).size).toBe(7);
 
     // Selar de novo é no-op: o conjunto já selado vence.
-    await repository.sealQuestionSet(created.challengeId, themeId, 'MEDIUM', env.QUESTIONS_DB);
+    await repository.sealQuestionSet(created.challengeId, themeId, env.QUESTIONS_DB);
     const sealedTwice = await repository.questionSet(created.challengeId);
     expect(sealedTwice.map((question) => question.id)).toEqual(sealedOnce.map((question) => question.id));
     expect(sealedTwice.map((question) => question.options)).toEqual(sealedOnce.map((question) => question.options));
@@ -477,10 +469,10 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
     const repository = new ChallengeRepository(env.CORE_DB);
     const themeId = await themeIdOf(themeSlug);
     const created = await repository.create({
-      actorUserId: first.id, difficulty: 'EASY', kind: 'ASYNC',
+      actorUserId: first.id, kind: 'ASYNC',
       targetPresence: 'OFFLINE', targetUserId: second.id, themeId,
     });
-    await repository.sealQuestionSet(created.challengeId, themeId, 'EASY', env.QUESTIONS_DB);
+    await repository.sealQuestionSet(created.challengeId, themeId, env.QUESTIONS_DB);
 
     const firstHalf = [20, 0, 15, 11, 18].map((score, index) => ({
       correct: score > 0, remainingMs: score > 0 ? (score - 10) * 1_000 : 0, score, selectedOption: index % 4,
@@ -513,12 +505,12 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
     await repository.applyCompletionXp(created.challengeId);
 
     expect(await repository.byId(created.challengeId)).toMatchObject({ status: 'COMPLETED' });
-    // 64 do primeiro contra 60 do segundo: vitória do primeiro, +10 XP de Fácil.
+    // 64 do primeiro contra 60 do segundo: vitória do primeiro, +20 XP (desafio é sempre Casual).
     const xp = await env.CORE_DB.prepare(
       'SELECT user_id, total_xp FROM user_profiles WHERE user_id IN (?1, ?2) ORDER BY user_id',
     ).bind(first.id, second.id).all<{ total_xp: number; user_id: string }>();
     const byUser = new Map(xp.results.map((row) => [row.user_id, row.total_xp]));
-    expect(byUser.get(first.id)).toBe(10);
+    expect(byUser.get(first.id)).toBe(20);
     expect(byUser.get(second.id)).toBe(0);
 
     // Reexecutar sealHalf, recordHalfEffects e applyCompletionXp (simulando um retry
@@ -535,7 +527,7 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
       'SELECT COUNT(*) AS total FROM challenge_answers WHERE challenge_id = ?1',
     ).bind(created.challengeId).first()).toEqual({ total: 10 });
     expect(await env.CORE_DB.prepare('SELECT total_xp FROM user_profiles WHERE user_id = ?1')
-      .bind(first.id).first()).toEqual({ total_xp: 10 });
+      .bind(first.id).first()).toEqual({ total_xp: 20 });
     expect(await env.CORE_DB.prepare('SELECT total_xp FROM user_profiles WHERE user_id = ?1')
       .bind(second.id).first()).toEqual({ total_xp: 0 });
   });
@@ -548,10 +540,10 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
     const repository = new ChallengeRepository(env.CORE_DB);
     const themeId = await themeIdOf(themeSlug);
     const created = await repository.create({
-      actorUserId: first.id, difficulty: 'EASY', kind: 'ASYNC',
+      actorUserId: first.id, kind: 'ASYNC',
       targetPresence: 'OFFLINE', targetUserId: second.id, themeId,
     });
-    await repository.sealQuestionSet(created.challengeId, themeId, 'EASY', env.QUESTIONS_DB);
+    await repository.sealQuestionSet(created.challengeId, themeId, env.QUESTIONS_DB);
     const half = [20, 0, 0, 0, 0].map((score, index) => ({
       correct: score > 0, remainingMs: score > 0 ? (score - 10) * 1_000 : 0, score, selectedOption: index % 4,
     }));
@@ -587,10 +579,10 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
     const repository = new ChallengeRepository(env.CORE_DB);
     const themeId = await themeIdOf(themeSlug);
     const created = await repository.create({
-      actorUserId: first.id, difficulty: 'EASY', kind: 'ASYNC',
+      actorUserId: first.id, kind: 'ASYNC',
       targetPresence: 'OFFLINE', targetUserId: second.id, themeId,
     });
-    await repository.sealQuestionSet(created.challengeId, themeId, 'EASY', env.QUESTIONS_DB);
+    await repository.sealQuestionSet(created.challengeId, themeId, env.QUESTIONS_DB);
 
     await repository.voidChallenge(created.challengeId);
     expect(await repository.byId(created.challengeId)).toMatchObject({ status: 'VOID' });
@@ -610,10 +602,10 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
     const repository = new ChallengeRepository(env.CORE_DB);
     const themeId = await themeIdOf(themeSlug);
     const created = await repository.create({
-      actorUserId: first.id, difficulty: 'EASY', kind: 'ASYNC',
+      actorUserId: first.id, kind: 'ASYNC',
       targetPresence: 'OFFLINE', targetUserId: second.id, themeId,
     });
-    await repository.sealQuestionSet(created.challengeId, themeId, 'EASY', env.QUESTIONS_DB);
+    await repository.sealQuestionSet(created.challengeId, themeId, env.QUESTIONS_DB);
     const winningHalf = [20, 18, 0, 15, 11].map((score, index) => ({
       correct: score > 0, remainingMs: score > 0 ? (score - 10) * 1_000 : 0, score, selectedOption: index % 4,
     }));
@@ -695,7 +687,7 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
     const userRepository = new UserRepository(env.CORE_DB);
     const themeId = await themeIdOf(themeSlug);
     const created = await challenges.create({
-      actorUserId: first.id, difficulty: 'EASY', kind: 'DIRECT',
+      actorUserId: first.id, kind: 'DIRECT',
       targetPresence: 'ONLINE', targetUserId: second.id, themeId,
     });
     const context = fakeContext();
@@ -726,7 +718,7 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
     const userRepository = new UserRepository(env.CORE_DB);
     const themeId = await themeIdOf(themeSlug);
     const created = await challenges.create({
-      actorUserId: first.id, difficulty: 'EASY', kind: 'DIRECT',
+      actorUserId: first.id, kind: 'DIRECT',
       targetPresence: 'ONLINE', targetUserId: second.id, themeId,
     });
 
@@ -749,7 +741,7 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
 
     // Depois do VOID a dupla pode abrir um novo convite normalmente.
     await expect(challenges.create({
-      actorUserId: first.id, difficulty: 'EASY', kind: 'DIRECT',
+      actorUserId: first.id, kind: 'DIRECT',
       targetPresence: 'ONLINE', targetUserId: second.id, themeId,
     })).resolves.toMatchObject({ created: true });
   });
@@ -762,7 +754,7 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
     const challenges = new ChallengeRepository(env.CORE_DB);
     const themeId = await themeIdOf(themeSlug);
     const created = await challenges.create({
-      actorUserId: first.id, difficulty: 'EASY', kind: 'DIRECT',
+      actorUserId: first.id, kind: 'DIRECT',
       targetPresence: 'ONLINE', targetUserId: second.id, themeId,
     });
     // roomId reservado agora mesmo (updated_at "agora"), mas o MatchRoom ainda
@@ -788,7 +780,7 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
     const challenges = new ChallengeRepository(env.CORE_DB);
     const themeId = await themeIdOf(themeSlug);
     const created = await challenges.create({
-      actorUserId: first.id, difficulty: 'EASY', kind: 'DIRECT',
+      actorUserId: first.id, kind: 'DIRECT',
       targetPresence: 'ONLINE', targetUserId: second.id, themeId,
     });
     const roomId = crypto.randomUUID();
@@ -803,7 +795,7 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
     expect(await challenges.byId(created.challengeId)).toMatchObject({ status: 'VOID' });
     // A dupla volta a poder abrir um novo convite DIRECT.
     await expect(challenges.create({
-      actorUserId: first.id, difficulty: 'EASY', kind: 'DIRECT',
+      actorUserId: first.id, kind: 'DIRECT',
       targetPresence: 'ONLINE', targetUserId: second.id, themeId,
     })).resolves.toMatchObject({ created: true });
   });
@@ -817,7 +809,7 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
     const userRepository = new UserRepository(env.CORE_DB);
     const themeId = await themeIdOf(themeSlug);
     const created = await challenges.create({
-      actorUserId: first.id, difficulty: 'EASY', kind: 'DIRECT',
+      actorUserId: first.id, kind: 'DIRECT',
       targetPresence: 'ONLINE', targetUserId: second.id, themeId,
     });
 
@@ -847,7 +839,7 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
     const userRepository = new UserRepository(env.CORE_DB);
     const themeId = await themeIdOf(themeSlug);
     const created = await challenges.create({
-      actorUserId: first.id, difficulty: 'EASY', kind: 'DIRECT',
+      actorUserId: first.id, kind: 'DIRECT',
       targetPresence: 'ONLINE', targetUserId: second.id, themeId,
     });
 
@@ -871,7 +863,7 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
       const userRepository = new UserRepository(env.CORE_DB);
       const themeId = await themeIdOf(themeSlug);
       const created = await challenges.create({
-        actorUserId: first.id, difficulty: 'EASY', kind: 'DIRECT',
+        actorUserId: first.id, kind: 'DIRECT',
         targetPresence: 'ONLINE', targetUserId: second.id, themeId,
       });
       await env.CORE_DB.prepare('UPDATE challenges SET updated_at = ?1 WHERE id = ?2')
@@ -898,7 +890,7 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
     const userRepository = new UserRepository(env.CORE_DB);
     const themeId = await themeIdOf(themeSlug);
     const created = await challenges.create({
-      actorUserId: first.id, difficulty: 'EASY', kind: 'DIRECT',
+      actorUserId: first.id, kind: 'DIRECT',
       targetPresence: 'ONLINE', targetUserId: second.id, themeId,
     });
     // Convite parado há mais de 7 s, ainda bem dentro dos 30 s.
@@ -911,7 +903,7 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
 
     // O convite cruzado (B desafia A de volta) reconhece o existente como aceite.
     const crossed = await challenges.create({
-      actorUserId: second.id, difficulty: 'EASY', kind: 'DIRECT',
+      actorUserId: second.id, kind: 'DIRECT',
       targetPresence: 'ONLINE', targetUserId: first.id, themeId,
     });
     expect(crossed.crossAccepted).toBe(true);
@@ -933,10 +925,10 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
     const challenges = new ChallengeRepository(env.CORE_DB);
     const themeId = await themeIdOf(themeSlug);
     const created = await challenges.create({
-      actorUserId: first.id, difficulty: 'EASY', kind: 'ASYNC',
+      actorUserId: first.id, kind: 'ASYNC',
       targetPresence: 'OFFLINE', targetUserId: second.id, themeId,
     });
-    await challenges.sealQuestionSet(created.challengeId, themeId, 'EASY', env.QUESTIONS_DB);
+    await challenges.sealQuestionSet(created.challengeId, themeId, env.QUESTIONS_DB);
 
     // Metade do primeiro jamais aberta, muito além de 7 s — continua jogável.
     await env.CORE_DB.prepare("UPDATE challenges SET updated_at = '2000-01-01T00:00:00.000Z' WHERE id = ?1")
@@ -960,7 +952,7 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
     const challenges = new ChallengeRepository(env.CORE_DB);
     const themeId = await themeIdOf(themeSlug);
     const created = await challenges.create({
-      actorUserId: first.id, difficulty: 'EASY', kind: 'ASYNC',
+      actorUserId: first.id, kind: 'ASYNC',
       targetPresence: 'OFFLINE', targetUserId: second.id, themeId,
     });
     // Simula a primeira metade já selada (estado real de WAITING_FOR_SECOND),
@@ -984,7 +976,7 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
       const userRepository = new UserRepository(env.CORE_DB);
       const themeId = await themeIdOf(themeSlug);
       const created = await challenges.create({
-        actorUserId: first.id, difficulty: 'EASY', kind: 'DIRECT',
+        actorUserId: first.id, kind: 'DIRECT',
         targetPresence: 'ONLINE', targetUserId: second.id, themeId,
       });
       const record = await challenges.byId(created.challengeId);
@@ -1011,7 +1003,7 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
       const challenges = new ChallengeRepository(env.CORE_DB);
       const themeId = await themeIdOf(themeSlug);
       const created = await challenges.create({
-        actorUserId: first.id, difficulty: 'EASY', kind: 'DIRECT',
+        actorUserId: first.id, kind: 'DIRECT',
         targetPresence: 'ONLINE', targetUserId: second.id, themeId,
       });
       const pending = await challenges.byId(created.challengeId);
@@ -1050,7 +1042,7 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
     const userRepository = new UserRepository(env.CORE_DB);
     const themeId = await themeIdOf(themeSlug);
     const created = await challenges.create({
-      actorUserId: first.id, difficulty: 'EASY', kind: 'DIRECT',
+      actorUserId: first.id, kind: 'DIRECT',
       targetPresence: 'ONLINE', targetUserId: second.id, themeId,
     });
     const record = await challenges.byId(created.challengeId);
@@ -1120,7 +1112,7 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
     const requests: Array<[string, RequestInit]> = [
       ['/api/challenges', {}],
       ['/api/challenges', {
-        body: JSON.stringify({ difficulty: 'EASY', kind: 'DIRECT', publicId: '#QGFAKE123', themeSlug: 'x' }),
+        body: JSON.stringify({ kind: 'DIRECT', publicId: '#QGFAKE123', themeSlug: 'x' }),
         headers: { 'Content-Type': 'application/json', 'X-User-Id': 'arbitrary' },
         method: 'POST',
       }],

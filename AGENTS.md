@@ -7,11 +7,11 @@ Estas regras valem para toda alteração neste repositório.
 - O nome é **QUIZ GOMES**. A experiência é competitiva, rápida, sofisticada e centrada na pergunta.
 - Todo texto visível ao usuário deve estar em português do Brasil.
 - Fora da partida existem exatamente três destinos principais: Temas, Social e Perfil. A barra desaparece durante a partida. Criação pública fica desativada na V1; administração é uma rota separada, visível somente a ADMIN pelo Perfil.
-- Não criar subtemas. A hierarquia é Categoria → Tema → Dificuldade → Pergunta.
+- Não criar subtemas. A hierarquia é Categoria → Tema → Pergunta. Dificuldade (Fácil/Médio/Difícil) não existe mais como conceito operacional: não usá-la em produto, admin, importação, sorteio, matchmaking, XP ou Conhecimento. A UI pública mostra somente "Partida normal" e "Partida rankeada".
 - Fontes e evidências são opcionais na V1: podem ser registradas quando disponíveis, mas sua ausência não bloqueia revisão, importação ou publicação de uma pergunta.
 - Ranking e Conhecimento são por tema. Média de categoria é somente estatística.
 - Matchmaking público é apenas simultâneo. Assíncrono é apenas entre amigos.
-- Empates não têm desempate. Casual não altera Conhecimento.
+- Empates não têm desempate. Normal (Casual) nunca altera Conhecimento; somente a Rankeada altera.
 - Não inventar regras de jogo, conquistas, cosméticos, monetização ou catálogo editorial.
 
 ## Tecnologia e custo
@@ -35,11 +35,12 @@ Estas regras valem para toda alteração neste repositório.
 ## Dados e escala
 
 - O sistema de perguntas deve admitir cerca de 1.000.000 de perguntas sem `ORDER BY RANDOM()` e sem carregar catálogos completos no cliente.
-- Pools tema+dificuldade usam slots densos e sorteio uniforme.
+- Existe exatamente um pool por tema (não mais um pool por dificuldade); usa slots densos e sorteio uniforme.
 - O sorteio não consulta histórico de exibição: amostra uniforme sem reposição sobre os slots do pool. Repetir entre partidas diferentes é permitido; repetir dentro da mesma partida, não.
 - Por usuário+pool, manter apenas a descoberta histórica em estado compacto.
-- Fácil = 5, Médio = 8 e Difícil = 12 perguntas, com 10 s por pergunta, em toda modalidade.
-- No máximo 200 amizades ativas por usuário. Por dupla podem coexistir no máximo um desafio ASYNC vivo e um DIRECT vivo; DIRECT dura 30 s, ASYNC não expira e ambos são sempre Casual.
+- Normal (Casual) = 7 perguntas, vale 20 XP na vitória e nunca altera Conhecimento. Rankeada = 10 perguntas, vale 30 XP na vitória e altera Conhecimento pela tabela que antes pertencia só a Difícil (Empate/Anulada nunca alteram Conhecimento; abandono ranqueado aplica a perda que antes era de Difícil). Ambas usam 10 s por pergunta. Um tema libera Normal com 7 perguntas ativas e Rankeada com 10.
+- Matchmaking Normal pareia só por tema. Matchmaking Rankeado pareia por tema e Conhecimento, com banda de divisão que se alarga pelo tempo de espera: mesma divisão até 15 s, divisões vizinhas até 30 s, até duas divisões até 45 s, qualquer divisão do mesmo tema depois disso.
+- No máximo 200 amizades ativas por usuário. Por dupla podem coexistir no máximo um desafio ASYNC vivo e um DIRECT vivo; DIRECT dura 30 s, ASYNC não expira e ambos são sempre Casual (7 perguntas, nunca alteram Conhecimento; desafio ranqueado não existe).
 - Manter camada de repository e roteamento de shards para perguntas.
 - Migrations D1 são versionadas e nunca reescritas depois de aplicadas.
 

@@ -104,13 +104,12 @@ async function asyncChallenge(
   const themeId = await themeIdOf(themeSlug);
   const created = await repository.create({
     actorUserId: first.id,
-    difficulty: 'EASY',
     kind: 'ASYNC',
     targetPresence: 'OFFLINE',
     targetUserId: second.id,
     themeId,
   });
-  await repository.sealQuestionSet(created.challengeId, themeId, 'EASY', env.QUESTIONS_DB);
+  await repository.sealQuestionSet(created.challengeId, themeId, env.QUESTIONS_DB);
   return { challengeId: created.challengeId, repository, themeId };
 }
 
@@ -211,12 +210,12 @@ describe('M9C+M10 — Social converge por evento, sem polling', () => {
     // Antes de selar, o desafiado não pode jogar: a metade do desafiante ainda corre.
     expect(await repository.byId(challengeId)).toMatchObject({ status: 'FIRST_PLAYER_ACTIVE' });
 
-    await finalizeHalf(await openRoom(challengeId, 'FIRST'), [20, 18, 0, 15, 11]);
+    await finalizeHalf(await openRoom(challengeId, 'FIRST'), [20, 18, 0, 15, 11, 14, 0]);
 
     expect(await firstSide.waitFor('CHALLENGE_UPDATED')).toMatchObject({ challengeId });
     expect(await secondSide.waitFor('CHALLENGE_UPDATED')).toMatchObject({ challengeId });
     expect(await repository.byId(challengeId)).toMatchObject({ status: 'WAITING_FOR_SECOND' });
-    expect(await repository.sealedHalf(challengeId, first.id)).toHaveLength(5);
+    expect(await repository.sealedHalf(challengeId, first.id)).toHaveLength(7);
     expect(await repository.sealedHalf(challengeId, second.id)).toEqual([]);
   });
 
@@ -226,13 +225,13 @@ describe('M9C+M10 — Social converge por evento, sem polling', () => {
     const second = userAt(users, 1);
     await befriend(first, second);
     const { challengeId, repository } = await asyncChallenge(first, second, themeSlug);
-    await finalizeHalf(await openRoom(challengeId, 'FIRST'), [20, 18, 0, 15, 11]);
+    await finalizeHalf(await openRoom(challengeId, 'FIRST'), [20, 18, 0, 15, 11, 14, 0]);
     await env.CORE_DB.prepare("UPDATE challenges SET status = 'SECOND_PLAYER_ACTIVE' WHERE id = ?1")
       .bind(challengeId).run();
 
     const firstSide = await listenSocial(first.id);
     const secondSide = await listenSocial(second.id);
-    await finalizeHalf(await openRoom(challengeId, 'SECOND'), [20, 20, 20, 20, 20]);
+    await finalizeHalf(await openRoom(challengeId, 'SECOND'), [20, 20, 20, 20, 20, 20, 20]);
 
     expect(await firstSide.waitFor('CHALLENGE_UPDATED')).toMatchObject({ challengeId });
     expect(await secondSide.waitFor('CHALLENGE_UPDATED')).toMatchObject({ challengeId });
@@ -246,37 +245,37 @@ describe('M9C+M10 — Social converge por evento, sem polling', () => {
     await befriend(first, second);
     const { challengeId, repository } = await asyncChallenge(first, second, themeSlug);
     const questions = await repository.questionSet(challengeId);
-    expect(questions).toHaveLength(5);
+    expect(questions).toHaveLength(7);
 
-    await finalizeHalf(await openRoom(challengeId, 'FIRST'), [20, 18, 0, 15, 11]);
+    await finalizeHalf(await openRoom(challengeId, 'FIRST'), [20, 18, 0, 15, 11, 0, 0]);
     await env.CORE_DB.prepare("UPDATE challenges SET status = 'SECOND_PLAYER_ACTIVE' WHERE id = ?1")
       .bind(challengeId).run();
-    await finalizeHalf(await openRoom(challengeId, 'SECOND'), [20, 20, 20, 20, 20]);
+    await finalizeHalf(await openRoom(challengeId, 'SECOND'), [20, 20, 20, 20, 20, 20, 20]);
 
     for (const question of questions) {
       const stats = await env.QUESTIONS_DB.prepare(
         'SELECT answer_count, use_count FROM question_statistics WHERE question_id = ?1',
       ).bind(question.id).first<{ answer_count: number; use_count: number }>();
-      // Os dois jogadores responderam cada uma das 5 perguntas: 2 usos por pergunta.
+      // Os dois jogadores responderam cada uma das 7 perguntas: 2 usos por pergunta.
       expect(stats, question.id).toEqual({ answer_count: 2, use_count: 2 });
     }
     const ledgerTotal = await env.QUESTIONS_DB.prepare(
       "SELECT COUNT(*) AS total FROM question_statistics_ledger WHERE context_kind = 'CHALLENGE' AND context_id = ?1",
     ).bind(challengeId).first<{ total: number }>();
-    expect(ledgerTotal?.total).toBe(10);
+    expect(ledgerTotal?.total).toBe(14);
 
     // M11 — cada selagem ASYNC registra missão/streak só do jogador que selou:
-    // primeiro acertou 4/5, segundo acertou 5/5 (satura a missão de acertos).
+    // primeiro acertou 4/7 (não satura a missão de acertos), segundo acertou 7/7 (satura).
     const themeId = await themeIdOf(themeSlug);
     const dayKey = new Date().toISOString().slice(0, 10);
-    for (const [userId, correct] of [[first.id, 4], [second.id, 5]] as const) {
+    for (const [userId, correct] of [[first.id, 4], [second.id, 7]] as const) {
       const missions = await env.CORE_DB.prepare(
         `SELECT mission_type, progress, target, completed_at IS NOT NULL AS completed
            FROM user_daily_missions WHERE user_id = ?1 AND day_key = ?2 ORDER BY mission_type`,
       ).bind(userId, dayKey).all<{ completed: number; mission_type: string; progress: number; target: number }>();
       expect(missions.results).toEqual([
-        { completed: 0, mission_type: 'ANSWER_QUESTIONS', progress: 5, target: 8 },
-        { completed: correct >= 5 ? 1 : 0, mission_type: 'CORRECT_ANSWERS', progress: correct, target: 5 },
+        { completed: 0, mission_type: 'ANSWER_QUESTIONS', progress: 7, target: 8 },
+        { completed: correct >= 5 ? 1 : 0, mission_type: 'CORRECT_ANSWERS', progress: Math.min(correct, 5), target: 5 },
         { completed: 1, mission_type: 'PLAY_MATCH', progress: 1, target: 1 },
       ]);
       expect(await env.CORE_DB.prepare(
@@ -310,7 +309,7 @@ describe('M9C+M10 — Social converge por evento, sem polling', () => {
       .toEqual({ status: 'already' });
     // E a dupla volta a poder se desafiar.
     await expect(repository.create({
-      actorUserId: first.id, difficulty: 'EASY', kind: 'ASYNC',
+      actorUserId: first.id, kind: 'ASYNC',
       targetPresence: 'ONLINE', targetUserId: second.id, themeId,
     })).resolves.toMatchObject({ created: true });
   });
@@ -359,7 +358,7 @@ describe('M9C+M10 — Social converge por evento, sem polling', () => {
       const stored = await state.storage.get<AsyncHalfState>('half');
       if (stored === undefined) throw new Error('Metade não inicializada.');
       stored.answers = stored.answers.map((_answer, index) => {
-        const score = [20, 18, 0, 15, 11][index] ?? 0;
+        const score = [20, 18, 0, 15, 11, 14, 0][index] ?? 0;
         return {
           answeredAtMs: Date.now(), correct: score > 0,
           remainingMs: score > 0 ? (score - 10) * 1_000 : 0, score, selectedOption: 0, submitted: true,
@@ -454,12 +453,12 @@ describe('M9C+M10 — limite por dupla é por tipo de desafio', () => {
     const second = userAt(users, 1);
     await befriend(first, second);
     const { challengeId, repository, themeId } = await asyncChallenge(first, second, themeSlug);
-    await finalizeHalf(await openRoom(challengeId, 'FIRST'), [20, 18, 0, 15, 11]);
+    await finalizeHalf(await openRoom(challengeId, 'FIRST'), [20, 18, 0, 15, 11, 14, 0]);
     expect(await repository.byId(challengeId)).toMatchObject({ status: 'WAITING_FOR_SECOND' });
 
     // Cenário obrigatório do smoke: A já jogou a metade dele e pode chamar B para agora.
     const direct = await repository.create({
-      actorUserId: first.id, difficulty: 'EASY', kind: 'DIRECT',
+      actorUserId: first.id, kind: 'DIRECT',
       targetPresence: 'ONLINE', targetUserId: second.id, themeId,
     });
     expect(direct.created).toBe(true);
@@ -480,20 +479,20 @@ describe('M9C+M10 — limite por dupla é por tipo de desafio', () => {
     const themeId = await themeIdOf(themeSlug);
 
     await expect(repository.create({
-      actorUserId: first.id, difficulty: 'EASY', kind: 'ASYNC',
+      actorUserId: first.id, kind: 'ASYNC',
       targetPresence: 'ONLINE', targetUserId: second.id, themeId,
     })).resolves.toMatchObject({ created: true });
     await expect(repository.create({
-      actorUserId: first.id, difficulty: 'HARD', kind: 'ASYNC',
+      actorUserId: first.id, kind: 'ASYNC',
       targetPresence: 'ONLINE', targetUserId: second.id, themeId,
     })).rejects.toMatchObject({ code: 'CHALLENGE_ALREADY_ACTIVE', status: 409 });
 
     await expect(repository.create({
-      actorUserId: first.id, difficulty: 'EASY', kind: 'DIRECT',
+      actorUserId: first.id, kind: 'DIRECT',
       targetPresence: 'ONLINE', targetUserId: second.id, themeId,
     })).resolves.toMatchObject({ created: true });
     await expect(repository.create({
-      actorUserId: first.id, difficulty: 'EASY', kind: 'DIRECT',
+      actorUserId: first.id, kind: 'DIRECT',
       targetPresence: 'ONLINE', targetUserId: second.id, themeId,
     })).rejects.toMatchObject({ code: 'CHALLENGE_ALREADY_ACTIVE', status: 409 });
   });
@@ -515,7 +514,7 @@ describe('M9C+M10 — limite por dupla é por tipo de desafio', () => {
     const repository = new ChallengeRepository(env.CORE_DB);
     const themeId = await themeIdOf(themeSlug);
     const created = await repository.create({
-      actorUserId: first.id, difficulty: 'EASY', kind: 'ASYNC',
+      actorUserId: first.id, kind: 'ASYNC',
       targetPresence: 'ONLINE', targetUserId: second.id, themeId,
     });
     const stored = await env.CORE_DB.prepare(
@@ -556,7 +555,7 @@ describe('M9C+M10 — FCM ASYNC "sua vez de jogar" é best-effort e nunca altera
     const { challengeId, repository } = await asyncChallenge(first, second, themeSlug);
     await new SocialRepository(env.CORE_DB).registerInstallation(second.id, 'syntheticFID_absent_1');
     // env.FCM_SERVICE_ACCOUNT_JSON não está configurado neste ambiente de teste.
-    await finalizeHalf(await openRoom(challengeId, 'FIRST'), [20, 18, 0, 15, 11]);
+    await finalizeHalf(await openRoom(challengeId, 'FIRST'), [20, 18, 0, 15, 11, 14, 0]);
     expect(await repository.byId(challengeId)).toMatchObject({ status: 'WAITING_FOR_SECOND' });
   });
 

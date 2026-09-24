@@ -1,9 +1,10 @@
 import { importedQuestionSchema, type ImportedQuestion } from '../http/schemas.js';
 
 const REQUIRED_CSV_COLUMNS = [
-  'difficulty', 'prompt', 'optionA', 'optionB', 'optionC', 'optionD', 'correctOption',
+  'prompt', 'optionA', 'optionB', 'optionC', 'optionD', 'correctOption',
 ] as const;
-type CsvColumn = (typeof REQUIRED_CSV_COLUMNS)[number] | 'themeId' | 'sourceUrl' | 'sourceTitle' | 'sourceKind';
+/** `difficulty` não é mais exigida, mas CSVs antigos que ainda a trazem continuam aceitos: a coluna é só ignorada. */
+type CsvColumn = (typeof REQUIRED_CSV_COLUMNS)[number] | 'difficulty' | 'themeId' | 'sourceUrl' | 'sourceTitle' | 'sourceKind';
 
 const MAX_CSV_ROWS = 100;
 
@@ -102,7 +103,6 @@ export function parseQuestionsCsv(
     const sourceKind = sourceKindRaw.toUpperCase() || 'WEB';
     const candidate = {
       correctOption: Number(correctOptionRaw),
-      difficulty: (cells[columnIndex('difficulty')] ?? '').trim().toUpperCase(),
       options: [
         cells[columnIndex('optionA')] ?? '',
         cells[columnIndex('optionB')] ?? '',
@@ -132,7 +132,7 @@ export function parseQuestionsCsv(
 
   if (diagnostics.length > 0) return { diagnostics, questions: [] };
 
-  const hashes = questions.map((question) => JSON.stringify([question.themeId, question.difficulty, question.prompt]));
+  const hashes = questions.map((question) => JSON.stringify([question.themeId, question.prompt]));
   if (new Set(hashes).size !== hashes.length) {
     return { diagnostics: [{ messages: ['O lote contém perguntas duplicadas entre si.'], row: 0 }], questions: [] };
   }

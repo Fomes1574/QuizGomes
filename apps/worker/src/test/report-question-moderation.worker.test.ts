@@ -43,7 +43,7 @@ describe('M11 — denúncia integrada à moderação de pergunta', () => {
 
     const questions = new QuestionEditorialRepository(env.QUESTIONS_DB);
     const created = await questions.create({
-      actorUserId: admin.id, correctOption: 0, difficulty: 'EASY',
+      actorUserId: admin.id, correctOption: 0,
       options: ['A', 'B', 'C', 'D'], prompt: 'Pergunta real do relatório?',
       sources: [{ kind: 'WEB', url: 'https://fonte.test/relatorio' }], themeId,
     });
@@ -104,7 +104,7 @@ describe('M11 — denúncia integrada à moderação de pergunta', () => {
     const admin = userAt(users, 0);
     const questions = new QuestionEditorialRepository(env.QUESTIONS_DB);
     const created = await questions.create({
-      actorUserId: admin.id, correctOption: 0, difficulty: 'EASY',
+      actorUserId: admin.id, correctOption: 0,
       options: ['A', 'B', 'C', 'D'], prompt: 'Pergunta com erro de digitação?',
       sources: [{ kind: 'WEB', url: 'https://fonte.test/edicao' }], themeId,
     });

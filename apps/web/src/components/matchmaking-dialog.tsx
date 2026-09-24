@@ -1,4 +1,4 @@
-import { questionsForDifficulty, type Difficulty, type MatchMode } from '@quiz-gomes/domain';
+import { questionsForMode, type MatchMode } from '@quiz-gomes/domain';
 import {
   useEffect,
   useRef,
@@ -17,14 +17,11 @@ import { MatchmakingGlobe } from './matchmaking-globe.js';
 import { RankBadge } from './rank-badge.js';
 import { ThemeArtwork } from './theme-artwork.js';
 
-const DIFFICULTY_LABEL: Record<Difficulty, string> = { EASY: 'Fácil', HARD: 'Difícil', MEDIUM: 'Médio' };
-
 function searchTimer(seconds: number): string {
   return `00:${Math.max(0, Math.min(60, seconds)).toString().padStart(2, '0')} / 01:00`;
 }
 
 export function MatchmakingDialog({
-  difficulty,
   elapsedSeconds,
   mode,
   onCancel,
@@ -35,8 +32,6 @@ export function MatchmakingDialog({
   theme,
   viewer,
 }: {
-  /** Dificuldade e modo apenas reexibem a escolha que o jogador acabou de fazer. */
-  difficulty?: Difficulty | undefined;
   elapsedSeconds: number;
   mode?: MatchMode | undefined;
   onCancel: () => void;
@@ -184,13 +179,10 @@ export function MatchmakingDialog({
               <>
                 <div className="duel-context">
                   <span className="eyebrow">JOGADOR ENCONTRADO</span>
-                  {difficulty !== undefined && (
-                    <span className="duel-context__setup">
-                      {DIFFICULTY_LABEL[difficulty]} · {questionsForDifficulty(difficulty)} perguntas
-                    </span>
-                  )}
                   {mode !== undefined && (
-                    <span className="duel-context__mode">{mode === 'RANKED' ? 'Ranqueada' : 'Casual'}</span>
+                    <span className="duel-context__mode">
+                      {mode === 'RANKED' ? 'Partida rankeada' : 'Partida normal'} · {questionsForMode(mode)} perguntas
+                    </span>
                   )}
                 </div>
 

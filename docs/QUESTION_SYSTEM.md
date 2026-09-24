@@ -11,7 +11,7 @@
 
 ## Pool denso
 
-Um pool é `(theme_id, difficulty)` e guarda `active_count`. Toda pergunta ativa ocupa um `slot` único entre 1 e N.
+Existe exatamente um pool por tema (id determinístico `${themeId}:pool`; decisão de produto de 2026-09-24 aposentou Fácil/Médio/Difícil, então não há mais um pool por dificuldade). O pool guarda `active_count`. Toda pergunta ativa ocupa um `slot` único entre 1 e N. `difficulty` permanece na tabela `question_pools` só como coluna física herdada de compatibilidade com registros antigos; nenhum fluxo novo a lê para decidir modo, seleção, fila ou hash.
 
 Seleção:
 
@@ -19,11 +19,11 @@ Seleção:
 2. sortear inteiro uniforme em `[1,N]` com rejeição sem viés;
 3. rerrolar se bloqueado;
 4. buscar a row pela chave indexada `(pool_id, slot)`;
-5. repetir até a quantidade da dificuldade.
+5. repetir até a quantidade do modo: 7 perguntas na Normal (Casual), 10 na Rankeada.
 
-Se `N - blockedEligible < needed`, retornar erro de pool insuficiente; nunca repetir pergunta dentro da própria partida.
+Se `N - blockedEligible < needed`, retornar erro de pool insuficiente; nunca repetir pergunta dentro da própria partida. Um tema libera Normal com 7 perguntas ativas e Rankeada com 10.
 
-O dataset interno `SYNTHETIC_SMOKE_TEST` possui 250 perguntas EASY mínimas e inequivocamente artificiais para suportar repetição de smoke sem mudar essa regra. A ampliação é uma migration restrita aos IDs e à flag reservados; temas editoriais continuam usando seus próprios pools e descoberta histórica normal.
+O dataset interno `SYNTHETIC_SMOKE_TEST` possui 250 perguntas mínimas e inequivocamente artificiais para suportar repetição de smoke sem mudar essa regra. A ampliação é uma migration restrita aos IDs e à flag reservados; temas editoriais continuam usando seus próprios pools e descoberta histórica normal.
 
 Ao desativar slot S:
 
@@ -65,7 +65,7 @@ Rows de match guardam snapshot público e referências necessárias para auditor
 
 Importadores aceitam JSON/CSV normalizado, validam:
 
-- tema/dificuldade/status;
+- tema/status;
 - exatamente quatro alternativas;
 - índice correto 0..3;
 - fontes não vazias para publicação;
@@ -80,6 +80,8 @@ pergunta permanece sem imagem e o admin informa essa indisponibilidade. R2 fica
 preparado apenas como adapter futuro, sem bucket, binding ou upload fantasma na V1.
 
 Falhas retornam linhas/campos sem importação parcial. Fixtures usam namespace e seed separados.
+
+Importações não exigem mais coluna `difficulty`. Arquivos antigos que ainda a trazem (CSV ou JSON) continuam aceitos; a coluna/campo é simplesmente ignorado, sem afetar validação, hash de deduplicação ou pool de destino.
 
 ## Uniformidade
 

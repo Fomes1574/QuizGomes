@@ -38,7 +38,6 @@ vi.mock('../features/auth-context.js', () => ({
 
 const reportEntry = {
   questionMetadata: {
-    difficulty: 'EASY' as const,
     sources: [{ sourceKind: 'PRIMARY', title: 'Fonte oficial', url: 'https://example.test/source' }],
     statistics: { answerCount: 11, correctCount: 7, optionACount: 2, optionBCount: 7, optionCCount: 1, optionDCount: 1, totalResponseMs: 10_000, useCount: 12, wrongCount: 4 },
     themeName: 'Geografia',

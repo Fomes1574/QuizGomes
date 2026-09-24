@@ -1,4 +1,3 @@
-import type { Difficulty } from '@quiz-gomes/domain';
 import { ApiError } from '../http/api-error.js';
 import { questionContentHash, questionPoolId } from '../services/question-content.js';
 
@@ -20,7 +19,6 @@ export interface QuestionModerationRecord {
   correctOption: number;
   createdAt: string;
   createdByUserId: string | null;
-  difficulty: Difficulty;
   id: string;
   options: [string, string, string, string];
   poolId: string;
@@ -45,7 +43,6 @@ interface QuestionRow {
   correct_option: number;
   created_at: string;
   created_by_user_id: string | null;
-  difficulty: Difficulty;
   id: string;
   option_a: string;
   option_b: string;
@@ -61,7 +58,7 @@ interface QuestionRow {
   theme_id: string;
 }
 
-const QUESTION_COLUMNS = `q.id, q.pool_id, p.theme_id, p.difficulty, q.active_slot, q.prompt,
+const QUESTION_COLUMNS = `q.id, q.pool_id, p.theme_id, q.active_slot, q.prompt,
   q.option_a, q.option_b, q.option_c, q.option_d, q.correct_option, q.status,
   q.created_by_user_id, q.replaces_question_id, q.resolved_by_user_id, q.resolved_at,
   q.resolution_note, q.created_at`;
@@ -98,7 +95,6 @@ async function attachSources(db: D1Database, questions: QuestionRow[]): Promise<
     correctOption: row.correct_option,
     createdAt: row.created_at,
     createdByUserId: row.created_by_user_id,
-    difficulty: row.difficulty,
     id: row.id,
     options: [row.option_a, row.option_b, row.option_c, row.option_d],
     poolId: row.pool_id,
@@ -127,18 +123,18 @@ export class QuestionEditorialRepository {
   async create(input: {
     actorUserId: string;
     correctOption: number;
-    difficulty: Difficulty;
     options: readonly [string, string, string, string];
     prompt: string;
     sources: readonly QuestionSourceInput[];
     themeId: string;
   }): Promise<{ questionId: string }> {
-    const targetPoolId = questionPoolId(input.themeId, input.difficulty);
+    const targetPoolId = questionPoolId(input.themeId);
     const questionId = crypto.randomUUID();
     const contentHash = await questionContentHash(input);
     const statements: D1PreparedStatement[] = [
-      this.db.prepare('INSERT OR IGNORE INTO question_pools (id, theme_id, difficulty) VALUES (?1, ?2, ?3)')
-        .bind(targetPoolId, input.themeId, input.difficulty),
+      // `difficulty` é legado físico do schema (nunca lido de volta); todo pool novo nasce com o mesmo valor fixo.
+      this.db.prepare("INSERT OR IGNORE INTO question_pools (id, theme_id, difficulty) VALUES (?1, ?2, 'MEDIUM')")
+        .bind(targetPoolId, input.themeId),
       this.db.prepare(
         `INSERT INTO questions (
            id, pool_id, prompt, option_a, option_b, option_c, option_d, correct_option,
@@ -162,17 +158,17 @@ export class QuestionEditorialRepository {
     sources: readonly QuestionSourceInput[];
   }): Promise<{ draftId: string }> {
     const active = await this.db.prepare(
-      `SELECT q.pool_id, p.theme_id, p.difficulty FROM questions q
+      `SELECT q.pool_id, p.theme_id FROM questions q
         JOIN question_pools p ON p.id = q.pool_id
        WHERE q.id = ?1 AND q.status = 'ACTIVE'`,
-    ).bind(input.questionId).first<{ difficulty: Difficulty; pool_id: string; theme_id: string }>();
+    ).bind(input.questionId).first<{ pool_id: string; theme_id: string }>();
     if (active === null) throw new ApiError(404, 'QUESTION_NOT_ACTIVE', 'Só uma pergunta publicada pode ser editada.');
     const draftId = crypto.randomUUID();
     // A revisão é escopada pela pergunta publicada. Assim é possível corrigir
     // apenas a alternativa correta ou as fontes sem liberar uma segunda
     // pergunta nova com o mesmo enunciado/opções no tema.
     const contentHash = await questionContentHash({
-      ...input, difficulty: active.difficulty, revisionOf: input.questionId, themeId: active.theme_id,
+      ...input, revisionOf: input.questionId, themeId: active.theme_id,
     });
     const statements: D1PreparedStatement[] = [
       this.db.prepare(
@@ -205,17 +201,17 @@ export class QuestionEditorialRepository {
     sources: readonly QuestionSourceInput[];
   }): Promise<{ questionId: string }> {
     const draft = await this.db.prepare(
-      `SELECT q.pool_id, q.replaces_question_id, p.theme_id, p.difficulty FROM questions q
+      `SELECT q.pool_id, q.replaces_question_id, p.theme_id FROM questions q
         JOIN question_pools p ON p.id = q.pool_id
        WHERE q.id = ?1 AND q.status = 'IN_REVIEW'`,
     ).bind(input.questionId).first<{
-      difficulty: Difficulty; pool_id: string; replaces_question_id: string | null; theme_id: string;
+      pool_id: string; replaces_question_id: string | null; theme_id: string;
     }>();
     if (draft === null) throw new ApiError(409, 'QUESTION_NOT_IN_REVIEW', 'Esta pergunta não está em revisão.');
 
     const contentHash = await questionContentHash(draft.replaces_question_id === null
-      ? { ...input, difficulty: draft.difficulty, themeId: draft.theme_id }
-      : { ...input, difficulty: draft.difficulty, revisionOf: draft.replaces_question_id, themeId: draft.theme_id });
+      ? { ...input, themeId: draft.theme_id }
+      : { ...input, revisionOf: draft.replaces_question_id, themeId: draft.theme_id });
     // Atualiza o conteúdo antes de tocar nas fontes: se o hash conflitar, as
     // referências originais permanecem intactas. `batch` é transacional no D1.
     const statements: D1PreparedStatement[] = [

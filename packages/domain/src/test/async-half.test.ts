@@ -1,22 +1,23 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CHALLENGE_MODE,
   createAsyncHalfState,
   LIVE_ROUND_RESULT_MS,
   markAsyncHalfFinalized,
   projectAsyncHalf,
   QUESTION_DURATION_MS,
-  questionsForDifficulty,
+  questionsForMode,
   RECONNECT_GRACE_MS,
   sealedAnswersOf,
   transitionAsyncHalf,
   type AsyncHalfCommand,
   type AsyncHalfState,
-  type Difficulty,
   type LiveQuestion,
   type SealedRoundAnswer,
 } from '../index.js';
 
 const NOW = 1_700_000_000_000;
+const CHALLENGE_QUESTION_COUNT = questionsForMode(CHALLENGE_MODE);
 
 function questions(count: number): LiveQuestion[] {
   return Array.from({ length: count }, (_, index) => ({
@@ -38,15 +39,13 @@ const participant = (name: string) => ({
 
 function halfState(
   seat: 'FIRST' | 'SECOND',
-  difficulty: Difficulty = 'EASY',
   sealedOpponent: SealedRoundAnswer[] | null = null,
 ): AsyncHalfState {
   return createAsyncHalfState({
     challengeId: 'challenge-1',
     createdAtMs: NOW,
-    difficulty,
     opponent: participant('Ana'),
-    questions: questions(questionsForDifficulty(difficulty)),
+    questions: questions(CHALLENGE_QUESTION_COUNT),
     seat,
     sealedOpponent,
     viewer: participant('Gomes'),
@@ -67,26 +66,24 @@ function sealed(scores: number[]): SealedRoundAnswer[] {
 }
 
 describe('metade selada do desafio assíncrono', () => {
-  it('exige exatamente a contagem da dificuldade e alternativa correta válida', () => {
+  it('exige exatamente 7 perguntas (desafio é sempre Casual) e alternativa correta válida', () => {
     expect(() => createAsyncHalfState({
-      challengeId: 'c', createdAtMs: NOW, difficulty: 'MEDIUM',
+      challengeId: 'c', createdAtMs: NOW,
       opponent: participant('Ana'), questions: questions(5), seat: 'FIRST',
       sealedOpponent: null, viewer: participant('Gomes'),
-    })).toThrow(/exige exatamente 8 perguntas/);
-    expect(halfState('FIRST', 'EASY').questions).toHaveLength(5);
-    expect(halfState('FIRST', 'MEDIUM').questions).toHaveLength(8);
-    expect(halfState('FIRST', 'HARD').questions).toHaveLength(12);
+    })).toThrow(/exige exatamente 7 perguntas/);
+    expect(halfState('FIRST').questions).toHaveLength(7);
   });
 
   it('a primeira metade nunca nasce conhecendo resposta do adversário', () => {
     expect(() => createAsyncHalfState({
-      challengeId: 'c', createdAtMs: NOW, difficulty: 'EASY',
-      opponent: participant('Ana'), questions: questions(5), seat: 'FIRST',
-      sealedOpponent: sealed([20, 0, 0, 0, 0]), viewer: participant('Gomes'),
+      challengeId: 'c', createdAtMs: NOW,
+      opponent: participant('Ana'), questions: questions(CHALLENGE_QUESTION_COUNT), seat: 'FIRST',
+      sealedOpponent: sealed([20, 0, 0, 0, 0, 0, 0]), viewer: participant('Gomes'),
     })).toThrow(/não pode conhecer nenhuma resposta/);
     expect(() => createAsyncHalfState({
-      challengeId: 'c', createdAtMs: NOW, difficulty: 'EASY',
-      opponent: participant('Ana'), questions: questions(5), seat: 'SECOND',
+      challengeId: 'c', createdAtMs: NOW,
+      opponent: participant('Ana'), questions: questions(CHALLENGE_QUESTION_COUNT), seat: 'SECOND',
       sealedOpponent: null, viewer: participant('Gomes'),
     })).toThrow(/exige a metade selada/);
   });
@@ -121,9 +118,9 @@ describe('metade selada do desafio assíncrono', () => {
   });
 
   it('percorre todas as rodadas e finaliza a metade', () => {
-    let state = run(halfState('FIRST', 'HARD'), { type: 'CONNECT' }, NOW);
+    let state = run(halfState('FIRST'), { type: 'CONNECT' }, NOW);
     let now = NOW;
-    for (let round = 1; round <= 12; round += 1) {
+    for (let round = 1; round <= CHALLENGE_QUESTION_COUNT; round += 1) {
       state = run(state, { roundNumber: round, type: 'ROUND_READY' }, now);
       state = run(state, { type: 'ALARM' }, now + QUESTION_DURATION_MS);
       now += QUESTION_DURATION_MS;
@@ -132,7 +129,7 @@ describe('metade selada do desafio assíncrono', () => {
       now += LIVE_ROUND_RESULT_MS;
     }
     expect(state.phase).toBe('FINALIZING');
-    expect(sealedAnswersOf(state)).toHaveLength(12);
+    expect(sealedAnswersOf(state)).toHaveLength(CHALLENGE_QUESTION_COUNT);
     expect(markAsyncHalfFinalized(state).phase).toBe('FINISHED');
   });
 
@@ -173,8 +170,10 @@ describe('metade selada do desafio assíncrono', () => {
 });
 
 describe('sigilo e revelação progressiva', () => {
+  const OPPONENT_SCORES = [20, 0, 15, 11, 18, 9, 13];
+
   function secondHalfAtRound(round: number): AsyncHalfState {
-    let state = run(halfState('SECOND', 'EASY', sealed([20, 0, 15, 11, 18])), { type: 'CONNECT' }, NOW);
+    let state = run(halfState('SECOND', sealed(OPPONENT_SCORES)), { type: 'CONNECT' }, NOW);
     let now = NOW;
     for (let current = 1; current <= round; current += 1) {
       state = run(state, { roundNumber: current, type: 'ROUND_READY' }, now);
@@ -207,7 +206,7 @@ describe('sigilo e revelação progressiva', () => {
   });
 
   it('não revela a rodada do primeiro jogador enquanto o segundo não responde', () => {
-    let state = run(halfState('SECOND', 'EASY', sealed([20, 0, 15, 11, 18])), { type: 'CONNECT' }, NOW);
+    let state = run(halfState('SECOND', sealed(OPPONENT_SCORES)), { type: 'CONNECT' }, NOW);
     state = run(state, { roundNumber: 1, type: 'ROUND_READY' }, NOW);
 
     const projection = projectAsyncHalf(state, NOW + 1_000);
@@ -226,17 +225,17 @@ describe('sigilo e revelação progressiva', () => {
 
     const third = secondHalfAtRound(3);
     const thirdProjection = projectAsyncHalf(third, NOW + 20_000);
-    // 20 + 0 + 15 das três rodadas resolvidas; as duas futuras não entram.
+    // 20 + 0 + 15 das três rodadas resolvidas; as demais futuras não entram.
     expect(thirdProjection.opponent.score).toBe(35);
-    expect(thirdProjection.round).toEqual({ number: 3, total: 5 });
+    expect(thirdProjection.round).toEqual({ number: 3, total: CHALLENGE_QUESTION_COUNT });
   });
 
   it('o acumulado revelado nunca antecipa o placar final do primeiro jogador', () => {
-    const total = sealed([20, 0, 15, 11, 18]).reduce((sum, answer) => sum + answer.score, 0);
-    for (let round = 1; round <= 4; round += 1) {
+    const total = sealed(OPPONENT_SCORES).reduce((sum, answer) => sum + answer.score, 0);
+    for (let round = 1; round < CHALLENGE_QUESTION_COUNT; round += 1) {
       const projection = projectAsyncHalf(secondHalfAtRound(round), NOW + 60_000);
       expect(projection.opponent.score).toBeLessThan(total);
     }
-    expect(projectAsyncHalf(secondHalfAtRound(5), NOW + 60_000).opponent.score).toBe(total);
+    expect(projectAsyncHalf(secondHalfAtRound(CHALLENGE_QUESTION_COUNT), NOW + 60_000).opponent.score).toBe(total);
   });
 });

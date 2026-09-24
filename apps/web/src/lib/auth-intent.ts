@@ -1,11 +1,10 @@
-import type { Difficulty, MatchMode } from '@quiz-gomes/domain';
+import type { MatchMode } from '@quiz-gomes/domain';
 
 const KEY = 'quiz-gomes.auth-intent.v1';
 const TTL_MS = 15 * 60 * 1_000;
 
 export interface PlayAuthIntent {
   createdAt: number;
-  difficulty: Difficulty;
   mode: MatchMode;
   themeId: string;
   themeSlug: string;
@@ -27,7 +26,6 @@ export function consumePlayAuthIntent(): PlayAuthIntent | null {
   try {
     const parsed = JSON.parse(value) as Partial<PlayAuthIntent>;
     if (parsed.type !== 'PLAY' || !Number.isFinite(parsed.createdAt) || Date.now() - Number(parsed.createdAt) > TTL_MS ||
-      (parsed.difficulty !== 'EASY' && parsed.difficulty !== 'MEDIUM' && parsed.difficulty !== 'HARD') ||
       (parsed.mode !== 'CASUAL' && parsed.mode !== 'RANKED') ||
       typeof parsed.themeId !== 'string' || typeof parsed.themeSlug !== 'string') return null;
     return parsed as PlayAuthIntent;

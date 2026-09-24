@@ -15,10 +15,27 @@ e de smokes; quando divergirem, não voltam a ser regra.
 - M0–M7 concluídos; M8, M8.5, M9A.1, M9B e M9C+M10 estão **CONCLUÍDOS/FROZEN**.
   O corrective #3 de DIRECT/ASYNC, recovery e PWA foi aprovado fisicamente pelo
   proprietário. A regressão completa desses fluxos volta no smoke final M12.
-- Toda modalidade usa **EASY 5 / MEDIUM 8 / HARD 12**, 10 s por pergunta e
-  sorteio uniforme sem histórico entre partidas; não há repetição somente dentro
-  da própria partida. Descoberta histórica não influencia o sorteio.
-- Desafios entre amigos são sempre Casual. DIRECT dura 30 s — só o convite
+- Decisão de produto de 2026-09-24: Fácil/Médio/Difícil deixaram de existir como
+  conceito operacional (produto, admin, importação, sorteio, matchmaking, XP,
+  Conhecimento). A UI pública mostra só **Partida normal** e **Partida
+  rankeada**. Normal = 7 perguntas, 20 XP na vitória, nunca altera Conhecimento.
+  Rankeada = 10 perguntas, 30 XP na vitória, altera Conhecimento pela tabela que
+  antes pertencia só a HARD (Empate/Anulada nunca alteram Conhecimento; abandono
+  ranqueado usa a perda que antes era de HARD). Ambas usam 10 s por pergunta e
+  sorteio uniforme sobre o pool único do tema, sem histórico entre partidas; não
+  há repetição somente dentro da própria partida. Descoberta histórica não
+  influencia o sorteio. Matchmaking Normal pareia só por tema; Matchmaking
+  Rankeado pareia por tema e Conhecimento, com banda de divisão que se alarga
+  pelo tempo de espera (mesma divisão até 15 s, vizinhas até 30 s, até duas
+  divisões até 45 s, qualquer divisão do tema depois). Um tema libera Normal com
+  7 perguntas ativas e Rankeada com 10. `question_pools` passou a ter um único
+  pool por tema (id determinístico `${themeId}:pool`, migration
+  `questions/0007_unify_question_pools.sql`); `difficulty` permanece só como
+  coluna física herdada, sem leitura por nenhum fluxo novo. CSV/JSON de
+  importação não exigem mais `difficulty`; arquivos antigos que ainda trazem a
+  coluna continuam aceitos, e ela é simplesmente ignorada.
+- Desafios entre amigos são sempre Casual (7 perguntas, nunca alteram
+  Conhecimento; desafio ranqueado não existe). DIRECT dura 30 s — só o convite
   `PENDING_DIRECT` ainda não aceito, nunca a sala já reservada; ASYNC nunca
   expira, e uma metade `MISSING` (ainda não aberta) pode ficar assim
   indefinidamente sem ser anulada; por dupla coexistem no máximo um ASYNC vivo
@@ -1329,6 +1346,106 @@ bom (`2c63df8`) e reaplica por cima só as entradas descritas acima — nenhum
 outro conteúdo do diário foi alterado ou perdido. Vale conferir se o mesmo
 commit corrompeu algo mais.
 
+### 2026-09-24 — decisão de produto: fim de Fácil/Médio/Difícil, Normal/Rankeada unificam pool e regras
+
+Decisão de produto do proprietário: Fácil/Médio/Difícil deixam de existir como
+conceito operacional em produto, admin e importação. A UI pública passa a
+mostrar só **Partida normal** e **Partida rankeada**. Normal (Casual) = 7
+perguntas, 20 XP na vitória, nunca altera Conhecimento. Rankeada = 10
+perguntas, 30 XP na vitória, altera Conhecimento pela tabela que antes
+pertencia exclusivamente a HARD (Empate/Anulada nunca alteram Conhecimento;
+abandono ranqueado usa a perda que antes era de HARD). Ambas usam 10 s por
+pergunta e sorteio uniforme sem histórico entre partidas, sem repetição
+dentro da própria partida. Matchmaking Normal pareia só por tema, na ordem de
+chegada; Rankeado pareia por tema e Conhecimento com banda de divisão que se
+alarga pelo tempo de espera (mesma divisão até 15 s, vizinhas até 30 s, até
+duas divisões até 45 s, qualquer divisão do tema depois). Desafios entre
+amigos (DIRECT/ASYNC) continuam sempre Casual, sempre 7 perguntas, e
+desafio ranqueado não é permitido.
+
+**`packages/domain`:** `DIFFICULTIES`/`Difficulty` removidos. `QUESTION_COUNTS`
+passou de `{EASY:5,MEDIUM:8,HARD:12}` para `{CASUAL:7,RANKED:10}`
+(`questionsForMode`). `XP_BY_MODE` = `{CASUAL:20,RANKED:30}` (`xpAward`).
+`WIN_VALUES`/`LOSS_VALUES` de `ranking.ts` colapsaram de
+`Record<Tier,[number,number,number]>` para `Record<Tier,number>` — mantendo só
+a antiga coluna HARD; `resolveKnowledge`/`knowledgeDelta` perderam o parâmetro
+`difficulty`; `rankedAbandonmentLoss` passou a chamar sempre
+`resolveKnowledge(knowledge,'LOSS','RANKED')` (antes usava `'MEDIUM'`
+hardcoded — inconsistência que esta decisão corrige). Nova função
+`rankedMatchmakingDivisionBand(waitMs)` centraliza as faixas 15/30/45 s do
+matchmaking Rankeado, usada pela `MatchmakingQueue`. `LiveMatchState`,
+`ChallengeRecord` e `AsyncHalfState` perderam o campo `difficulty`.
+
+**Worker:** `question_pools` passou a ter um único pool por tema, com id
+determinístico `` `${themeId}:pool` `` (`questionPoolId`, em
+`question-content.ts`). `QuestionRepository.pool(themeId)` e
+`QuestionSelectionService.select(themeId, count)` perderam o parâmetro
+`difficulty`. `question-editorial-repository.ts`/`question-import-service.ts`
+hardcodeiam `difficulty='MEDIUM'` ao inserir um pool novo (coluna física
+herdada, nunca lida). `parseMatchResource` passou de `` `${themeId}:${difficulty}:${mode}` ``
+para `` `${themeId}:${mode}` `` — usado pela chave de instância da
+`MatchmakingQueue` e da rota de matchmaking. `ChallengeRepository.create()`
+não recebe mais `difficulty` (hardcoda `'MEDIUM'` no INSERT, com comentário
+explicando que desafio é sempre Casual); `sealQuestionSet` perdeu o parâmetro.
+Import CSV (`question-csv.ts`) não exige mais coluna `difficulty`; arquivos
+antigos que ainda a trazem continuam aceitos, e a coluna é simplesmente
+ignorada — o mesmo vale para o JSON (`importedQuestionSchema.difficulty` virou
+`.optional()`). Hash de deduplicação (`questionContentHash`) não usa mais
+`difficulty`.
+
+**Migrations (forward-only, nenhuma reescrita):**
+`questions/0007_unify_question_pools.sql` funde os pools de dificuldade de
+cada tema em um único pool: reindexa as perguntas ativas em slots densos
+1..N (somando os antigos pools), repontea rascunhos/demais status para o
+pool canônico do tema, soma `active_count`, apaga os pools irmãos e por fim
+renomeia o pool sobrevivente para `${themeId}:pool` usando
+`PRAGMA defer_foreign_keys = 1` — a técnica padrão do SQLite para renomear
+com segurança uma chave primária referenciada por FK dentro de uma única
+transação. O pool sobrevivente escolhido é sempre um pool que já existia
+(nunca um id novo criado do zero), porque a antiga `UNIQUE(theme_id,
+difficulty)` impede inserir uma linha nova enquanto pools antigos do mesmo
+tema ainda ocupam os três valores do CHECK — fundir e apagar tem que vir
+antes de qualquer id novo. `core/0016_reset_stale_pool_discovery.sql` apaga
+`user_pool_states` presas a um `pool_id` antigo (`${themeId}:easy|medium|hard`
+ou o pool sintético de smoke): como os dois bancos D1 (CORE_DB/QUESTIONS_DB)
+não têm FK entre si e a descoberta histórica compacta não pôde ser remapeada
+com precisão para os novos slots consolidados, a decisão explícita foi
+reinicializar essa descoberta (nunca resultado de partida, XP ou
+Conhecimento) em vez de tentar preservá-la — decisão documentada aqui e no
+comentário da própria migration. Histórico de partidas/desafios é preservado
+integralmente; `difficulty` permanece como coluna física herdada em
+`question_pools`/`challenges`/`matches`, sem leitura por nenhum código novo.
+`scripts/validate-d1-migrations.mjs` ganhou invariantes dedicadas
+(`assertQuestionPoolMergeInvariants`, `assertUnifiedQuestionPoolInvariants`,
+`assertPoolDiscoveryReset`) cobrindo fusão de múltiplos pools por dificuldade,
+id determinístico final e reset de descoberta órfã.
+
+**Web:** seletor de modo em Tema passou a mostrar só "Partida normal"/"Partida
+rankeada"; `FriendChallengeDialog` perdeu o seletor de dificuldade (agora só
+informa "desafios entre amigos são sempre Casual, com 7 perguntas, e não
+alteram seu Conhecimento"); `useMatchmaking().start()` e `useFriendChallenge().challenge()`
+perderam o parâmetro `difficulty`; `matchOrigin` da navegação de partida
+perdeu o campo `difficulty`.
+
+Testes: adaptados os já existentes no domínio (`xp`, `scoring`, `ranking`,
+`live-match`, `challenge`, `async-half`, `result-and-connection`), no Worker
+(`question-selection`, `challenge-updates.worker`, `challenges.worker`,
+`report-question-moderation.worker`, `live-match.worker`,
+`synthetic-smoke-dataset.worker`, `question-csv`, `challenge-fixture.worker`)
+e na Web (`challenge-cards`, `matchmaking-dialog`, `use-matchmaking`,
+`live-match-page`, `challenge-context`, `theme-detail-challenge`,
+`admin-reports-panel`, `admin-editorial-panels`, `social-page`). Focados
+novos: banda de divisão do matchmaking Rankeado (`ranking.test.ts`) e
+pareamento real via `MatchmakingQueue` — Normal ignora Conhecimento, Rankeada
+pareia a mesma divisão de imediato e não pareia divisões muito distantes nos
+primeiros 15 s (`matchmaking-queue.worker.test.ts`, arquivo novo). Validação
+completa: `lint`, `typecheck` (domain+web+worker), `test:unit` (342 testes),
+`test:worker` (190 testes), `test:migrations` (banco vazio e upgrade completo
+Core `0003→…→0016` e Questions `0002→…→0007`, incluindo os novos upgrades
+`0015→0016` e `0006→0007`, invariantes de fusão/unificação de pool e reset de
+descoberta, além de rollback), `build` (domain + web + worker) verdes. Scan
+manual do diff sem segredos. Nenhum smoke físico foi executado nem declarado.
+
 ## Critério de saída desta execução
 
 - Milestones 8 e 8.5 aprovados fisicamente e congelados;
@@ -1351,3 +1468,13 @@ commit corrompeu algo mais.
   `main`; `docs/plans/QUIZ_GOMES_V1.md` recuperado de uma corrupção binária
   pré-existente do commit `341a58b`; nenhum smoke físico executado nem
   declarado.
+- decisão de produto de 2026-09-24 concluída: Fácil/Médio/Difícil removidos
+  como conceito operacional; Normal (Casual, 7 perguntas, 20 XP) e Rankeada
+  (10 perguntas, 30 XP, Conhecimento com a tabela que antes era de HARD) são
+  os únicos modos públicos; pool único por tema consolidado por migration
+  forward-only (`questions/0007`) com descoberta órfã reinicializada
+  (`core/0016`); matchmaking Rankeado ganhou banda de divisão por Conhecimento
+  alargando com o tempo de espera; import CSV/JSON não exige mais
+  `difficulty` mas continua aceitando arquivos antigos que a trazem; `lint`,
+  `typecheck`, `test:unit`, `test:worker`, `test:migrations` e `build` verdes;
+  nenhum smoke físico executado nem declarado.

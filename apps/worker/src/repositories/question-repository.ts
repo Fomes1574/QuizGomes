@@ -1,5 +1,3 @@
-import type { Difficulty } from '@quiz-gomes/domain';
-
 export interface PublicQuestionRecord {
   id: string;
   imageKey: string | null;
@@ -41,12 +39,13 @@ function mapQuestion(row: QuestionRow): SecretQuestionRecord {
 export class QuestionRepository {
   constructor(private readonly db: D1Database) {}
 
-  async pool(themeId: string, difficulty: Difficulty): Promise<{ activeCount: number; id: string; version: number } | null> {
+  /** Pool único do tema (ver `questionPoolId`/migration `0007_unify_question_pools.sql`). */
+  async pool(themeId: string): Promise<{ activeCount: number; id: string; version: number } | null> {
     const row = await this.db.prepare(
       `SELECT id, active_count, version
          FROM question_pools
-        WHERE theme_id = ?1 AND difficulty = ?2 AND migration_status = 'READY'`,
-    ).bind(themeId, difficulty).first<{ active_count: number; id: string; version: number }>();
+        WHERE theme_id = ?1 AND migration_status = 'READY'`,
+    ).bind(themeId).first<{ active_count: number; id: string; version: number }>();
     return row === null ? null : { activeCount: row.active_count, id: row.id, version: row.version };
   }
 
@@ -58,33 +57,5 @@ export class QuestionRepository {
         LIMIT 1`,
     ).bind(poolId, slot).first<QuestionRow>();
     return row === null ? null : mapQuestion(row);
-  }
-
-  async activeCounts(themeId: string): Promise<Record<Difficulty, number>> {
-    const result = await this.db.prepare(
-      `SELECT difficulty, active_count FROM question_pools WHERE theme_id = ?1 AND migration_status = 'READY'`,
-    ).bind(themeId).all<{ active_count: number; difficulty: Difficulty }>();
-    const counts: Record<Difficulty, number> = { EASY: 0, MEDIUM: 0, HARD: 0 };
-    for (const row of result.results) counts[row.difficulty] = row.active_count;
-    return counts;
-  }
-
-  async poolsByTheme(themeId: string): Promise<Array<{
-    activeCount: number;
-    difficulty: Difficulty;
-    id: string;
-    version: number;
-  }>> {
-    const result = await this.db.prepare(
-      `SELECT id, difficulty, active_count, version
-         FROM question_pools
-        WHERE theme_id = ?1 AND migration_status = 'READY'`,
-    ).bind(themeId).all<{ active_count: number; difficulty: Difficulty; id: string; version: number }>();
-    return result.results.map((row) => ({
-      activeCount: row.active_count,
-      difficulty: row.difficulty,
-      id: row.id,
-      version: row.version,
-    }));
   }
 }

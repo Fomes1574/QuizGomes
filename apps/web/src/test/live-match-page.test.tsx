@@ -94,8 +94,8 @@ const voidResult = {
 
 function RestoredTheme() {
   const location = useLocation();
-  const restored = location.state as { difficulty?: string; mode?: string } | null;
-  return <p>{`Tema restaurado: ${restored?.difficulty ?? '?'} / ${restored?.mode ?? '?'}`}</p>;
+  const restored = location.state as { mode?: string } | null;
+  return <p>{`Tema restaurado: ${restored?.mode ?? '?'}`}</p>;
 }
 
 describe('página da partida em tempo real', () => {
@@ -114,11 +114,11 @@ describe('página da partida em tempo real', () => {
     vi.useRealTimers();
   });
 
-  it('exibe CANCELLED com nome real sem duelo e retorna exatamente ao tema/dificuldade/modalidade', async () => {
+  it('exibe CANCELLED com nome real sem duelo e retorna exatamente ao tema/modalidade', async () => {
     render(
       <MemoryRouter initialEntries={[{
         pathname: '/partida/room-cancelled',
-        state: { matchOrigin: { difficulty: 'HARD', mode: 'RANKED', returnTo: '/temas/elden-ring' } },
+        state: { matchOrigin: { mode: 'RANKED', returnTo: '/temas/elden-ring' } },
       }]}>
         <Routes>
           <Route element={<LiveMatchPage />} path="/partida/:roomId" />
@@ -143,14 +143,14 @@ describe('página da partida em tempo real', () => {
     expect(screen.getByText('Partida cancelada por Fomes')).toBeInTheDocument();
     expect(screen.queryByLabelText('Placar final')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Voltar ao tema' }));
-    expect(screen.getByText('Tema restaurado: HARD / RANKED')).toBeInTheDocument();
+    expect(screen.getByText('Tema restaurado: RANKED')).toBeInTheDocument();
   });
 
   it('quem cancela envia CANCEL imediatamente e retorna ao contexto original sem tela de duelo', async () => {
     render(
       <MemoryRouter initialEntries={[{
         pathname: '/partida/room-cancel-self',
-        state: { matchOrigin: { difficulty: 'MEDIUM', mode: 'CASUAL', returnTo: '/temas/minecraft' } },
+        state: { matchOrigin: { mode: 'CASUAL', returnTo: '/temas/minecraft' } },
       }]}>
         <Routes>
           <Route element={<LiveMatchPage />} path="/partida/:roomId" />
@@ -166,7 +166,7 @@ describe('página da partida em tempo real', () => {
     const socket = FakeWebSocket.instances[0];
     fireEvent.click(screen.getByRole('button', { name: 'Cancelar e voltar' }));
     expect(socket?.send).toHaveBeenCalledWith(JSON.stringify({ type: 'CANCEL' }));
-    expect(screen.getByText('Tema restaurado: MEDIUM / CASUAL')).toBeInTheDocument();
+    expect(screen.getByText('Tema restaurado: CASUAL')).toBeInTheDocument();
     expect(screen.queryByText('Partida anulada')).not.toBeInTheDocument();
   });
 
@@ -174,7 +174,7 @@ describe('página da partida em tempo real', () => {
     render(
       <MemoryRouter initialEntries={[{
         pathname: '/desafio/challenge-1',
-        state: { matchOrigin: { difficulty: 'EASY', mode: 'CASUAL', returnTo: '/temas/elden-ring' } },
+        state: { matchOrigin: { mode: 'CASUAL', returnTo: '/temas/elden-ring' } },
       }]}>
         <Routes>
           <Route element={<LiveMatchPage variant="challenge" />} path="/desafio/:challengeId" />
@@ -193,7 +193,7 @@ describe('página da partida em tempo real', () => {
     expect(socket?.send).toHaveBeenCalledWith(JSON.stringify({ type: 'CANCEL' }));
     // Enquanto o servidor não confirma, a tela continua aqui e o botão não repete a ação.
     expect(screen.getByRole('button', { name: 'Cancelando...' })).toBeDisabled();
-    expect(screen.queryByText('Tema restaurado: EASY / CASUAL')).not.toBeInTheDocument();
+    expect(screen.queryByText('Tema restaurado: CASUAL')).not.toBeInTheDocument();
 
     act(() => socket?.emitMessage({
       challengeId: 'challenge-1',
@@ -207,7 +207,7 @@ describe('página da partida em tempo real', () => {
     expect(screen.queryByLabelText('Placar final')).not.toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Partida anulada' })).not.toBeInTheDocument();
     await act(async () => { await Promise.resolve(); });
-    expect(screen.getByText('Tema restaurado: EASY / CASUAL')).toBeInTheDocument();
+    expect(screen.getByText('Tema restaurado: CASUAL')).toBeInTheDocument();
   });
 
   it('envia ROUND_READY uma única vez somente ao fim da apresentação de 1.900 ms', async () => {

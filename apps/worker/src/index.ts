@@ -70,7 +70,6 @@ const pushInstallationSchema = z.object({
 }).strict();
 
 const challengeCreateSchema = z.object({
-  difficulty: z.enum(['EASY', 'MEDIUM', 'HARD']),
   kind: z.enum(['DIRECT', 'ASYNC']),
   publicId: z.string().regex(/^#QG[A-Z0-9]{4,32}$/i),
   themeSlug: z.string().min(1).max(160),
@@ -871,7 +870,6 @@ async function reportsRoute(request: Request, env: Env): Promise<Response> {
 }
 
 interface ReportQuestionMetadata {
-  difficulty: 'EASY' | 'MEDIUM' | 'HARD';
   sources: Array<{ sourceKind: string; title: string | null; url: string }>;
   statistics: {
     answerCount: number;
@@ -900,15 +898,15 @@ function safeQuestionSourceUrl(value: string): string | null {
 async function reportQuestionMetadata(env: Env, report: ReportRecord): Promise<ReportQuestionMetadata | null> {
   const context = report.contextKind === 'MATCH'
     ? await env.CORE_DB.prepare(
-      `SELECT m.difficulty, t.name AS theme_name
+      `SELECT t.name AS theme_name
          FROM matches m JOIN themes t ON t.id = m.theme_id
         WHERE m.id = ?1 LIMIT 1`,
-    ).bind(report.contextId).first<{ difficulty: 'EASY' | 'MEDIUM' | 'HARD'; theme_name: string }>()
+    ).bind(report.contextId).first<{ theme_name: string }>()
     : await env.CORE_DB.prepare(
-      `SELECT c.difficulty, t.name AS theme_name
+      `SELECT t.name AS theme_name
          FROM challenges c JOIN themes t ON t.id = c.theme_id
         WHERE c.id = ?1 LIMIT 1`,
-    ).bind(report.contextId).first<{ difficulty: 'EASY' | 'MEDIUM' | 'HARD'; theme_name: string }>();
+    ).bind(report.contextId).first<{ theme_name: string }>();
   if (context === null) return null;
   const [sources, statistics] = await Promise.all([
     env.QUESTIONS_DB.prepare(
@@ -925,7 +923,6 @@ async function reportQuestionMetadata(env: Env, report: ReportRecord): Promise<R
     }>(),
   ]);
   return {
-    difficulty: context.difficulty,
     sources: sources.results.flatMap((source) => {
       const url = safeQuestionSourceUrl(source.url);
       return url === null ? [] : [{ sourceKind: source.source_kind, title: source.title, url }];
@@ -1181,7 +1178,6 @@ async function challengeRoute(request: Request, env: Env, url: URL, context: Exe
     if (theme === null) throw new ApiError(404, 'THEME_UNAVAILABLE', 'Este tema não está disponível.');
     const created = await challenges.create({
       actorUserId: profile.userId,
-      difficulty: parsed.data.difficulty,
       kind: parsed.data.kind,
       targetPresence: parsed.data.kind === 'DIRECT'
         ? await friendPresenceOf(env, targetUserId)
@@ -1196,7 +1192,7 @@ async function challengeRoute(request: Request, env: Env, url: URL, context: Exe
     if (parsed.data.kind === 'ASYNC' && created.created) {
       // O conjunto é sorteado e selado aqui, uma única vez, e servirá os dois jogadores.
       try {
-        await challenges.sealQuestionSet(created.challengeId, theme.id, parsed.data.difficulty, env.QUESTIONS_DB);
+        await challenges.sealQuestionSet(created.challengeId, theme.id, env.QUESTIONS_DB);
       } catch (error) {
         await challenges.voidChallenge(created.challengeId);
         throw error;
@@ -1686,10 +1682,7 @@ async function apiRoute(request: Request, env: Env, url: URL, context: Execution
     const theme = await themes.findTheme(decodeURIComponent(themeMatch[1]));
     if (theme === null) throw new ApiError(404, 'THEME_NOT_FOUND', 'Tema não encontrado.');
     const questionRepository = new QuestionRepository(env.QUESTIONS_DB);
-    const [topFive, questionCounts] = await Promise.all([
-      themes.topFive(theme.id),
-      questionRepository.activeCounts(theme.id),
-    ]);
+    const topFive = await themes.topFive(theme.id);
     let personal: null | {
       discoveredPercentage: number;
       knowledge: number;
@@ -1700,21 +1693,17 @@ async function apiRoute(request: Request, env: Env, url: URL, context: Execution
       const identity = await requireUser(request, env);
       const profile = await new UserRepository(env.CORE_DB).findByFirebaseUid(identity.uid);
       if (profile !== null) {
-        const pools = await questionRepository.poolsByTheme(theme.id);
-        const states = await Promise.all(pools.map((pool) => new PoolStateRepository(env.CORE_DB).read(profile.userId, pool.id, pool.version)));
-        const activeTotal = pools.reduce((total, pool) => total + pool.activeCount, 0);
-        const discoveredTotal = pools.reduce((total, pool, index) => {
-          const state = states[index];
-          return total + (state === undefined ? 0 : discoveredCount(state.state, pool.activeCount));
-        }, 0);
+        const pool = await questionRepository.pool(theme.id);
+        let discoveredPercentage = 0;
+        if (pool !== null && pool.activeCount > 0) {
+          const state = await new PoolStateRepository(env.CORE_DB).read(profile.userId, pool.id, pool.version);
+          discoveredPercentage = (discoveredCount(state.state, pool.activeCount) / pool.activeCount) * 100;
+        }
         const ranking = await themes.personalRanking(theme.id, profile.userId);
-        personal = {
-          discoveredPercentage: activeTotal === 0 ? 0 : (discoveredTotal / activeTotal) * 100,
-          ...ranking,
-        };
+        personal = { discoveredPercentage, ...ranking };
       }
     }
-    return json({ personal, questionCounts, theme, topFive });
+    return json({ personal, theme, topFive });
   }
   throw new ApiError(404, 'NOT_FOUND', 'Rota não encontrada.');
 }

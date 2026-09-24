@@ -1,8 +1,10 @@
 PRAGMA foreign_keys = ON;
 
 -- NÃO ESTÁ ATIVO COMO MIGRATION. Promover somente após autorização explícita.
+-- Referencia o pool único pós-unificação (migration 0007_unify_question_pools.sql);
+-- o id antigo por dificuldade não existe mais desde essa migration.
 DELETE FROM questions
- WHERE pool_id = 'pool-synthetic-smoke-test-multiplayer-easy-20260811'
+ WHERE pool_id = 'theme-synthetic-smoke-test-multiplayer-20260811:pool'
    AND id LIKE 'synthetic-smoke-test-20260811-q%'
    AND substr(id, length('synthetic-smoke-test-20260811-q') + 1) <> ''
    AND substr(id, length('synthetic-smoke-test-20260811-q') + 1) NOT GLOB '*[^0-9]*'
@@ -15,20 +17,18 @@ UPDATE question_pools
    SET active_count = (
          SELECT COUNT(*)
            FROM questions
-          WHERE pool_id = 'pool-synthetic-smoke-test-multiplayer-easy-20260811'
+          WHERE pool_id = 'theme-synthetic-smoke-test-multiplayer-20260811:pool'
             AND status = 'ACTIVE'
        ),
        updated_at = CURRENT_TIMESTAMP
- WHERE id = 'pool-synthetic-smoke-test-multiplayer-easy-20260811'
-   AND theme_id = 'theme-synthetic-smoke-test-multiplayer-20260811'
-   AND difficulty = 'EASY';
+ WHERE id = 'theme-synthetic-smoke-test-multiplayer-20260811:pool'
+   AND theme_id = 'theme-synthetic-smoke-test-multiplayer-20260811';
 
 DELETE FROM question_pools
- WHERE id = 'pool-synthetic-smoke-test-multiplayer-easy-20260811'
+ WHERE id = 'theme-synthetic-smoke-test-multiplayer-20260811:pool'
    AND theme_id = 'theme-synthetic-smoke-test-multiplayer-20260811'
-   AND difficulty = 'EASY'
    AND NOT EXISTS (
          SELECT 1
            FROM questions
-          WHERE pool_id = 'pool-synthetic-smoke-test-multiplayer-easy-20260811'
+          WHERE pool_id = 'theme-synthetic-smoke-test-multiplayer-20260811:pool'
        );

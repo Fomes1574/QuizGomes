@@ -60,7 +60,6 @@ const friendUser = {
 const asyncWaitingChallenge = {
   challenged: friendUser,
   challenger: friendUser,
-  difficulty: 'HARD' as const,
   expiresAt: null,
   id: '22222222-2222-4222-8222-222222222222',
   kind: 'ASYNC' as const,
@@ -369,7 +368,7 @@ describe('Social Foundation — interface web', () => {
       const section = await screen.findByRole('region', { name: 'Desafios' });
       const card = section.querySelector('.social-challenge');
       expect(card).toHaveTextContent('Bia Amiga te desafiou');
-      expect(card).toHaveTextContent('Tema muito longo para testar a quebra sem sobreposição · Difícil');
+      expect(card).toHaveTextContent('Tema muito longo para testar a quebra sem sobreposição');
       expect(card?.querySelector('.social-challenge__presence')).toHaveAttribute('data-presence', 'RECONNECTING');
       expect(within(section).getByLabelText('Bia Amiga está reconectando')).toBeInTheDocument();
       expect(within(section).getByRole('button', { name: 'Jogar' })).toBeEnabled();

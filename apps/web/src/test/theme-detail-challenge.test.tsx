@@ -34,7 +34,6 @@ const ana = {
 
 const theme = {
   personal: null,
-  questionCounts: { EASY: 40, HARD: 40, MEDIUM: 40 },
   theme: {
     activeQuestionCount: 40,
     artwork: { kind: 'NONE', version: 1 },
@@ -72,24 +71,24 @@ describe('desafiar amigo a partir do tema', () => {
     vi.unstubAllEnvs();
   });
 
-  it('só oferece "Desafiar amigo" no modo Casual', async () => {
+  it('só oferece "Desafiar amigo" na Partida normal', async () => {
     render(page());
     expect(await screen.findByRole('button', { name: 'Desafiar amigo' })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('radio', { name: 'Ranqueada' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'Partida rankeada' }));
     // Desafio entre amigos é sempre Casual: em Ranqueada o botão nem existe.
     expect(screen.queryByRole('button', { name: 'Desafiar amigo' })).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('radio', { name: 'Casual' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'Partida normal' }));
     expect(screen.getByRole('button', { name: 'Desafiar amigo' })).toBeInTheDocument();
   });
 
-  it('trocar para Ranqueada fecha o seletor já aberto', async () => {
+  it('trocar para Partida rankeada fecha o seletor já aberto', async () => {
     render(page());
     fireEvent.click(await screen.findByRole('button', { name: 'Desafiar amigo' }));
     expect(await screen.findByRole('heading', { name: 'Desafiar amigo' })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('radio', { name: 'Ranqueada' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'Partida rankeada' }));
 
     await waitFor(() => {
       expect(screen.queryByRole('heading', { name: 'Desafiar amigo' })).not.toBeInTheDocument();
@@ -108,20 +107,19 @@ describe('desafiar amigo a partir do tema', () => {
 
     fireEvent.click(later);
     expect(mocks.challenge).toHaveBeenCalledWith(expect.objectContaining({
-      difficulty: 'EASY', kind: 'ASYNC', publicId: '#QGANA1',
+      kind: 'ASYNC', publicId: '#QGANA1',
     }));
   });
 
-  it('o seletor deixa claro que o desafio é Casual e usa a dificuldade escolhida ali', async () => {
+  it('o diálogo deixa claro que o desafio é sempre Casual, com 7 perguntas', async () => {
     render(page());
     fireEvent.click(await screen.findByRole('button', { name: 'Desafiar amigo' }));
-    expect(await screen.findByText(/sempre Casual/)).toBeInTheDocument();
+    expect(await screen.findByText(/sempre Casual, com 7 perguntas/)).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('radio', { name: /Difícil/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Agora' }));
 
     expect(mocks.challenge).toHaveBeenCalledWith(expect.objectContaining({
-      difficulty: 'HARD', kind: 'DIRECT', publicId: '#QGANA1',
+      kind: 'DIRECT', publicId: '#QGANA1',
     }));
   });
 });

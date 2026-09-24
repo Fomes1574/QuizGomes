@@ -260,8 +260,8 @@ function assertFinalSchema(scenario) {
 
   const appliedMigrations = query(scenario, 'SELECT name FROM d1_migrations ORDER BY id');
   assert(
-    appliedMigrations.at(-1)?.name === '0015_admin_user_search_index.sql',
-    `${scenario.name}: 0015 do índice de busca de usuários não foi registrada como última migration`,
+    appliedMigrations.at(-1)?.name === '0016_reset_stale_pool_discovery.sql',
+    `${scenario.name}: 0016 de reset de descoberta de pool antigo não foi registrada como última migration`,
   );
   const upgradedTheme = query(scenario, `
     SELECT artwork_kind, artwork_icon_key, artwork_version, active_question_count
@@ -857,6 +857,29 @@ function assertArtworkInvariants(scenario) {
   );
 }
 
+/** @param {MigrationScenario} scenario @returns {string} */
+function seedPoolDiscoveryFixture(scenario) {
+  const userId = `pool-discovery-${scenario.name}`;
+  executeSql(scenario, `
+    INSERT INTO users (id, firebase_uid) VALUES ('${userId}', 'firebase-${userId}');
+    INSERT INTO user_pool_states (user_id, pool_id, state_blob) VALUES
+      ('${userId}', 'theme-x:easy', X'0200'),
+      ('${userId}', 'theme-x:pool', X'0200');
+  `);
+  return userId;
+}
+
+/** @param {MigrationScenario} scenario @param {string} userId */
+function assertPoolDiscoveryReset(scenario, userId) {
+  const remaining = query(scenario, `
+    SELECT pool_id FROM user_pool_states WHERE user_id = '${userId}' ORDER BY pool_id
+  `);
+  assert(
+    remaining.length === 1 && remaining[0].pool_id === 'theme-x:pool',
+    `${scenario.name}: reset de descoberta não limpou o pool_id antigo (ou removeu o novo por engano)`,
+  );
+}
+
 /** @param {MigrationScenario} scenario */
 async function assertRollback(scenario) {
   const rollbackMigrationName = '0008_rollback_probe.sql';
@@ -923,6 +946,95 @@ function assertFinalQuestionDataset(scenario, expectedLastMigration = '0006_ques
   assert(sources[0]?.total === 0, `${scenario.name}: dataset sintético recebeu fontes editoriais`);
 }
 
+/** @param {MigrationScenario} scenario */
+function assertUnifiedQuestionPoolInvariants(scenario) {
+  const appliedMigrations = query(scenario, 'SELECT name FROM d1_migrations ORDER BY id');
+  assert(
+    appliedMigrations.at(-1)?.name === '0007_unify_question_pools.sql',
+    `${scenario.name}: 0007 de unificação de pools não foi registrada como última migration de Questions`,
+  );
+  const oldPool = query(scenario, `
+    SELECT 1 FROM question_pools WHERE id = 'pool-synthetic-smoke-test-multiplayer-easy-20260811'
+  `);
+  assert(oldPool.length === 0, `${scenario.name}: pool sintético antigo por dificuldade sobreviveu à unificação`);
+  const pool = query(scenario, `
+    SELECT active_count, migration_status
+      FROM question_pools
+     WHERE id = '${syntheticThemeId}:pool'
+  `);
+  assert(
+    pool.length === 1 && pool[0].active_count === 250 && pool[0].migration_status === 'READY',
+    `${scenario.name}: pool unificado do tema sintético não terminou READY com 250 perguntas`,
+  );
+  const questions = query(scenario, `
+    SELECT COUNT(*) AS total, COUNT(DISTINCT active_slot) AS distinct_slots,
+           MIN(active_slot) AS min_slot, MAX(active_slot) AS max_slot
+      FROM questions
+     WHERE pool_id = '${syntheticThemeId}:pool' AND status = 'ACTIVE'
+  `)[0];
+  assert(
+    questions?.total === 250 && questions.distinct_slots === 250 && questions.min_slot === 1 && questions.max_slot === 250,
+    `${scenario.name}: unificação do pool sintético não manteve 250 slots densos únicos`,
+  );
+}
+
+/**
+ * Semeia um tema com os três pools antigos por dificuldade (duas ativas em
+ * EASY, uma ativa em MEDIUM, um rascunho IN_REVIEW em HARD) para provar que a
+ * 0007 soma as ativas de verdade, reindexa 1..N sem colidir e repontea até o
+ * rascunho — não só o dataset sintético, que sempre teve um único pool.
+ * @param {MigrationScenario} scenario @returns {string}
+ */
+function seedQuestionPoolMergeFixture(scenario) {
+  const themeId = `pool-merge-${scenario.name}`;
+  executeSql(scenario, `
+    INSERT INTO question_pools (id, theme_id, difficulty, active_count, version) VALUES
+      ('${themeId}:easy', '${themeId}', 'EASY', 2, 1),
+      ('${themeId}:medium', '${themeId}', 'MEDIUM', 1, 1),
+      ('${themeId}:hard', '${themeId}', 'HARD', 0, 1);
+    INSERT INTO questions (
+      id, pool_id, active_slot, prompt, option_a, option_b, option_c, option_d,
+      correct_option, content_hash, status
+    ) VALUES
+      ('${themeId}-easy-1', '${themeId}:easy', 1, 'x', 'a', 'b', 'c', 'd', 0, 'hash-${themeId}-easy-1', 'ACTIVE'),
+      ('${themeId}-easy-2', '${themeId}:easy', 2, 'x', 'a', 'b', 'c', 'd', 0, 'hash-${themeId}-easy-2', 'ACTIVE'),
+      ('${themeId}-medium-1', '${themeId}:medium', 1, 'x', 'a', 'b', 'c', 'd', 0, 'hash-${themeId}-medium-1', 'ACTIVE');
+    INSERT INTO questions (
+      id, pool_id, prompt, option_a, option_b, option_c, option_d,
+      correct_option, content_hash, status
+    ) VALUES
+      ('${themeId}-draft', '${themeId}:hard', 'x', 'a', 'b', 'c', 'd', 0, 'hash-${themeId}-draft', 'IN_REVIEW');
+  `);
+  return themeId;
+}
+
+/** @param {MigrationScenario} scenario @param {string} themeId */
+function assertQuestionPoolMergeInvariants(scenario, themeId) {
+  const oldPools = query(scenario, `
+    SELECT id FROM question_pools WHERE id IN ('${themeId}:easy', '${themeId}:medium', '${themeId}:hard')
+  `);
+  assert(oldPools.length === 0, `${scenario.name}: pools antigos por dificuldade de ${themeId} sobreviveram à unificação`);
+  const merged = query(scenario, `SELECT active_count FROM question_pools WHERE id = '${themeId}:pool'`);
+  assert(
+    merged.length === 1 && merged[0].active_count === 3,
+    `${scenario.name}: pool unificado de ${themeId} não somou as 3 perguntas ativas dos pools antigos`,
+  );
+  const activeSlots = query(scenario, `
+    SELECT active_slot FROM questions
+     WHERE pool_id = '${themeId}:pool' AND status = 'ACTIVE'
+     ORDER BY active_slot
+  `);
+  assert(
+    activeSlots.length === 3 && activeSlots.every((row, index) => row.active_slot === index + 1),
+    `${scenario.name}: unificação de ${themeId} não reindexou os slots ativos como 1..3 densos`,
+  );
+  const draft = query(scenario, `SELECT pool_id, active_slot, status FROM questions WHERE id = '${themeId}-draft'`);
+  assert(
+    draft.length === 1 && draft[0].pool_id === `${themeId}:pool` && draft[0].active_slot === null && draft[0].status === 'IN_REVIEW',
+    `${scenario.name}: rascunho IN_REVIEW não foi repontado para o pool unificado sem ganhar slot`,
+  );
+}
+
 /** @param {string} sourceDirectory @param {string[]} migrationNames */
 async function assertRemoteParser(sourceDirectory, migrationNames) {
   for (const migrationName of migrationNames) {
@@ -977,6 +1089,10 @@ try {
     migrationNames.includes('0015_admin_user_search_index.sql'),
     'Migration Core 0015 do índice de busca de usuários ausente',
   );
+  assert(
+    migrationNames.includes('0016_reset_stale_pool_discovery.sql'),
+    'Migration Core 0016 de reset de descoberta de pool antigo ausente',
+  );
   assert(questionMigrationNames.includes('0003_expand_synthetic_smoke_test.sql'), 'Migration Questions 0003 ausente');
   assert(
     questionMigrationNames.includes('0004_question_editorial_versioning.sql'),
@@ -989,6 +1105,10 @@ try {
   assert(
     questionMigrationNames.includes('0006_question_statistics_retry.sql'),
     'Migration Questions 0006 de retomada das estatísticas ausente',
+  );
+  assert(
+    questionMigrationNames.includes('0007_unify_question_pools.sql'),
+    'Migration Questions 0007 de unificação de pools ausente',
   );
 
   await assertRemoteParser(coreSourceMigrationsDirectory, migrationNames);
@@ -1022,6 +1142,7 @@ try {
       '0013_challenge_completion_ledger.sql',
       '0014_challenge_progression_retry.sql',
       '0015_admin_user_search_index.sql',
+      '0016_reset_stale_pool_discovery.sql',
     ].includes(name)),
   );
   console.log('Validando upgrade D1 exato de 0003 para 0004...');
@@ -1143,6 +1264,14 @@ try {
     join(upgradeDatabase.migrationsDirectory, '0015_admin_user_search_index.sql'),
   );
   applyMigrations(upgradeDatabase);
+  console.log('Validando upgrade D1 atual exato de 0015 para 0016 reset de descoberta de pool antigo...');
+  const discoveryUserId = seedPoolDiscoveryFixture(upgradeDatabase);
+  await copyFile(
+    join(coreSourceMigrationsDirectory, '0016_reset_stale_pool_discovery.sql'),
+    join(upgradeDatabase.migrationsDirectory, '0016_reset_stale_pool_discovery.sql'),
+  );
+  applyMigrations(upgradeDatabase);
+  assertPoolDiscoveryReset(upgradeDatabase, discoveryUserId);
   assertFinalSchema(upgradeDatabase);
   console.log('Validando rollback transacional de migration com erro...');
   await assertRollback(upgradeDatabase);
@@ -1155,7 +1284,7 @@ try {
   });
   console.log('Validando migrations Questions D1 em banco vazio...');
   applyMigrations(emptyQuestions);
-  assertFinalQuestionDataset(emptyQuestions);
+  assertUnifiedQuestionPoolInvariants(emptyQuestions);
   assertQuestionVersioningInvariants(emptyQuestions);
   assertQuestionStatisticsInvariants(emptyQuestions);
 
@@ -1166,6 +1295,7 @@ try {
       '0004_question_editorial_versioning.sql',
       '0005_question_statistics_ledger.sql',
       '0006_question_statistics_retry.sql',
+      '0007_unify_question_pools.sql',
     ].includes(name)),
     {
       binding: 'QUESTIONS_DB',
@@ -1219,8 +1349,17 @@ try {
   applyMigrations(upgradeQuestions);
   assertFinalQuestionDataset(upgradeQuestions, '0006_question_statistics_retry.sql');
   assertQuestionStatisticsInvariants(upgradeQuestions);
+  console.log('Validando upgrade Questions D1 exato de 0006 para 0007 pool único por tema...');
+  const mergeThemeId = seedQuestionPoolMergeFixture(upgradeQuestions);
+  await copyFile(
+    join(questionSourceMigrationsDirectory, '0007_unify_question_pools.sql'),
+    join(upgradeQuestions.migrationsDirectory, '0007_unify_question_pools.sql'),
+  );
+  applyMigrations(upgradeQuestions);
+  assertUnifiedQuestionPoolInvariants(upgradeQuestions);
+  assertQuestionPoolMergeInvariants(upgradeQuestions, mergeThemeId);
 
-  console.log('Migrations D1 aprovadas: parser Wrangler, bancos vazios, upgrades Core 0003→0004→0005→0006→0007→0008→0009→0010→0011→0012→0013→0014→0015 e Questions 0002→0003→0004→0005→0006, invariantes sociais, de desafio, de ledger de conclusão, de denúncia e editoriais, rollback e schemas finais.');
+  console.log('Migrations D1 aprovadas: parser Wrangler, bancos vazios, upgrades Core 0003→0004→0005→0006→0007→0008→0009→0010→0011→0012→0013→0014→0015→0016 e Questions 0002→0003→0004→0005→0006→0007, invariantes sociais, de desafio, de ledger de conclusão, de denúncia, editoriais e de pool único por tema, rollback e schemas finais.');
 } finally {
   await rm(temporaryRoot, { force: true, recursive: true });
 }

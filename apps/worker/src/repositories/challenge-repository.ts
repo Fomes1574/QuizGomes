@@ -1,10 +1,11 @@
 import {
+  CHALLENGE_MODE,
   DAILY_MISSION_DEFINITIONS,
   challengePair,
   decideChallengeCreation,
   directChallengeExpiresAt,
   isTerminalChallenge,
-  questionsForDifficulty,
+  questionsForMode,
   transitionChallenge,
   xpAward,
   utcDayKey,
@@ -15,7 +16,6 @@ import {
   type ChallengeKind,
   type ChallengeRecord,
   type ChallengeStatus,
-  type Difficulty,
   type FriendPresence,
   type LiveQuestion,
   type SealedRoundAnswer,
@@ -45,7 +45,6 @@ export interface ChallengeParticipant {
 export interface ChallengeView {
   challenged: ChallengeParticipant;
   challenger: ChallengeParticipant;
-  difficulty: Difficulty;
   expiresAt: string | null;
   id: string;
   kind: ChallengeKind;
@@ -78,7 +77,6 @@ export interface ChallengeViewPage {
 export type ChallengeWriteOutcome = 'ALREADY_APPLIED' | 'APPLIED' | 'NOT_APPLICABLE';
 
 interface ChallengeRow {
-  difficulty: Difficulty;
   expires_at: string | null;
   first_player_user_id: string;
   id: string;
@@ -111,7 +109,6 @@ interface ChallengeViewRow extends ChallengeRow {
 
 function record(row: ChallengeRow): ChallengeRecord {
   return {
-    difficulty: row.difficulty,
     expiresAtMs: row.expires_at === null ? null : Date.parse(row.expires_at),
     firstPlayerUserId: row.first_player_user_id,
     id: row.id,
@@ -133,7 +130,7 @@ function ruleError(error: unknown): never {
 }
 
 const VIEW_COLUMNS = `
-  c.id, c.difficulty, c.expires_at, c.first_player_user_id, c.kind, c.match_id, c.revision,
+  c.id, c.expires_at, c.first_player_user_id, c.kind, c.match_id, c.revision,
   c.second_player_agreed, c.second_player_user_id, c.status, c.theme_id,
   t.name AS theme_name, t.slug AS theme_slug,
   p.user_id AS challenger_user_id, p.public_id AS challenger_public_id,
@@ -178,7 +175,7 @@ export class ChallengeRepository {
   async activeForPair(first: string, second: string, kind: ChallengeKind): Promise<ChallengeRecord | null> {
     const [low, high] = challengePair(first, second);
     const row = await this.db.prepare(
-      `SELECT id, difficulty, expires_at, first_player_user_id, kind, revision,
+      `SELECT id, expires_at, first_player_user_id, kind, revision,
               second_player_agreed, second_player_user_id, status, theme_id
          FROM challenges
         WHERE pair_low_id = ?1 AND pair_high_id = ?2 AND kind = ?3
@@ -191,7 +188,7 @@ export class ChallengeRepository {
   async allActiveForPair(first: string, second: string): Promise<ChallengeRecord[]> {
     const [low, high] = challengePair(first, second);
     const result = await this.db.prepare(
-      `SELECT id, difficulty, expires_at, first_player_user_id, kind, revision,
+      `SELECT id, expires_at, first_player_user_id, kind, revision,
               second_player_agreed, second_player_user_id, status, theme_id
          FROM challenges
         WHERE pair_low_id = ?1 AND pair_high_id = ?2 AND status IN (${LIVE_STATUS_LIST})`,
@@ -201,7 +198,7 @@ export class ChallengeRepository {
 
   async byId(challengeId: string): Promise<(ChallengeRecord & { matchId: string | null }) | null> {
     const row = await this.db.prepare(
-      `SELECT id, difficulty, expires_at, first_player_user_id, kind, match_id, revision,
+      `SELECT id, expires_at, first_player_user_id, kind, match_id, revision,
               second_player_agreed, second_player_user_id, status, theme_id
          FROM challenges WHERE id = ?1`,
     ).bind(challengeId).first<ChallengeRow>();
@@ -222,7 +219,7 @@ export class ChallengeRepository {
     // amigos, dois desafios cada — o restante avança nas próximas chamadas em vez
     // de nunca ser tocado, porque as mais recentes deixam de monopolizar o topo.
     const result = await this.db.prepare(
-      `SELECT id, difficulty, expires_at, first_player_user_id, kind, match_id, revision,
+      `SELECT id, expires_at, first_player_user_id, kind, match_id, revision,
               second_player_agreed, second_player_user_id, status, theme_id, updated_at
          FROM challenges
         WHERE (first_player_user_id = ?1 OR second_player_user_id = ?1)
@@ -259,7 +256,7 @@ export class ChallengeRepository {
     challengeId: string | null; changed: boolean; participants: [string, string] | null;
   }> {
     const row = await this.db.prepare(
-      `SELECT id, difficulty, expires_at, first_player_user_id, kind, match_id, revision,
+      `SELECT id, expires_at, first_player_user_id, kind, match_id, revision,
               second_player_agreed, second_player_user_id, status, theme_id, updated_at
          FROM challenges WHERE kind = 'DIRECT' AND match_id = ?1`,
     ).bind(matchId).first<ChallengeRow>();
@@ -309,7 +306,6 @@ export class ChallengeRepository {
    */
   async create(input: {
     actorUserId: string;
-    difficulty: Difficulty;
     kind: ChallengeKind;
     targetPresence: FriendPresence;
     targetUserId: string;
@@ -360,14 +356,15 @@ export class ChallengeRepository {
       : null;
     const status: ChallengeStatus = input.kind === 'DIRECT' ? 'PENDING_DIRECT' : 'FIRST_PLAYER_ACTIVE';
     try {
+      // `difficulty` é legado físico do schema (nunca lido de volta); desafio entre amigos é sempre Casual.
       const inserted = await this.db.prepare(
         `INSERT INTO challenges
            (id, pair_low_id, pair_high_id, first_player_user_id, second_player_user_id,
             theme_id, difficulty, kind, status, expires_at, created_at, updated_at)
-         SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11
+         SELECT ?1, ?2, ?3, ?4, ?5, ?6, 'MEDIUM', ?7, ?8, ?9, ?10, ?10
           WHERE EXISTS (SELECT 1 FROM themes WHERE id = ?6 AND status = 'ACTIVE')`,
       ).bind(id, low, high, input.actorUserId, input.targetUserId, input.themeId,
-        input.difficulty, input.kind, status, expiresAt, now).run();
+        input.kind, status, expiresAt, now).run();
       if ((inserted.meta.changes ?? 0) !== 1) {
         throw new ApiError(404, 'THEME_UNAVAILABLE', 'Este tema não está disponível.');
       }
@@ -415,7 +412,6 @@ export class ChallengeRepository {
   async sealQuestionSet(
     challengeId: string,
     themeId: string,
-    difficulty: Difficulty,
     questionsDb: D1Database,
   ): Promise<void> {
     const existing = await this.db.prepare(
@@ -423,8 +419,9 @@ export class ChallengeRepository {
     ).bind(challengeId).first<{ total: number }>();
     if ((existing?.total ?? 0) > 0) return;
 
+    // Desafio entre amigos é sempre Casual (CHALLENGE_MODE): 7 perguntas fixas.
     const selected = await new QuestionSelectionService(new QuestionRepository(questionsDb))
-      .select(themeId, difficulty, questionsForDifficulty(difficulty));
+      .select(themeId, questionsForMode(CHALLENGE_MODE));
     await this.db.batch(selected.questions.map((question, index) => this.db.prepare(
       `INSERT OR IGNORE INTO challenge_questions
          (challenge_id, round_number, question_id, pool_slot, public_snapshot_json, correct_option)
@@ -678,8 +675,8 @@ export class ChallengeRepository {
       mine === theirs ? 'DRAW' : mine > theirs ? 'WIN' : 'LOSS'
     );
     const awards: Array<[string, number]> = [
-      [challenge.firstPlayerUserId, xpAward(challenge.difficulty, resultFor(firstScore, secondScore))],
-      [challenge.secondPlayerUserId, xpAward(challenge.difficulty, resultFor(secondScore, firstScore))],
+      [challenge.firstPlayerUserId, xpAward(CHALLENGE_MODE, resultFor(firstScore, secondScore))],
+      [challenge.secondPlayerUserId, xpAward(CHALLENGE_MODE, resultFor(secondScore, firstScore))],
     ];
     // Empate paga zero aos dois: sem linha de ledger nenhuma, e sem batch vazio.
     const payable = awards.filter(([, xp]) => xp > 0);
@@ -863,7 +860,6 @@ export class ChallengeRepository {
           publicId: row.challenger_public_id,
           userId: row.challenger_user_id,
         },
-        difficulty: row.difficulty,
         expiresAt: row.expires_at,
         id: row.id,
         kind: row.kind,

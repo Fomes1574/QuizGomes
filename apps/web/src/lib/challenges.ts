@@ -1,4 +1,3 @@
-import type { Difficulty } from '@quiz-gomes/domain';
 import type { SocialUser } from './social.js';
 
 export type ChallengeKind = 'ASYNC' | 'DIRECT';
@@ -19,7 +18,6 @@ export type ChallengeStatus =
 export interface ChallengeView {
   challenged: SocialUser;
   challenger: SocialUser;
-  difficulty: Difficulty;
   expiresAt: string | null;
   id: string;
   kind: ChallengeKind;
@@ -33,12 +31,6 @@ export interface ChallengeView {
   status: ChallengeStatus;
   theme: { name: string; slug: string };
 }
-
-export const DIFFICULTY_LABEL: Record<Difficulty, string> = {
-  EASY: 'Fácil',
-  HARD: 'Difícil',
-  MEDIUM: 'Médio',
-};
 
 export interface ChallengeCardCopy {
   /** Só aparece quando a ação é realmente possível agora. */
@@ -62,7 +54,7 @@ export function challengeCardCopy(challenge: ChallengeView): ChallengeCardCopy {
   const headline = mine
     ? `Você desafiou ${other.displayName}`
     : `${other.displayName} te desafiou`;
-  const subtitle = `${challenge.theme.name} · ${DIFFICULTY_LABEL[challenge.difficulty]}`;
+  const subtitle = challenge.theme.name;
   const idle = { canCancel: false, canDecline: false, canPlay: false, canResume: false };
 
   if (challenge.kind === 'DIRECT') {

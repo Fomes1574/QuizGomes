@@ -23,11 +23,11 @@ describe('desconexão', () => {
       .toEqual({ kind: 'WAITING', remainingGraceMs: 1 });
   });
 
-  it('aplica somente derrota Média ao desconectado ranqueado', () => {
+  it('aplica ao desconectado ranqueado a derrota que antes era de HARD', () => {
     expect(resolveConnectionLoss({ disconnectedKnowledge: 0, disconnectedPlayers: 1, elapsedMs: 7_000, infrastructureFailure: false, mode: 'RANKED' }))
       .toEqual({ disconnectedKnowledgeDelta: 0, kind: 'VOID_INDIVIDUAL' });
     expect(resolveConnectionLoss({ disconnectedKnowledge: 2_500, disconnectedPlayers: 1, elapsedMs: 7_000, infrastructureFailure: false, mode: 'RANKED' }))
-      .toEqual({ disconnectedKnowledgeDelta: -22, kind: 'VOID_INDIVIDUAL' });
+      .toEqual({ disconnectedKnowledgeDelta: -33, kind: 'VOID_INDIVIDUAL' });
   });
 
   it('Casual, queda dupla e falha sistêmica não punem', () => {

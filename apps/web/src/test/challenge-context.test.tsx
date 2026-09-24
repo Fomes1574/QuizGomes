@@ -60,7 +60,6 @@ function pendingDirectChallenge(expiresAt: string) {
   return {
     challenged: ana,
     challenger: dono,
-    difficulty: 'EASY',
     expiresAt,
     id: 'challenge-direct-1',
     kind: 'DIRECT',

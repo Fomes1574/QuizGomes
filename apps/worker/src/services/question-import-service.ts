@@ -47,12 +47,13 @@ export class QuestionImportService {
     ];
 
     questions.forEach((question, index) => {
-      const targetPoolId = questionPoolId(question.themeId, question.difficulty);
+      const targetPoolId = questionPoolId(question.themeId);
       statements.push(
+        // `difficulty` é legado físico do schema (nunca lido de volta); todo pool novo nasce com o mesmo valor fixo.
         this.questionsDb.prepare(
           `INSERT OR IGNORE INTO question_pools (id, theme_id, difficulty)
-           VALUES (?1, ?2, ?3)`,
-        ).bind(targetPoolId, question.themeId, question.difficulty),
+           VALUES (?1, ?2, 'MEDIUM')`,
+        ).bind(targetPoolId, question.themeId),
       );
       const questionId = crypto.randomUUID();
       statements.push(

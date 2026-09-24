@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 const CATEGORY_ID = 'category-synthetic-smoke-test-20260811';
 const THEME_ID = 'theme-synthetic-smoke-test-multiplayer-20260811';
-const POOL_ID = 'pool-synthetic-smoke-test-multiplayer-easy-20260811';
+const POOL_ID = `${THEME_ID}:pool`;
 const FLAG = '["SYNTHETIC_SMOKE_TEST"]';
 
 describe('dataset temporário do smoke test real', () => {
@@ -72,7 +72,9 @@ describe('dataset temporário do smoke test real', () => {
       difficulty: 'EASY',
       id: POOL_ID,
       migration_status: 'READY',
-      version: 1,
+      // version 2: a migration 0007 (pool único por tema) renomeia o pool
+      // sobrevivente e incrementa sua versão, mesmo quando só existia EASY.
+      version: 2,
     }]);
 
     const questions = await env.QUESTIONS_DB.prepare(

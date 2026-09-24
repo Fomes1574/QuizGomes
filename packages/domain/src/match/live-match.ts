@@ -1,8 +1,8 @@
 import { RECONNECT_GRACE_MS } from './connection.js';
 import { publicQuestion, type PublicQuestion, type SecretQuestion } from './projection.js';
-import { questionsForDifficulty } from './rules.js';
+import { questionsForMode } from './rules.js';
 import { QUESTION_DURATION_MS, remainingAt, scoreAnswer } from './scoring.js';
-import type { Difficulty, MatchMode } from '../types.js';
+import type { MatchMode } from '../types.js';
 
 export const LIVE_PREPARATION_MS = 3_000;
 export const LIVE_ROUND_RESULT_MS = 2_900;
@@ -76,7 +76,6 @@ export interface LivePause {
 export interface LiveMatchState {
   answers: [LiveRoundAnswer | null, LiveRoundAnswer | null];
   createdAtMs: number;
-  difficulty: Difficulty;
   matchId: string;
   mode: MatchMode;
   pause: LivePause | null;
@@ -281,7 +280,6 @@ function alarm(state: LiveMatchState, nowMs: number): LiveTransition {
 
 export function createLiveMatchState(input: {
   createdAtMs: number;
-  difficulty: Difficulty;
   matchId: string;
   mode: MatchMode;
   players: readonly [Omit<LivePlayer, 'connected' | 'lobbyReady' | 'roundReady' | 'score' | 'seat'>, Omit<LivePlayer, 'connected' | 'lobbyReady' | 'roundReady' | 'score' | 'seat'>];
@@ -291,9 +289,9 @@ export function createLiveMatchState(input: {
   themeId: string;
 }): LiveMatchState {
   assertNow(input.createdAtMs);
-  const expected = questionsForDifficulty(input.difficulty);
+  const expected = questionsForMode(input.mode);
   if (input.questions.length !== expected) {
-    throw new RangeError(`A dificuldade exige exatamente ${expected} perguntas.`);
+    throw new RangeError(`O modo exige exatamente ${expected} perguntas.`);
   }
   if (input.players[0].firebaseUid === input.players[1].firebaseUid || input.players[0].userId === input.players[1].userId) {
     throw new Error('Uma partida exige dois jogadores diferentes.');
@@ -306,7 +304,6 @@ export function createLiveMatchState(input: {
   return {
     answers: [null, null],
     createdAtMs: input.createdAtMs,
-    difficulty: input.difficulty,
     matchId: input.matchId,
     mode: input.mode,
     pause: null,

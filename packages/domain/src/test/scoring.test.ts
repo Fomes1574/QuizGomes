@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { displayedSeconds, questionsForDifficulty, remainingAt, resultFromScores, scoreAnswer } from '../index.js';
+import { displayedSeconds, questionsForMode, remainingAt, resultFromScores, scoreAnswer } from '../index.js';
 
 describe('pontuação da rodada', () => {
   it.each([
@@ -35,9 +35,8 @@ describe('pontuação da rodada', () => {
     expect(resultFromScores(246, 247)).toBe('LOSS');
   });
 
-  it('define 5/8/12 perguntas para toda modalidade', () => {
-    expect(questionsForDifficulty('EASY')).toBe(5);
-    expect(questionsForDifficulty('MEDIUM')).toBe(8);
-    expect(questionsForDifficulty('HARD')).toBe(12);
+  it('define 7 perguntas para Casual e 10 para Rankeada', () => {
+    expect(questionsForMode('CASUAL')).toBe(7);
+    expect(questionsForMode('RANKED')).toBe(10);
   });
 });

@@ -241,7 +241,6 @@ export class ChallengeRoom {
     const state = createAsyncHalfState({
       challengeId: input.challengeId,
       createdAtMs: input.createdAtMs,
-      difficulty: challenge.difficulty,
       opponent,
       questions,
       seat: input.seat,

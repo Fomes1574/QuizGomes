@@ -1,6 +1,3 @@
-export const DIFFICULTIES = ['EASY', 'MEDIUM', 'HARD'] as const;
-export type Difficulty = (typeof DIFFICULTIES)[number];
-
 export const MATCH_MODES = ['CASUAL', 'RANKED'] as const;
 export type MatchMode = (typeof MATCH_MODES)[number];
 

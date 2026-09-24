@@ -79,7 +79,7 @@ describe('AdminQuestionEditorialPanel', () => {
     origin: 'OFFICIAL' as const, rejectionNote: null, revision: 1, slug: 'tema-um', status: 'ACTIVE' as const,
   };
   const question = {
-    activeSlot: null, correctOption: 0, createdAt: '2026-01-01T00:00:00.000Z', createdByUserId: 'user-1', difficulty: 'EASY' as const,
+    activeSlot: null, correctOption: 0, createdAt: '2026-01-01T00:00:00.000Z', createdByUserId: 'user-1',
     id: 'question-1', options: ['A', 'B', 'C', 'D'] as const, poolId: 'pool-1', prompt: 'Pergunta em revisão?',
     replacesQuestionId: null, resolutionNote: null, resolvedAt: null, resolvedByUserId: null, sources: [], status: 'IN_REVIEW' as const, themeId: 'theme-1',
   };

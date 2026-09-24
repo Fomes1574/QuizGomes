@@ -180,7 +180,7 @@ Depois:
 3. faça login Google e configure `ADMIN_FIREBASE_UIDS` pelo Dashboard;
 4. confirme que “Criar meu perfil” conclui o onboarding e que “Sair / trocar conta” volta à autenticação sem criar perfil;
 5. confirme acesso ADMIN depois da autenticação; o secret de UID não deve alterar a aceitação do token;
-6. selecione a categoria **INTERNO · TESTE SINTÉTICO TEMPORÁRIO**, abra o tema **Teste Multiplayer** e mantenha **Fácil + Casual** nas duas contas;
+6. selecione a categoria **INTERNO · TESTE SINTÉTICO TEMPORÁRIO**, abra o tema **Teste Multiplayer** e mantenha **Partida normal** nas duas contas;
 7. em dois perfis/navegadores, conclua uma partida e confira pergunta X/Y, timer após os dois READY, bolinha amarela sem segredo e score adversário somente após resolução;
 8. na primeira partida, desconecte o jogador 1 durante uma pergunta, aguarde mais de 7 segundos, confirme `Partida anulada` no jogador 2 e só então reabra o jogador 1; ele deve ir diretamente a `Partida anulada`, sem restaurar a pergunta;
 9. com as mesmas duas contas, inicie imediatamente uma segunda partida e confirme que ela forma normalmente; depois repita com reconexão abaixo de 7 segundos e dupla queda;

@@ -1,4 +1,4 @@
-import type { Difficulty, MatchMode, MatchResult, RankedThemeSample } from '../types.js';
+import type { MatchMode, MatchResult, RankedThemeSample } from '../types.js';
 
 export const KNOWLEDGE_CAP = 999_999;
 export const CHALLENGER_I_THRESHOLD = 105_500;
@@ -39,26 +39,28 @@ if (DIVISION_THRESHOLDS.at(-1) !== CHALLENGER_I_THRESHOLD) {
   throw new Error('Os thresholds de ranking não somam 105.500.');
 }
 
-const WIN_VALUES: Record<Tier, readonly [number, number, number]> = {
-  Latão: [25, 50, 75],
-  Bronze: [23, 46, 69],
-  Prata: [21, 42, 63],
-  Ouro: [19, 38, 57],
-  Platina: [17, 34, 51],
-  Diamante: [15, 30, 45],
-  Mestre: [13, 26, 39],
-  Desafiante: [11, 22, 33],
+// Rankeada é hoje o único modo que move Conhecimento, e não existe mais escolha de
+// dificuldade: os valores abaixo são os que antes valiam só para HARD (índice 2).
+const WIN_VALUES: Record<Tier, number> = {
+  Latão: 75,
+  Bronze: 69,
+  Prata: 63,
+  Ouro: 57,
+  Platina: 51,
+  Diamante: 45,
+  Mestre: 39,
+  Desafiante: 33,
 };
 
-const LOSS_VALUES: Record<Tier, readonly [number, number, number]> = {
-  Latão: [10, 20, 30],
-  Bronze: [11, 22, 33],
-  Prata: [12, 24, 36],
-  Ouro: [13, 26, 39],
-  Platina: [14, 28, 42],
-  Diamante: [15, 30, 45],
-  Mestre: [16, 32, 48],
-  Desafiante: [18, 36, 54],
+const LOSS_VALUES: Record<Tier, number> = {
+  Latão: 30,
+  Bronze: 33,
+  Prata: 36,
+  Ouro: 39,
+  Platina: 42,
+  Diamante: 45,
+  Mestre: 48,
+  Desafiante: 54,
 };
 
 export interface RankSnapshot {
@@ -76,12 +78,6 @@ export interface KnowledgeResolution {
   appliedDelta: number;
   before: RankSnapshot;
   requestedDelta: number;
-}
-
-function difficultyIndex(difficulty: Difficulty): 0 | 1 | 2 {
-  if (difficulty === 'EASY') return 0;
-  if (difficulty === 'MEDIUM') return 1;
-  return 2;
 }
 
 export function clampKnowledge(knowledge: number): number {
@@ -102,6 +98,20 @@ export function divisionIndexForKnowledge(knowledgeInput: number): number {
   }
 
   return low;
+}
+
+/**
+ * Faixas de Conhecimento do matchmaking Rankeado, alargando conforme o tempo
+ * de espera do candidato: mesma divisão até 15 s, divisões vizinhas até 30 s,
+ * até duas divisões até 45 s e qualquer divisão do mesmo tema depois disso (o
+ * timeout geral de 60 s da fila é o teto). Partida normal nunca usa
+ * Conhecimento: pareia só por tema, na ordem de chegada.
+ */
+export function rankedMatchmakingDivisionBand(waitMs: number): number {
+  if (waitMs < 15_000) return 0;
+  if (waitMs < 30_000) return 1;
+  if (waitMs < 45_000) return 2;
+  return Number.POSITIVE_INFINITY;
 }
 
 export function rankForKnowledge(knowledgeInput: number): RankSnapshot {
@@ -129,25 +139,22 @@ export function rankForKnowledge(knowledgeInput: number): RankSnapshot {
 
 export function knowledgeDelta(
   knowledge: number,
-  difficulty: Difficulty,
   result: MatchResult,
   mode: MatchMode,
 ): number {
   if (mode === 'CASUAL' || result === 'DRAW' || result === 'VOID') return 0;
   const tier = rankForKnowledge(knowledge).tier;
-  const index = difficultyIndex(difficulty);
-  if (result === 'WIN') return WIN_VALUES[tier][index];
-  return -LOSS_VALUES[tier][index];
+  if (result === 'WIN') return WIN_VALUES[tier];
+  return -LOSS_VALUES[tier];
 }
 
 export function resolveKnowledge(
   knowledge: number,
-  difficulty: Difficulty,
   result: MatchResult,
   mode: MatchMode,
 ): KnowledgeResolution {
   const before = rankForKnowledge(knowledge);
-  const requestedDelta = knowledgeDelta(before.knowledge, difficulty, result, mode);
+  const requestedDelta = knowledgeDelta(before.knowledge, result, mode);
   const after = rankForKnowledge(before.knowledge + requestedDelta);
   return {
     after,
@@ -157,15 +164,16 @@ export function resolveKnowledge(
   };
 }
 
+/** Abandono rankeado aplica a perda que antes era exclusiva de HARD. */
 export function rankedAbandonmentLoss(knowledge: number): KnowledgeResolution {
-  return resolveKnowledge(knowledge, 'MEDIUM', 'LOSS', 'RANKED');
+  return resolveKnowledge(knowledge, 'LOSS', 'RANKED');
 }
 
-export function perfectHardWinsToChallengerI(): number {
+export function perfectWinsToChallengerI(): number {
   let knowledge = 0;
   let wins = 0;
   while (knowledge < CHALLENGER_I_THRESHOLD) {
-    knowledge = resolveKnowledge(knowledge, 'HARD', 'WIN', 'RANKED').after.knowledge;
+    knowledge = resolveKnowledge(knowledge, 'WIN', 'RANKED').after.knowledge;
     wins += 1;
   }
   return wins;
