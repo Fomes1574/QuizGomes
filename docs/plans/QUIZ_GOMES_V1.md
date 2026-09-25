@@ -1552,3 +1552,22 @@ declarar deploy.
   ela, confirmando a causa raiz. `lint`, `typecheck`, `test:unit`,
   `test:worker` (197) e `test:migrations` verdes; smoke físico da correção
   ainda pendente de confirmação em produção pelo proprietário.
+- Redesign visual de 2026-09-25 (somente camada visual e interações; nenhuma
+  regra de jogo, conquista, cosmético ou catálogo novo): tipografia Bricolage
+  Grotesque, botões com profundidade 3D, navegação inferior flutuante com
+  indicador deslizante (continua com exatamente três destinos) e anel de XP no
+  avatar. Temas viraram cartas colecionáveis com status derivado do mesmo
+  limiar do servidor (7 perguntas libera Normal, 10 libera Rankeada), título
+  que alterna nomes reais de temas, "Surpreenda-me" e skeleton de carregamento.
+  Página do tema ganhou seletor deslizante, baralho que explica o modo (Normal
+  vale 20 XP e não mexe em Conhecimento; Rankeada vale 30 XP e mexe) e pódio do
+  Top 5 com "sua vaga?". Partida ganhou cor por alternativa (sem vermelho/verde,
+  reservados a erro/acerto com ×/✓), anel de contagem que fica vermelho nos 3 s
+  finais e vira ✓/× na resolução, tremor no erro, pontos voando, sequência de
+  acertos só visual (não entra em placar, XP ou Conhecimento), teclas 1–4/A–D e
+  sons Web Audio + vibração desligáveis no Perfil. Resultado ganhou confete na
+  vitória, coroa no vencedor, frase pelo placar e deixa de exibir Conhecimento
+  em partida Normal. Social ganhou cartão com ID público copiável, "Chamar
+  amigos" (compartilhamento nativo no celular, cópia no computador) e órbita de
+  vagas quando não há amigos. Tudo respeita `prefers-reduced-motion`, Claro/
+  Escuro/Sistema e anima só transform/opacity (exceto o anel SVG da contagem).

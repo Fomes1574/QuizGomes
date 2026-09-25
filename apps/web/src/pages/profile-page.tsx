@@ -1,16 +1,18 @@
 import { levelProgress } from '@quiz-gomes/domain';
-import { lazy, Suspense, useEffect, useState, type FormEvent } from 'react';
+import { lazy, Suspense, useEffect, useState, type CSSProperties, type FormEvent } from 'react';
 import { NavLink } from 'react-router-dom';
 import { Avatar } from '../components/avatar.js';
 import { AvatarFrame } from '../components/avatar-frame.js';
 import { LoadingState } from '../components/async-state.js';
 import { Button } from '../components/button.js';
+import { Icon } from '../components/icons.js';
 import { RankBadge } from '../components/rank-badge.js';
 import { SocialConfirmDialog } from '../components/social-confirm-dialog.js';
 import { useAuth } from '../features/auth-context.js';
 import { useSocial } from '../features/social-context.js';
 import { useThemeMode, type ThemeMode } from '../hooks/use-theme-mode.js';
 import { apiRequest } from '../lib/api.js';
+import { feedback, setFeedbackPreference, useFeedbackPreferences } from '../lib/feedback.js';
 import type { CategoryAverage, MatchSummary } from '../lib/models.js';
 import { activateFriendNotifications, browserNotificationState, publicVapidKey } from '../lib/social-notifications.js';
 import type { SocialUser } from '../lib/social.js';
@@ -69,6 +71,7 @@ export function ProfilePage() {
   const [matchSummary, setMatchSummary] = useState<MatchSummary | null>(null);
   const [categoryAverages, setCategoryAverages] = useState<CategoryAverage[]>([]);
   const progress = levelProgress(profile?.totalXp ?? 0);
+  const feedbackPreferences = useFeedbackPreferences();
 
   useEffect(() => {
     if (profile === null) return;
@@ -175,9 +178,12 @@ export function ProfilePage() {
   return (
     <section className="page page--profile">
       <div className="profile-hero">
-        <AvatarFrame frameId={profile?.equippedFrameId} variant="result">
-          <Avatar customUrl={profile?.customAvatarUrl} googleUrl={profile?.photoUrl ?? firebaseUser.photoURL} name={profile?.displayName ?? firebaseUser.displayName ?? 'Jogador'} size="large" />
-        </AvatarFrame>
+        <span className="xp-ring xp-ring--large" style={{ '--xp-progress': progress.progress } as CSSProperties}>
+          <AvatarFrame frameId={profile?.equippedFrameId} variant="result">
+            <Avatar customUrl={profile?.customAvatarUrl} googleUrl={profile?.photoUrl ?? firebaseUser.photoURL} name={profile?.displayName ?? firebaseUser.displayName ?? 'Jogador'} size="large" />
+          </AvatarFrame>
+          <span aria-hidden="true" className="xp-ring__level">{progress.level}</span>
+        </span>
         <div><span className="eyebrow">{role === 'ADMIN' ? 'Jogador · ADMIN' : 'Jogador'}</span><h1>{profile?.displayName ?? firebaseUser.displayName}</h1><p>{profile?.publicId ?? 'Criando ID público…'}</p></div>
         {profile && <div className="profile-hero__actions"><Button onClick={() => setEditingAvatar((value) => !value)} variant="secondary">Trocar avatar</Button><Button onClick={() => { setName(profile.displayName); setEditing((value) => !value); }} variant="ghost">Editar nome</Button></div>}
       </div>
@@ -200,14 +206,14 @@ export function ProfilePage() {
           <ul className="missions-list">
             {missions.map((mission) => (
               <li className="missions-list__item" data-done={mission.completedAt !== null} key={mission.type}>
-                <div className="missions-list__row"><span>{MISSION_LABELS[mission.type]}</span><span>{Math.min(mission.progress, mission.target)}/{mission.target}</span></div>
+                <div className="missions-list__row"><span><i aria-hidden="true" className="missions-list__check">{mission.completedAt !== null ? '✓' : ''}</i>{MISSION_LABELS[mission.type]}</span><span>{Math.min(mission.progress, mission.target)}/{mission.target}</span></div>
                 <div className="progress-track"><span style={{ transform: `scaleX(${mission.target === 0 ? 0 : Math.min(1, mission.progress / mission.target)})` }} /></div>
               </li>
             ))}
             {missions.length === 0 && <li>Sem missões disponíveis hoje.</li>}
           </ul>
         </article>
-        <article className="profile-card"><span className="eyebrow">Sequência</span>{activeStreak === null ? <p>Jogue uma partida válida em qualquer tema para começar sua sequência.</p> : <><h2>{activeStreak.currentStreak} {activeStreak.currentStreak === 1 ? 'dia' : 'dias'}</h2><p>{activeStreak.themeName} · recorde de {activeStreak.bestStreak} {activeStreak.bestStreak === 1 ? 'dia' : 'dias'}</p></>}</article>
+        <article className="profile-card"><span className="eyebrow">Sequência</span>{activeStreak === null ? <p>Jogue uma partida válida em qualquer tema para começar sua sequência.</p> : <><h2 className="streak-title"><Icon name="flame" />{activeStreak.currentStreak} {activeStreak.currentStreak === 1 ? 'dia' : 'dias'}</h2><p>{activeStreak.themeName} · recorde de {activeStreak.bestStreak} {activeStreak.bestStreak === 1 ? 'dia' : 'dias'}</p></>}</article>
         <article className="profile-card">
           <span className="eyebrow">Partidas Ranqueadas</span>
           {matchSummary === null || matchSummary.matches === 0 ? <p>Jogue sua primeira Ranqueada para preencher este espaço.</p> : (
@@ -233,6 +239,19 @@ export function ProfilePage() {
           )}
         </article>
       </div>
+      <section className="settings-card settings-card--feedback">
+        <div><h2>Sons e vibração</h2><p>Pequenos toques de acerto, erro e vitória. Ficam salvos neste aparelho.</p></div>
+        <div className="toggle-list">
+          <button aria-checked={feedbackPreferences.sound} className="toggle" onClick={() => {
+            setFeedbackPreference('sound', !feedbackPreferences.sound);
+            if (!feedbackPreferences.sound) window.setTimeout(() => feedback('correct'), 0);
+          }} role="switch" type="button"><Icon name="sound" /><span>Sons</span><i aria-hidden="true" /></button>
+          <button aria-checked={feedbackPreferences.vibration} className="toggle" onClick={() => {
+            setFeedbackPreference('vibration', !feedbackPreferences.vibration);
+            if (!feedbackPreferences.vibration) window.setTimeout(() => feedback('tap'), 0);
+          }} role="switch" type="button"><Icon name="vibrate" /><span>Vibração</span><i aria-hidden="true" /></button>
+        </div>
+      </section>
       <section className="settings-card"><div><h2>Aparência</h2><p>A preferência acompanha este dispositivo.</p></div><div className="segmented" role="radiogroup" aria-label="Aparência">{(['light', 'dark', 'system'] as ThemeMode[]).map((value) => <button aria-checked={mode === value} className={mode === value ? 'segmented__active' : ''} key={value} onClick={() => setMode(value)} role="radio" type="button">{{ light: 'Claro', dark: 'Escuro', system: 'Sistema' }[value]}</button>)}</div></section>
       <section className="settings-card">
         <div><h2>Notificações</h2><p>Receba pedidos de amizade neste dispositivo.</p></div>

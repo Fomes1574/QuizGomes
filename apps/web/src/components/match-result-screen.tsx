@@ -1,5 +1,6 @@
 import { rankForKnowledge, type MatchResult } from '@quiz-gomes/domain';
-import type { CSSProperties } from 'react';
+import { useEffect, type CSSProperties } from 'react';
+import { feedback, prefersReducedMotion } from '../lib/feedback.js';
 import type { SeenQuestion } from '../lib/reports.js';
 import { Avatar } from './avatar.js';
 import { AvatarFrame } from './avatar-frame.js';
@@ -35,6 +36,39 @@ const VOID_LABELS: Record<string, string> = {
   SYSTEM_FAILURE: 'A partida foi anulada sem penalidade por falha da sala.',
 };
 
+/** Frase curta com personalidade; nunca afirma nada que o placar não mostre. */
+function resultTagline(viewer: ResultParticipant, opponent: ResultParticipant): string | null {
+  if (viewer.result === 'WIN') {
+    return viewer.score >= opponent.score * 2 ? 'Atropelou geral.' : 'Mandou bem demais.';
+  }
+  if (viewer.result === 'DRAW') return 'Empate. Ninguém cedeu um ponto.';
+  if (viewer.result === 'LOSS') {
+    const margin = opponent.score === 0 ? 1 : (opponent.score - viewer.score) / opponent.score;
+    return margin <= 0.15 ? 'Por um triz. Foi no detalhe.' : 'Dá pra virar essa na próxima.';
+  }
+  return null;
+}
+
+const CONFETTI_PIECES = 26;
+
+function Confetti() {
+  return (
+    <span aria-hidden="true" className="confetti">
+      {Array.from({ length: CONFETTI_PIECES }, (_, index) => (
+        <i
+          key={index}
+          style={{
+            '--confetti-delay': `${(index % 9) * 70}ms`,
+            '--confetti-drift': `${((index * 37) % 120) - 60}px`,
+            '--confetti-spin': `${((index * 53) % 540) + 180}deg`,
+            '--confetti-x': `${(index * 97) % 100}%`,
+          } as CSSProperties}
+        />
+      ))}
+    </span>
+  );
+}
+
 function resultParticipantClass(participant: ResultParticipant): string {
   return `match-result-player${participant.result === 'WIN' ? ' match-result-player--winner' : ''}`;
 }
@@ -46,6 +80,9 @@ function ResultPlayer({ participant, relation }: {
   return (
     <article className={resultParticipantClass(participant)}>
       <div className="match-result-portrait">
+        {participant.result === 'WIN' && <span aria-hidden="true" className="match-result-crown">
+          <svg viewBox="0 0 24 24"><path d="m3 7 4.5 4L12 4l4.5 7L21 7l-2 12H5L3 7Z" /></svg>
+        </span>}
         <AvatarFrame frameId={participant.frameId} variant="result">
           <Avatar customUrl={participant.customAvatarUrl} googleUrl={participant.photoUrl} name={participant.name} size="large" />
         </AvatarFrame>
@@ -65,6 +102,7 @@ export function MatchResultScreen({
   onReport,
   opponent,
   questions,
+  ranked,
   viewer,
   voidReason,
   xpDelta,
@@ -77,6 +115,8 @@ export function MatchResultScreen({
   onReport?: ((question: SeenQuestion) => void) | undefined;
   opponent: ResultParticipant;
   questions?: readonly SeenQuestion[] | undefined;
+  /** Normal nunca altera Conhecimento; indefinido mantém os três indicadores. */
+  ranked?: boolean | undefined;
   viewer: ResultParticipant;
   voidReason?: string | undefined;
   xpDelta: number;
@@ -85,13 +125,22 @@ export function MatchResultScreen({
   const knowledgeStyle: KnowledgeProgressStyle = { '--knowledge-progress': rank.progress };
   const resultClass = viewer.result.toLocaleLowerCase();
   const cancelledBeforeStart = viewer.result === 'VOID' && voidReason === 'CANCELLED';
+  const tagline = cancelledBeforeStart ? null : resultTagline(viewer, opponent);
+  const won = viewer.result === 'WIN';
+  const showConfetti = won && !prefersReducedMotion();
+
+  useEffect(() => {
+    if (won) feedback('win');
+  }, [won]);
 
   return (
     <main className={`match-result-screen match-result-screen--${resultClass}`}>
+      {showConfetti && <Confetti />}
       <Logo />
       <header className="match-result-heading">
-        <span>{cancelledBeforeStart ? 'AVISO' : 'RESULTADO'}</span>
+        <span>{cancelledBeforeStart ? 'Aviso' : 'Resultado'}</span>
         <h1>{cancelledBeforeStart ? 'Partida cancelada' : RESULT_LABELS[viewer.result]}</h1>
+        {tagline !== null && <p className="match-result-tagline">{tagline}</p>}
       </header>
       {!cancelledBeforeStart && (
         <section aria-label="Placar final" className="match-result-duel">
@@ -111,6 +160,14 @@ export function MatchResultScreen({
               <strong>+{xpDelta}</strong>
               <span aria-hidden="true" className="match-result-progress__reveal" />
             </article>
+            {ranked === false ? (
+              <article className="match-result-progress__note">
+                <small>Partida normal</small>
+                <strong>Conhecimento intacto</strong>
+                <span>Só a Rankeada mexe no ranking do tema.</span>
+              </article>
+            ) : (
+            <>
             <article>
               <small>Conhecimento</small>
               <strong>{knowledgeDelta >= 0 ? '+' : ''}{knowledgeDelta}</strong>
@@ -131,6 +188,8 @@ export function MatchResultScreen({
                 <span aria-hidden="true" style={knowledgeStyle} />
               </span>
             </article>
+            </>
+            )}
           </section>
         )}
       {onReport !== undefined && questions !== undefined && questions.length > 0 && (

@@ -1,4 +1,4 @@
-import { RECONNECT_GRACE_MS, type LiveMatchProjection, type MatchResult } from '@quiz-gomes/domain';
+import { RECONNECT_GRACE_MS, questionsForMode, type LiveMatchProjection, type MatchResult } from '@quiz-gomes/domain';
 import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { Button } from '../components/button.js';
@@ -490,6 +490,15 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
   // A continuidade visual pertence a esta sala: sair da partida descarta a geometria guardada.
   useEffect(() => () => clearDuelHandoff(), []);
 
+  // Sequência de acertos é só apresentação local: não entra em placar, XP nem Conhecimento.
+  const [streak, setStreak] = useState({ count: 0, round: 0 });
+  const resolvedRound = projection?.resolution === undefined ? undefined : projection.round?.number;
+  const resolvedCorrect = projection?.resolution?.viewer.correct;
+  if (resolvedRound !== undefined && streak.round !== resolvedRound) {
+    setStreak({ count: resolvedCorrect === true ? streak.count + 1 : 0, round: resolvedRound });
+  }
+  const rankedMatch = projection?.round === undefined ? undefined : projection.round.total === questionsForMode('RANKED');
+
   const matchOrigin = (location.state as {
     matchOrigin?: { mode?: string; returnTo?: string };
   } | null)?.matchOrigin;
@@ -539,6 +548,7 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
         knowledgeDelta={viewer.knowledgeDelta}
         onBack={backToTheme}
         onReport={(question) => setReportTarget(question)}
+        ranked={rankedMatch}
         opponent={{
           customAvatarUrl: projection?.opponent.customAvatarUrl ?? null,
           frameId: projection?.opponent.frameId ?? null,
@@ -643,6 +653,7 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
           resolution={projection.resolution}
           round={projection.round}
           selectedOption={projection.selectedOption}
+          streak={streak.count}
         />
         {roundIntro !== null && (
           <MatchRoundTransition
