@@ -1363,3 +1363,18 @@ input, select, textarea { font-size: max(16px, 1em); }
 .install-invite { display: grid; gap: 8px; width: 100%; padding: 14px 16px; border: 1px solid var(--border); border-radius: 18px; background: var(--surface-soft); text-align: left; }
 .install-invite p { margin: 0; color: var(--text-secondary); font-size: .9rem; line-height: 1.45; }
 .install-invite__actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* Votação "Qual tema você quer ver?" */
+.theme-suggestions { display: grid; gap: 10px; margin-top: 12px; }
+.theme-suggestions__lead { margin: 0; color: var(--text-secondary); }
+.theme-suggestions ul { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.theme-suggestions li { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 12px; overflow: hidden; padding: 12px 12px 12px 16px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); }
+.theme-suggestions__bar { position: absolute; inset: 0 auto 0 0; width: calc(var(--share, 0) * 100%); background: color-mix(in srgb, var(--brand) 10%, transparent); transition: width 400ms var(--ease-out, ease-out); pointer-events: none; }
+.theme-suggestions__copy { position: relative; display: grid; gap: 2px; min-width: 0; }
+.theme-suggestions__copy small { overflow: hidden; color: var(--text-secondary); text-overflow: ellipsis; white-space: nowrap; }
+.theme-suggestions__count { position: relative; font-weight: 800; font-variant-numeric: tabular-nums; }
+.theme-suggestions__vote { position: relative; display: inline-flex; min-height: 40px; align-items: center; gap: 6px; padding: 0 14px; border: 1px solid var(--border-strong); border-radius: 999px; color: var(--text-primary); background: var(--surface-raised); font-weight: 800; cursor: pointer; touch-action: manipulation; }
+.theme-suggestions__vote--on { border-color: var(--brand); color: var(--text-on-brand); background: var(--brand); }
+.theme-suggestions__vote:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.theme-suggestions__vote svg { width: 16px; height: 16px; }
+@media (prefers-reduced-motion: reduce) { .theme-suggestions__bar { transition: none; } }

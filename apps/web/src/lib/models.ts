@@ -176,3 +176,14 @@ export interface AdminQuestionReportEntry {
   } | null;
   report: AdminQuestionReport;
 }
+
+/** Candidato da votação "Qual tema você quer ver?" (cadastrado pelo ADMIN). */
+export interface ThemeSuggestion {
+  createdAt: string;
+  description: string | null;
+  id: string;
+  name: string;
+  status: 'CLOSED' | 'OPEN';
+  voted: boolean;
+  voteCount: number;
+}

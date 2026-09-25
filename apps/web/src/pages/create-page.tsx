@@ -8,7 +8,7 @@ import type { AdminQuestionReportEntry, AdminThemeSummary, Category, ThemeSummar
 import { REPORT_REASON_LABEL } from '../lib/reports.js';
 import type { ThemeArtworkDraft } from '../components/theme-artwork-editor.js';
 import { AdminAuditLogPanel, AdminUsersPanel } from './admin-directory-panels.js';
-import { AdminCategoriesPanel, AdminQuestionEditorialPanel, AdminThemeModerationPanel } from './admin-editorial-panels.js';
+import { AdminCategoriesPanel, AdminQuestionEditorialPanel, AdminThemeModerationPanel, AdminThemeSuggestionsPanel } from './admin-editorial-panels.js';
 
 const ThemeArtworkEditor = lazy(() => import('../components/theme-artwork-editor.js'));
 
@@ -165,6 +165,7 @@ export function CreatePage({ adminOnly = false }: { adminOnly?: boolean }) {
       {role === 'ADMIN' ? <AdminThemeModerationPanel getToken={getToken} onCatalogChanged={refreshCatalog} refreshKey={catalogRefreshKey} /> : null}
       {role === 'ADMIN' ? <AdminThemeArtworkManager getToken={getToken} refreshKey={catalogRefreshKey} /> : null}
       {role === 'ADMIN' ? <AdminQuestionEditorialPanel getToken={getToken} refreshKey={catalogRefreshKey} /> : null}
+      {role === 'ADMIN' ? <AdminThemeSuggestionsPanel getToken={getToken} /> : null}
       {role === 'ADMIN' ? <AdminReportsPanel getToken={getToken} /> : null}
       {role === 'ADMIN' ? <AdminUsersPanel currentUserId={profile?.userId ?? null} getToken={getToken} /> : null}
       {role === 'ADMIN' ? <AdminAuditLogPanel getToken={getToken} refreshKey={catalogRefreshKey} /> : null}

@@ -6,6 +6,7 @@ import { Button } from '../components/button.js';
 import { Icon } from '../components/icons.js';
 import { ThemeArtwork } from '../components/theme-artwork.js';
 import { ThemeCard } from '../components/theme-card.js';
+import { ThemeSuggestions } from '../components/theme-suggestions.js';
 import { useQueueActivity } from '../features/social-context.js';
 import { apiRequest } from '../lib/api.js';
 import { feedback, prefersReducedMotion } from '../lib/feedback.js';
@@ -183,6 +184,7 @@ export function ThemesPage() {
           </div>
         </section>
       ))}
+      {!loading && !error && <ThemeSuggestions />}
     </section>
   );
 }

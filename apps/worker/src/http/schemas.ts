@@ -149,3 +149,12 @@ export const reportResolutionSchema = z.object({
   resolutionNote: z.string().trim().max(280).optional(),
   status: z.enum(REPORT_STATUSES),
 }).strict();
+
+export const themeSuggestionCreationSchema = z.object({
+  description: z.string().trim().max(160).optional().nullable(),
+  name: z.string().trim().min(2, 'Use pelo menos 2 caracteres.').max(60, 'Use no máximo 60 caracteres.'),
+}).strict();
+
+export const themeSuggestionStatusSchema = z.object({
+  status: z.enum(['OPEN', 'CLOSED']),
+}).strict();

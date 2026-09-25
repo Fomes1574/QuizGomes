@@ -4,7 +4,7 @@ import { ConfirmDialog } from '../components/confirm-dialog.js';
 import { QuestionImageField } from '../components/question-image-field.js';
 import { ClientApiError, apiDownload, apiRequest, apiUpload } from '../lib/api.js';
 import type {
-  AdminThemeSummary, CategoryAdmin, EditorialQuestion, EditorialQuestionPage, QuestionSourceInput,
+  AdminThemeSummary, CategoryAdmin, EditorialQuestion, EditorialQuestionPage, QuestionSourceInput, ThemeSuggestion,
 } from '../lib/models.js';
 
 type GetToken = (forceRefresh?: boolean) => Promise<string | null>;
@@ -767,6 +767,77 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
           </form>
         </>
       ) : null}
+    </section>
+  );
+}
+
+/** Candidatos da votação pública "Qual tema você quer ver?". */
+export function AdminThemeSuggestionsPanel({ getToken }: { getToken: GetToken }) {
+  const [suggestions, setSuggestions] = useState<ThemeSuggestion[]>([]);
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<{ kind: 'error' | 'success'; text: string } | null>(null);
+
+  useEffect(() => {
+    queueMicrotask(() => {
+      void apiRequest<{ suggestions: ThemeSuggestion[] }>('/api/admin/theme-suggestions', { getToken })
+        .then((result) => setSuggestions(Array.isArray(result.suggestions) ? result.suggestions : []))
+        .catch((loadError: unknown) => setMessage({ kind: 'error', text: errorText(loadError, 'Não foi possível abrir a votação.') }));
+    });
+  }, [getToken]);
+
+  async function create() {
+    setBusy(true);
+    setMessage(null);
+    try {
+      const result = await apiRequest<{ suggestion: ThemeSuggestion }>('/api/admin/theme-suggestions', {
+        body: { description: description.trim() === '' ? null : description.trim(), name: name.trim() }, getToken, method: 'POST',
+      });
+      setSuggestions((current) => [result.suggestion, ...current]);
+      setName('');
+      setDescription('');
+      setMessage({ kind: 'success', text: `“${result.suggestion.name}” entrou na votação.` });
+    } catch (createError) {
+      setMessage({ kind: 'error', text: errorText(createError, 'Não foi possível criar o candidato.') });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function setStatus(suggestion: ThemeSuggestion, status: ThemeSuggestion['status']) {
+    setBusy(true);
+    setMessage(null);
+    try {
+      await apiRequest(`/api/admin/theme-suggestions/${encodeURIComponent(suggestion.id)}`, { body: { status }, getToken, method: 'PATCH' });
+      setSuggestions((current) => current.map((item) => (item.id === suggestion.id ? { ...item, status } : item)));
+    } catch (statusError) {
+      setMessage({ kind: 'error', text: errorText(statusError, 'Não foi possível atualizar o candidato.') });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="admin-panel" aria-labelledby="admin-theme-suggestions-title">
+      <div className="section-heading"><div><span className="eyebrow">Administração</span><h2 id="admin-theme-suggestions-title">Votação de próximos temas</h2></div></div>
+      <p className="inline-notice">Os jogadores só votam nos candidatos daqui. Encerrar tira da tela de Temas e congela a contagem.</p>
+      <div className="admin-panel__form">
+        <label className="field"><span>Nome do candidato</span><input maxLength={60} minLength={2} onChange={(event) => setName(event.target.value)} value={name} /></label>
+        <label className="field"><span>Descrição (opcional)</span><input maxLength={160} onChange={(event) => setDescription(event.target.value)} value={description} /></label>
+        <Button disabled={busy || name.trim().length < 2} onClick={() => void create()} type="button">Adicionar à votação</Button>
+      </div>
+      {message !== null && <p className={`form-message form-message--${message.kind}`} role="status">{message.text}</p>}
+      <ul className="admin-list">
+        {suggestions.map((suggestion) => (
+          <li className="admin-list__row" key={suggestion.id}>
+            <div><strong>{suggestion.name}</strong><small>{suggestion.voteCount} {suggestion.voteCount === 1 ? 'voto' : 'votos'} · {suggestion.status === 'OPEN' ? 'Aberta' : 'Encerrada'}</small></div>
+            <Button disabled={busy} onClick={() => void setStatus(suggestion, suggestion.status === 'OPEN' ? 'CLOSED' : 'OPEN')} type="button" variant="ghost">
+              {suggestion.status === 'OPEN' ? 'Encerrar' : 'Reabrir'}
+            </Button>
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }

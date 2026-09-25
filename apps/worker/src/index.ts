@@ -34,6 +34,8 @@ import {
   themeModerationCasSchema,
   themeRejectionSchema,
   themeSubmissionSchema,
+  themeSuggestionCreationSchema,
+  themeSuggestionStatusSchema,
 } from './http/schemas.js';
 import { AuditLogRepository } from './repositories/audit-log-repository.js';
 import { MissionRepository } from './repositories/mission-repository.js';
@@ -52,6 +54,7 @@ import { questionExportCsvHeader, questionExportCsvRow } from './services/questi
 import { parseQuestionsCsv } from './services/question-csv.js';
 import { DirectChallengeService } from './services/direct-challenge-service.js';
 import { themeLinkPreview } from './http/link-preview.js';
+import { ThemeSuggestionRepository } from './repositories/theme-suggestion-repository.js';
 import { FRIEND_QUEUE_ALERT_DELAY_MS, SocialPushService } from './services/social-push-service.js';
 import { inspectQuestionImageWebp, inspectWebp, QUESTION_IMAGE_MAX_BYTES, THEME_ARTWORK_MAX_BYTES } from './storage/webp.js';
 import { CUSTOM_AVATAR_BYTES, CUSTOM_AVATAR_DIMENSION } from './storage/custom-avatar.js';
@@ -1027,6 +1030,55 @@ async function adminQuestionImageRoute(request: Request, env: Env, questionId: s
   return json({ question: await questions.findForModeration(questionId) });
 }
 
+/** Público: candidatos abertos; com login, também diz em quais você votou. */
+async function themeSuggestionsRoute(request: Request, env: Env, url: URL): Promise<Response> {
+  const suggestions = new ThemeSuggestionRepository(env.CORE_DB);
+  if (url.pathname === '/api/theme-suggestions') {
+    if (request.method !== 'GET') throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Método não permitido.');
+    let viewerUserId: string | null = null;
+    if (request.headers.get('Authorization') !== null) {
+      const identity = await requireUser(request, env);
+      viewerUserId = (await new UserRepository(env.CORE_DB).findByFirebaseUid(identity.uid))?.userId ?? null;
+    }
+    return json({ suggestions: await suggestions.listOpen(viewerUserId) });
+  }
+  const voteMatch = /^\/api\/theme-suggestions\/([a-f0-9-]{36})\/vote$/i.exec(url.pathname);
+  if (voteMatch?.[1] === undefined) throw new ApiError(404, 'NOT_FOUND', 'Rota não encontrada.');
+  if (request.method !== 'PUT' && request.method !== 'DELETE') throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Método não permitido.');
+  const identity = await requireUser(request, env);
+  const profile = await new UserRepository(env.CORE_DB).findByFirebaseUid(identity.uid);
+  if (profile === null) throw new ApiError(409, 'PROFILE_REQUIRED', 'Conclua seu perfil.');
+  return json({ suggestion: await suggestions.vote(voteMatch[1], profile.userId, request.method === 'PUT') });
+}
+
+async function adminThemeSuggestionsRoute(request: Request, env: Env, url: URL): Promise<Response> {
+  const identity = await requireUser(request, env);
+  await requireAdmin(identity, env);
+  const profile = await new UserRepository(env.CORE_DB).findByFirebaseUid(identity.uid);
+  if (profile === null) throw new ApiError(409, 'PROFILE_REQUIRED', 'Conclua seu perfil.');
+  const suggestions = new ThemeSuggestionRepository(env.CORE_DB);
+  if (url.pathname === '/api/admin/theme-suggestions') {
+    if (request.method === 'GET') return json({ suggestions: await suggestions.listForAdmin() });
+    if (request.method !== 'POST') throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Método não permitido.');
+    const parsed = themeSuggestionCreationSchema.safeParse(await readJson(request));
+    if (!parsed.success) throw validationError(parsed.error);
+    const description = parsed.data.description?.trim() ?? '';
+    const suggestion = await suggestions.create({
+      actorUserId: profile.userId, description: description === '' ? null : description, name: parsed.data.name,
+    });
+    await auditLog(env, profile.userId, 'CREATE_THEME_SUGGESTION', 'theme_suggestion', suggestion.id, { name: suggestion.name });
+    return json({ suggestion }, { status: 201 });
+  }
+  const match = /^\/api\/admin\/theme-suggestions\/([a-f0-9-]{36})$/i.exec(url.pathname);
+  if (match?.[1] === undefined) throw new ApiError(404, 'NOT_FOUND', 'Rota não encontrada.');
+  if (request.method !== 'PATCH') throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Método não permitido.');
+  const parsed = themeSuggestionStatusSchema.safeParse(await readJson(request));
+  if (!parsed.success) throw validationError(parsed.error);
+  await suggestions.setStatus(match[1], parsed.data.status);
+  await auditLog(env, profile.userId, parsed.data.status === 'OPEN' ? 'REOPEN_THEME_SUGGESTION' : 'CLOSE_THEME_SUGGESTION', 'theme_suggestion', match[1], {});
+  return json({ ok: true });
+}
+
 async function adminThemeArtworkRoute(request: Request, env: Env, themeId: string): Promise<Response> {
   const identity = await requireUser(request, env);
   await requireAdmin(identity, env);
@@ -1862,6 +1914,12 @@ async function apiRoute(request: Request, env: Env, url: URL, context: Execution
   if (url.pathname === '/api/reports') return reportsRoute(request, env);
   if (url.pathname === '/api/admin/questions/import') return adminImportRoute(request, env, url);
   if (url.pathname === '/api/admin/themes') return adminThemesRoute(request, env, url);
+  if (url.pathname === '/api/admin/theme-suggestions' || url.pathname.startsWith('/api/admin/theme-suggestions/')) {
+    return adminThemeSuggestionsRoute(request, env, url);
+  }
+  if (url.pathname === '/api/theme-suggestions' || url.pathname.startsWith('/api/theme-suggestions/')) {
+    return themeSuggestionsRoute(request, env, url);
+  }
   if (url.pathname === '/api/admin/reports') return adminReportsRoute(request, env, url);
   if (url.pathname === '/api/admin/categories') return adminCategoriesRoute(request, env);
   if (url.pathname === '/api/admin/users') return adminUsersRoute(request, env, url);
@@ -2036,6 +2094,10 @@ async function handle(request: Request, env: Env, context: ExecutionContext): Pr
 
 export default {
   async fetch(request: Request, env: Env, context: ExecutionContext): Promise<Response> {
-    return withSecurityHeaders(await handle(request, env, context));
+    const response = await handle(request, env, context);
+    // Páginas da SPA (inclusive /temas/* com prévia de link) mantêm os mesmos
+    // cabeçalhos dos arquivos estáticos; a CSP estrita é da API e bloquearia
+    // o login do Google e as prévias locais de imagem se valesse no documento.
+    return new URL(request.url).pathname.startsWith('/api/') ? withSecurityHeaders(response) : response;
   },
 } satisfies ExportedHandler<Env>;
