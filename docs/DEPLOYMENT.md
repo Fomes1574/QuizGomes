@@ -1,8 +1,8 @@
 # Deployment
 
-Atualizado em 21 de agosto de 2026. O destino é um único Cloudflare Worker que serve API, PWA e Durable Objects em `workers.dev`, usando somente **Workers Free**. Firebase Cloud Messaging opcional permanece no plano gratuito.
+Atualizado em 25 de setembro de 2026. O destino é um único Cloudflare Worker que serve API, PWA e Durable Objects em `workers.dev`, usando somente **Workers Free**. Firebase Cloud Messaging opcional permanece no plano gratuito.
 
-Se o painel solicitar cartão, billing, Workers Paid, upgrade ou qualquer produto pago, cancele e pare. Não use deploy temporário nem habilite recursos ausentes deste documento. R2 permanece deliberadamente não provisionado; a aplicação só deve manter compatibilidade arquitetural para um adapter futuro.
+Se o painel solicitar cartão, billing, Workers Paid, upgrade ou qualquer produto pago, cancele e pare. Não use deploy temporário nem habilite recursos ausentes deste documento. O R2 privado abaixo é a única exceção autorizada para imagens de perguntas.
 
 ## 1. Firebase
 
@@ -134,8 +134,8 @@ npm run deploy:cloudflare -w @quiz-gomes/worker
 
 `test:migrations` aplica somente migrations pendentes:
 
-- `QUESTIONS_DB`: `0001_questions.sql` até `0006_question_statistics_retry.sql`;
-- `CORE_DB`: `0001_core.sql` até `0015_admin_user_search_index.sql`.
+- `QUESTIONS_DB`: `0001_questions.sql` até `0008_question_export_index.sql`;
+- `CORE_DB`: `0001_core.sql` até `0016_reset_stale_pool_discovery.sql`.
 
 Questions é aplicado primeiro para que o tema temporário só fique visível depois que seu pool estiver pronto. Wrangler registra o histórico em `d1_migrations`; retries não reaplicam versões concluídas. Se uma migration falhar, o D1 reverte integralmente aquela migration, preserva as anteriores e o deploy não começa. Arquivos já aplicados são imutáveis e qualquer correção posterior é forward-only. Uma migration que falhou e não foi registrada, como a primeira tentativa remota da `0004_theme_artwork.sql`, continua pendente e deve ser corrigida no próprio arquivo antes do retry — não recebe uma compensação vazia ou manual.
 
@@ -143,8 +143,8 @@ Questions é aplicado primeiro para que o tema temporário só fique visível de
 
 - lê e passa todas as migrations pelo splitter SQL exportado pelo Wrangler, incluindo o statement de tracking;
 - exige LF e bloqueia `CREATE TRIGGER`, pois compound statements continuam sujeitos a diferenças entre o splitter local e o parser multi-statement do endpoint D1 `/query` usado por migrations remotas;
-- aplica Core `0001–0015` e Questions `0001–0006` em bancos vazios e isolados;
-- prova os upgrades Core `0003→0004→0005→0006→0007→0008→0009→0010→0011→0012→0013→0014→0015` e Questions `0002→0003→0004→0005→0006`, incluindo a passagem exata do pool sintético de 30 para 250 slots;
+- aplica Core `0001–0016` e Questions `0001–0008` em bancos vazios e isolados;
+- prova os upgrades Core `0003→0004→0005→0006→0007→0008→0009→0010→0011→0012→0013→0014→0015→0016` e Questions `0002→0003→0004→0005→0006→0007→0008`, incluindo a passagem exata do pool sintético de 30 para 250 slots;
 - valida pedidos cruzados, constraints direcionais de recusas/bloqueios e instalações FCM no schema social;
 - inspeciona colunas, índice e FK composta, e tenta estados inválidos de metadata/BLOB;
 - injeta uma migration temporária que falha depois de criar/escrever e comprova rollback de schema e de `d1_migrations`.
@@ -217,7 +217,9 @@ Nenhum destes itens foi executado fisicamente nesta entrega; ficam pendentes de 
 
 ## R2
 
-Não há binding, bucket, script ou permissão de R2 neste deployment. Perguntas importadas não aceitam `image_key` enquanto não existir um backend de imagens de pergunta realmente servível: a ausência de R2 nunca cria conteúdo fantasma. Quando R2 for autorizado, adicionar um adapter e configuração runtime separados, com validação de tamanho/tipo/licença e URLs públicas seguras/versionadas; só então o schema editorial poderá aceitar imagem. Não mudar contratos HTTP/editoriais, não expor credenciais e não criar upload fictício antes disso.
+Antes do primeiro deploy desta versão, crie em **Cloudflare → R2 → Create bucket** o bucket privado com o nome exato `quiz-gomes-question-images`. Mantenha o bucket sem domínio público e não habilite `r2.dev`: o binding `QUESTION_IMAGES` de `apps/worker/wrangler.jsonc` permite acesso somente pelo Worker. Não existe token, API key, variável de ambiente ou credencial R2 para colocar no GitHub.
+
+O Worker só serve `GET`/`HEAD` para a chave WebP versionada que também consta em `questions.image_key`; uma chave arbitrária, objeto sem referência no D1 ou tipo incorreto retorna 404. As respostas recebem ETag, cache imutável e `nosniff`. O adapter preserva os metadados de licença/fonte, mas esta entrega não inclui uma tela de upload de imagens: perguntas novas continuam sem imagem até a próxima função administrativa validar e enviar os arquivos. Isso evita referências fantasma e mantém o bucket privado.
 
 ## Fontes oficiais consultadas
 

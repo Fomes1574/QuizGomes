@@ -32,9 +32,21 @@ export interface QuestionModerationRecord {
   themeId: string;
 }
 
+/** Registro completo e estável para exportação administrativa; nunca usado na partida. */
+export interface QuestionExportRecord extends QuestionModerationRecord {
+  imageBytes: number | null;
+  imageKey: string | null;
+  imageLicense: string | null;
+}
+
 export interface QuestionModerationPage {
   nextCursor: string | null;
   questions: QuestionModerationRecord[];
+}
+
+export interface QuestionExportPage {
+  nextCursor: string | null;
+  questions: QuestionExportRecord[];
 }
 
 interface QuestionRow {
@@ -44,6 +56,9 @@ interface QuestionRow {
   created_at: string;
   created_by_user_id: string | null;
   id: string;
+  image_bytes: number | null;
+  image_key: string | null;
+  image_license: string | null;
   option_a: string;
   option_b: string;
   option_c: string;
@@ -61,7 +76,7 @@ interface QuestionRow {
 const QUESTION_COLUMNS = `q.id, q.pool_id, p.theme_id, q.active_slot, q.prompt,
   q.option_a, q.option_b, q.option_c, q.option_d, q.correct_option, q.status,
   q.created_by_user_id, q.replaces_question_id, q.resolved_by_user_id, q.resolved_at,
-  q.resolution_note, q.created_at`;
+  q.resolution_note, q.created_at, q.image_key, q.image_bytes, q.image_license`;
 
 function encodeCursor(createdAt: string, id: string): string {
   return btoa(JSON.stringify([createdAt, id]));
@@ -107,6 +122,15 @@ async function attachSources(db: D1Database, questions: QuestionRow[]): Promise<
     status: row.status,
     themeId: row.theme_id,
   }));
+}
+
+function mapExportRecord(question: QuestionModerationRecord, row: QuestionRow): QuestionExportRecord {
+  return {
+    ...question,
+    imageBytes: row.image_bytes,
+    imageKey: row.image_key,
+    imageLicense: row.image_license,
+  };
 }
 
 /**
@@ -317,6 +341,29 @@ export class QuestionEditorialRepository {
       ? encodeCursor(last.created_at, last.id)
       : null;
     return { nextCursor, questions };
+  }
+
+  /**
+   * Página sem offset para exportações completas. O cursor por UUID, junto do
+   * índice `(pool_id, id)`, evita carregar um catálogo inteiro em memória.
+   */
+  async listForExport(input: { cursor?: string | null; themeId: string }): Promise<QuestionExportPage> {
+    const pageSize = 100;
+    const cursor = input.cursor ?? null;
+    const result = await this.db.prepare(
+      `SELECT ${QUESTION_COLUMNS} FROM questions q
+         JOIN question_pools p ON p.id = q.pool_id
+        WHERE p.theme_id = ?1 AND (?2 IS NULL OR q.id > ?2)
+        ORDER BY q.id ASC
+        LIMIT ${pageSize + 1}`,
+    ).bind(input.themeId, cursor).all<QuestionRow>();
+    const rows = result.results.slice(0, pageSize);
+    const records = await attachSources(this.db, rows);
+    const last = rows.at(-1);
+    return {
+      nextCursor: result.results.length > pageSize && last !== undefined ? last.id : null,
+      questions: records.map((record, index) => mapExportRecord(record, rows[index]!)),
+    };
   }
 
   /** Publica um rascunho IN_REVIEW: nova pergunta ganha o próximo slot denso; edição troca o slot da antiga. */

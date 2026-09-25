@@ -158,7 +158,7 @@ Um único service worker Workbox `injectManifest` reúne shell offline, precache
 
 Há duas camadas intencionalmente distintas:
 
-- imagens de pergunta continuam atrás de `ImageStorage`; `LocalImageStorage` serve fixtures e nenhum R2 foi provisionado;
+- imagens de pergunta continuam atrás de `ImageStorage`. O bucket privado R2 `quiz-gomes-question-images` é ligado somente ao Worker como `QUESTION_IMAGES`; sem `r2.dev`, listagem pública ou credenciais no cliente. A URL versionada `/api/question-images/questions/:id/v:version.webp` só serve uma chave já registrada em `questions.image_key`, com ETag/cache imutável;
 - arte personalizada de tema é pequena e dinâmica, fica no `CORE_DB.theme_artwork_blobs` e possui exatamente uma linha ativa por tema.
 - avatar personalizado fica no `CORE_DB.user_custom_avatars`, em uma row separada e versionada por usuário; consultas normais leem somente `active/version`, nunca o BLOB.
 

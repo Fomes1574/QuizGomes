@@ -950,8 +950,8 @@ function assertFinalQuestionDataset(scenario, expectedLastMigration = '0006_ques
 function assertUnifiedQuestionPoolInvariants(scenario) {
   const appliedMigrations = query(scenario, 'SELECT name FROM d1_migrations ORDER BY id');
   assert(
-    appliedMigrations.at(-1)?.name === '0007_unify_question_pools.sql',
-    `${scenario.name}: 0007 de unificação de pools não foi registrada como última migration de Questions`,
+    appliedMigrations.some(({ name }) => name === '0007_unify_question_pools.sql'),
+    `${scenario.name}: 0007 de unificação de pools não foi registrada`,
   );
   const oldPool = query(scenario, `
     SELECT 1 FROM question_pools WHERE id = 'pool-synthetic-smoke-test-multiplayer-easy-20260811'
@@ -976,6 +976,20 @@ function assertUnifiedQuestionPoolInvariants(scenario) {
     questions?.total === 250 && questions.distinct_slots === 250 && questions.min_slot === 1 && questions.max_slot === 250,
     `${scenario.name}: unificação do pool sintético não manteve 250 slots densos únicos`,
   );
+}
+
+/** @param {MigrationScenario} scenario */
+function assertQuestionExportIndex(scenario) {
+  const appliedMigrations = query(scenario, 'SELECT name FROM d1_migrations ORDER BY id');
+  assert(
+    appliedMigrations.at(-1)?.name === '0008_question_export_index.sql',
+    `${scenario.name}: 0008 de índice da exportação não foi registrada como última migration de Questions`,
+  );
+  const index = query(scenario, `
+    SELECT 1 FROM sqlite_master
+     WHERE type = 'index' AND name = 'idx_questions_pool_id'
+  `);
+  assert(index.length === 1, `${scenario.name}: índice de paginação da exportação ausente`);
 }
 
 /**
@@ -1116,6 +1130,10 @@ try {
   assert(
     questionMigrationNames.includes('0007_unify_question_pools.sql'),
     'Migration Questions 0007 de unificação de pools ausente',
+  );
+  assert(
+    questionMigrationNames.includes('0008_question_export_index.sql'),
+    'Migration Questions 0008 do índice de exportação ausente',
   );
 
   await assertRemoteParser(coreSourceMigrationsDirectory, migrationNames);
@@ -1292,6 +1310,7 @@ try {
   console.log('Validando migrations Questions D1 em banco vazio...');
   applyMigrations(emptyQuestions);
   assertUnifiedQuestionPoolInvariants(emptyQuestions);
+  assertQuestionExportIndex(emptyQuestions);
   assertQuestionVersioningInvariants(emptyQuestions);
   assertQuestionStatisticsInvariants(emptyQuestions);
 
@@ -1303,6 +1322,7 @@ try {
       '0005_question_statistics_ledger.sql',
       '0006_question_statistics_retry.sql',
       '0007_unify_question_pools.sql',
+      '0008_question_export_index.sql',
     ].includes(name)),
     {
       binding: 'QUESTIONS_DB',
@@ -1365,8 +1385,15 @@ try {
   applyMigrations(upgradeQuestions);
   assertUnifiedQuestionPoolInvariants(upgradeQuestions);
   assertQuestionPoolMergeInvariants(upgradeQuestions, mergeThemeId);
+  console.log('Validando upgrade Questions D1 exato de 0007 para 0008 índice de exportação...');
+  await copyFile(
+    join(questionSourceMigrationsDirectory, '0008_question_export_index.sql'),
+    join(upgradeQuestions.migrationsDirectory, '0008_question_export_index.sql'),
+  );
+  applyMigrations(upgradeQuestions);
+  assertQuestionExportIndex(upgradeQuestions);
 
-  console.log('Migrations D1 aprovadas: parser Wrangler, bancos vazios, upgrades Core 0003→0004→0005→0006→0007→0008→0009→0010→0011→0012→0013→0014→0015→0016 e Questions 0002→0003→0004→0005→0006→0007, invariantes sociais, de desafio, de ledger de conclusão, de denúncia, editoriais e de pool único por tema, rollback e schemas finais.');
+  console.log('Migrations D1 aprovadas: parser Wrangler, bancos vazios, upgrades Core 0003→0004→0005→0006→0007→0008→0009→0010→0011→0012→0013→0014→0015→0016 e Questions 0002→0003→0004→0005→0006→0007→0008, invariantes sociais, de desafio, de ledger de conclusão, de denúncia, editoriais, pool único por tema e índice de exportação, rollback e schemas finais.');
 } finally {
   await rm(temporaryRoot, { force: true, recursive: true });
 }

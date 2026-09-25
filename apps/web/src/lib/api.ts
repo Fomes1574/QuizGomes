@@ -22,6 +22,11 @@ export interface ApiUploadOptions extends Omit<RequestInit, 'body'> {
   token?: string | null;
 }
 
+export interface ApiDownloadOptions extends Omit<RequestInit, 'body'> {
+  getToken?: (forceRefresh: boolean) => Promise<string | null>;
+  token?: string | null;
+}
+
 const AUTH_RETRY_MESSAGE = 'Não foi possível renovar sua sessão. Saia e entre novamente.';
 
 async function sendRequest(
@@ -107,6 +112,34 @@ export async function apiUpload<T>(path: string, options: ApiUploadOptions): Pro
     if (response.status === 401) throw authRetryError();
   }
   return responsePayload<T>(response);
+}
+
+/** Baixa um arquivo autenticado preservando o body binário/stream da resposta. */
+export async function apiDownload(path: string, options: ApiDownloadOptions = {}): Promise<Response> {
+  const { getToken, token, ...requestOptions } = options;
+  let currentToken = token;
+  if ((currentToken === undefined || currentToken === null) && getToken !== undefined) {
+    currentToken = await getToken(false);
+  }
+  const download = async (authToken: string | null | undefined): Promise<Response> => {
+    const headers = new Headers(requestOptions.headers);
+    headers.set('Accept', 'text/csv, application/json');
+    if (authToken !== undefined && authToken !== null) headers.set('Authorization', `Bearer ${authToken}`);
+    return fetch(path, { ...requestOptions, headers });
+  };
+  let response = await download(currentToken);
+  if (response.status === 401 && getToken !== undefined) {
+    try {
+      currentToken = await getToken(true);
+    } catch {
+      throw authRetryError();
+    }
+    if (currentToken === null) throw authRetryError();
+    response = await download(currentToken);
+    if (response.status === 401) throw authRetryError();
+  }
+  if (!response.ok) await responsePayload(response);
+  return response;
 }
 
 export function websocketUrl(path: string): string {

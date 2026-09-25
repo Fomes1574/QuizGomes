@@ -21,6 +21,7 @@ import { PoolStateRepository } from './pool-state-repository.js';
 import { QuestionRepository } from './question-repository.js';
 import { QuestionSelectionService } from '../services/question-selection-service.js';
 import { customAvatarUrl } from '../storage/custom-avatar.js';
+import { questionImageUrl } from '../storage/image-storage.js';
 
 interface InitializationPlayerRow {
   custom_avatar_version: number | null;
@@ -205,7 +206,7 @@ export class LiveMatchRepository {
     const liveQuestions: LiveQuestion[] = selected.questions.map((question) => ({
       correctOption: question.correctOption,
       id: question.id,
-      imageUrl: null,
+      imageUrl: question.imageKey === null ? null : questionImageUrl(question.imageKey),
       options: question.options,
       prompt: question.prompt,
       slot: question.slot,

@@ -27,6 +27,12 @@
       "migrations_dir": "migrations/questions"
     }
   ],
+  "r2_buckets": [
+    {
+      "binding": "QUESTION_IMAGES",
+      "bucket_name": "quiz-gomes-question-images"
+    }
+  ],
   "durable_objects": {
     "bindings": [
       { "name": "CHALLENGE_ROOM", "class_name": "ChallengeRoom" },

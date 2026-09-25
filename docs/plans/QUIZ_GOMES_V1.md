@@ -67,9 +67,12 @@ e de smokes; quando divergirem, não voltam a ser regra.
   atualização de PWA fora de partida, orçamento de imagem, hibernação de DO e
   a11y ponta a ponta das novas telas além dos padrões já reaproveitados
   (rótulos, `role`, foco). Ver seção de entrega do relatório desta sessão.
-- R2 continua sem provisionamento e sem custo. O código/documentação deve manter
-  somente `ImageStorage` intercambiável, chaves opacas e proibir imagens que não
-  possam ser realmente servidas pelo backend ativo.
+- R2 privado foi autorizado em 2026-09-25 exclusivamente para imagens de
+  perguntas. O bucket `quiz-gomes-question-images` é acessível só pelo binding
+  `QUESTION_IMAGES`; chaves opacas/versionadas só são servidas pelo Worker quando
+  também existem em `questions.image_key`, sem `r2.dev`, listagem ou credencial
+  de cliente. Não há upload administrativo nesta etapa, portanto nenhuma imagem
+  nova pode virar referência fantasma.
 - A revisão administrativa de 2026-09-23 mantém categorias e temas sincronizados
   na própria tela: criar, aprovar, desativar ou editar uma categoria atualiza os
   seletores dependentes sem F5; criar/aprovar tema atualiza arte e editorial sem
@@ -221,7 +224,11 @@ e de smokes; quando divergirem, não voltam a ser regra.
 4. **Estado usuário+pool binário.** Bitmap de descoberta fica em uma row compacta versionada; formatos legados com fila recente são apenas compatibilidade e não influenciam o sorteio.
 5. **Slots densos.** Sorteio uniforme por inteiro e índice; nunca `ORDER BY RANDOM()`.
 6. **Categoria usa média ordinal fracionária.** Apenas temas com Ranqueada, cap em Desafiante I, sem efeito competitivo.
-7. **R2 adiado, mas preparado.** `ImageStorage` permanece intercambiável com chaves opacas e sem upload fictício; nenhum binding, bucket, permissão ou custo será ativado sem nova autorização.
+7. **R2 privado conectado.** Com autorização do proprietário em 2026-09-25,
+   `ImageStorage` usa o bucket privado `quiz-gomes-question-images` somente pelo
+   binding do Worker. Chaves opacas/versionadas não expõem `r2.dev`, e a rota só
+   libera objeto WebP que esteja registrado em `questions.image_key`; o upload
+   administrativo continua pendente para não aceitar referência fictícia.
 8. **Repositório público autorizado.** A autorização explícita do proprietário em 2026-08-10 substitui a exigência anterior de repositório privado. Configuração Web Firebase pode ser pública; credenciais de servidor permanecem fora do Git.
 9. **Sala simultânea é autoridade única.** O Durable Object recebe somente READY, opção escolhida e comandos de conexão; deadline, `remainingMs`, correção, score, progressão e resultado são derivados no servidor e persistidos a cada transição.
 10. **Exclusividade e resultado no D1.** `active_match_players` impede duas partidas por usuário; `result_ledger`, `result_version` e um único `D1Database.batch()` tornam resultado, XP, Conhecimento, histórico e liberação do lock transacionais e idempotentes.
@@ -1461,6 +1468,26 @@ deduplicação legada e a fixture de migration com mapa de slots. Validados:
 lint, typecheck, `test:unit` (342), `test:worker` (192) e build; nenhum smoke
 físico/deploy foi executado.
 
+### 2026-09-25 — R2 privado e exportação editorial por tema
+
+O proprietário autorizou R2 exclusivamente para imagens de perguntas. O Worker
+recebeu o binding privado `QUESTION_IMAGES` para o bucket
+`quiz-gomes-question-images`, adapter com chaves opacas/versionadas WebP e rota
+somente-leitura que exige referência em `questions.image_key`; não há `r2.dev`,
+listagem, credencial no cliente ou upload fictício. A decisão mantém imagens
+novas ausentes até existir uma tela administrativa que valide arquivo, licença e
+fonte antes da gravação.
+
+ADMIN agora escolhe um tema em **Perguntas por tema** e baixa seu catálogo
+integral em CSV ou JSON. A exportação cobre todos os status e metadados
+editoriais, fontes e referência de imagem, é auditada e percorre páginas por
+cursor/índice novo `questions/0008_question_export_index.sql`, sem `OFFSET` nem
+carregar todo o catálogo em memória. Validados nesta entrega: `typecheck`,
+`lint`, `test:unit` (343), `test:worker` (193) e `build`; a validação de
+migrations foi iniciada no ambiente local, mas não terminou de emitir resultado
+nesta sessão, portanto o smoke/pipeline Workers continua obrigatório antes de
+declarar deploy.
+
 ## Critério de saída desta execução
 
 - Milestones 8 e 8.5 aprovados fisicamente e congelados;
@@ -1474,7 +1501,8 @@ físico/deploy foi executado.
   superfícies ADMIN web, paginação restante); M12 concluído como auditoria
   pontual de segurança/resiliência/performance/a11y — não como a suíte E2E
   `test:e2e`/`check:full` originalmente pedida, que não foi construída;
-  sem preview de branch, sem R2 provisionado, billing ou produto pago;
+  sem preview de branch, R2 privado depende de o proprietário criar o bucket
+  manualmente no Cloudflare antes do deploy, sem billing ou produto pago;
   nenhum smoke físico executado — checklist em `docs/DEPLOYMENT.md` §7;
 - corretiva de 2026-09-22 concluída: os cinco bugs de DIRECT/ASYNC (graça de
   7 s indevida em convite/reserva ASYNC, corrida aceite × cancelar/recusar em
@@ -1493,3 +1521,8 @@ físico/deploy foi executado.
   `difficulty` mas continua aceitando arquivos antigos que a trazem; `lint`,
   `typecheck`, `test:unit`, `test:worker`, `test:migrations` e `build` verdes;
   nenhum smoke físico executado nem declarado.
+- R2 privado e exportação administrativa por tema preparados em 2026-09-25:
+  criar manualmente o bucket `quiz-gomes-question-images` sem `r2.dev` antes do
+  deploy; exportação CSV/JSON preserva perguntas em todos os estados, fontes e
+  metadados, e o upload de imagens permanece uma função futura para não aceitar
+  arquivo ou referência sem validação completa.

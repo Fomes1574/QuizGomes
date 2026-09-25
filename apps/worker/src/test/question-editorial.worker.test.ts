@@ -311,4 +311,24 @@ describe('M11 — CRUD e versionamento de pergunta', () => {
     expect((await questions.listForTheme({ statuses: ['IN_REVIEW'], themeId })).questions.map((question) => question.id))
       .toEqual([review.questionId]);
   });
+
+  it('pagina a exportação completa do tema, preservando fontes e metadados editoriais', async () => {
+    const themeId = `theme-editorial-export-${crypto.randomUUID()}`;
+    const questions = new QuestionEditorialRepository(env.QUESTIONS_DB);
+    const first = await questions.create(questionInput(themeId, 'Exportação A?', 'actor-1'));
+    const second = await questions.create(questionInput(themeId, 'Exportação B?', 'actor-1'));
+    await questions.approve(first.questionId, 'admin-1');
+
+    const page = await questions.listForExport({ themeId });
+    expect(page.nextCursor).toBeNull();
+    expect(page.questions.map((question) => question.id)).toEqual([first.questionId, second.questionId].sort());
+    expect(page.questions.find((question) => question.id === first.questionId)).toMatchObject({
+      activeSlot: 1,
+      imageBytes: null,
+      imageKey: null,
+      imageLicense: null,
+      status: 'ACTIVE',
+      sources: [SOURCE],
+    });
+  });
 });

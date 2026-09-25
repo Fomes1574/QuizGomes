@@ -9,6 +9,7 @@ export interface Env {
   MATCH_ROOM: DurableObjectNamespace;
   MATCHMAKING_QUEUE: DurableObjectNamespace;
   PRESENCE_HUB: DurableObjectNamespace;
+  QUESTION_IMAGES: R2Bucket;
   QUESTIONS_DB: D1Database;
   SOCIAL_REALTIME_HUB: DurableObjectNamespace;
   TICKET_BROKER: DurableObjectNamespace;

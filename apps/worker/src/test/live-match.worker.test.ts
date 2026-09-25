@@ -490,7 +490,7 @@ describe('Milestone 8 no runtime Workers simulado', () => {
     expect(JSON.stringify(firstFound)).not.toContain('selectedOption');
     for (let index = 1; index <= 10; index += 1) {
       const questionId = `matchfound-q-${index}`;
-      if (questionId !== firstQuestionId) expect(JSON.stringify(firstFound)).not.toContain(questionId);
+      if (questionId !== firstQuestionId) expect(JSON.stringify(firstFound)).not.toContain(`"id":"${questionId}"`);
     }
   });
 

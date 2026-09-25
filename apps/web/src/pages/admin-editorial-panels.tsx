@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Button } from '../components/button.js';
 import { ConfirmDialog } from '../components/confirm-dialog.js';
-import { ClientApiError, apiRequest, apiUpload } from '../lib/api.js';
+import { ClientApiError, apiDownload, apiRequest, apiUpload } from '../lib/api.js';
 import type {
   AdminThemeSummary, CategoryAdmin, EditorialQuestion, EditorialQuestionPage, QuestionSourceInput,
 } from '../lib/models.js';
@@ -322,6 +322,7 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
   const [editingQuestion, setEditingQuestion] = useState<EditorialQuestion | null>(null);
   const [editDraft, setEditDraft] = useState(emptyDraft());
   const [savingEdit, setSavingEdit] = useState(false);
+  const [exporting, setExporting] = useState<'csv' | 'json' | null>(null);
 
   useEffect(() => {
     const delay = window.setTimeout(() => {
@@ -536,6 +537,29 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
     }
   }
 
+  async function exportQuestions(format: 'csv' | 'json') {
+    if (themeId === '') return;
+    setExporting(format);
+    setMessage(null);
+    try {
+      const response = await apiDownload(
+        `/api/admin/themes/${encodeURIComponent(themeId)}/questions/${format}`,
+        { getToken },
+      );
+      const href = URL.createObjectURL(await response.blob());
+      const link = document.createElement('a');
+      link.download = `quiz-gomes-${themeId}-perguntas.${format}`;
+      link.href = href;
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(href), 0);
+      setMessage({ kind: 'success', text: `Relatório ${format.toUpperCase()} baixado.` });
+    } catch (exportError) {
+      setMessage({ kind: 'error', text: errorText(exportError, 'Não foi possível exportar as perguntas.') });
+    } finally {
+      setExporting(null);
+    }
+  }
+
   return (
     <section className="admin-panel" aria-labelledby="admin-question-editorial-title">
       <div className="section-heading"><div><span className="eyebrow">Administração</span><h2 id="admin-question-editorial-title">Perguntas por tema</h2></div></div>
@@ -692,6 +716,18 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
               <Button onClick={downloadCsvTemplate} type="button" variant="ghost">Baixar modelo CSV</Button>
               <Button disabled={importing || importFile === null} onClick={() => void importQuestions()} type="button">
                 {importing ? 'Importando…' : 'Importar para revisão'}
+              </Button>
+            </div>
+          </section>
+          <section className="form-card" aria-labelledby="admin-question-export-title">
+            <h3 id="admin-question-export-title">Exportar relatório completo</h3>
+            <p>Baixe todas as perguntas deste tema, inclusive as que estão em revisão, rejeitadas ou desativadas. O JSON preserva a estrutura completa; o CSV abre em planilhas.</p>
+            <div className="admin-card__actions">
+              <Button disabled={exporting !== null} onClick={() => void exportQuestions('csv')} type="button" variant="ghost">
+                {exporting === 'csv' ? 'Preparando CSV…' : 'Exportar CSV'}
+              </Button>
+              <Button disabled={exporting !== null} onClick={() => void exportQuestions('json')} type="button" variant="ghost">
+                {exporting === 'json' ? 'Preparando JSON…' : 'Exportar JSON'}
               </Button>
             </div>
           </section>

@@ -22,6 +22,7 @@ import {
 } from '@quiz-gomes/domain';
 import { ApiError } from '../http/api-error.js';
 import { QuestionRepository } from './question-repository.js';
+import { questionImageUrl } from '../storage/image-storage.js';
 import { QuestionSelectionService } from '../services/question-selection-service.js';
 import { recordQuestionAnswers } from '../services/question-statistics-service.js';
 import { StreakRepository } from './streak-repository.js';
@@ -431,7 +432,7 @@ export class ChallengeRepository {
       index + 1,
       question.id,
       question.slot,
-      JSON.stringify({ options: question.options, prompt: question.prompt }),
+      JSON.stringify({ imageUrl: question.imageKey === null ? null : questionImageUrl(question.imageKey), options: question.options, prompt: question.prompt }),
       question.correctOption,
     )));
     await this.db.prepare(
@@ -453,13 +454,14 @@ export class ChallengeRepository {
     }>();
     return result.results.map((row) => {
       const snapshot = JSON.parse(row.public_snapshot_json) as {
+        imageUrl?: string | null;
         options: [string, string, string, string];
         prompt: string;
       };
       return {
         correctOption: row.correct_option,
         id: row.question_id,
-        imageUrl: null,
+        imageUrl: snapshot.imageUrl ?? null,
         options: snapshot.options,
         prompt: snapshot.prompt,
         slot: row.pool_slot,

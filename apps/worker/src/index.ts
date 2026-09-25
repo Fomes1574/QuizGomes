@@ -48,11 +48,13 @@ import { LiveMatchRepository, parseMatchResource } from './repositories/live-mat
 import { ChallengeRepository } from './repositories/challenge-repository.js';
 import { SocialRepository } from './repositories/social-repository.js';
 import { QuestionImportService } from './services/question-import-service.js';
+import { questionExportCsvHeader, questionExportCsvRow } from './services/question-export.js';
 import { parseQuestionsCsv } from './services/question-csv.js';
 import { DirectChallengeService } from './services/direct-challenge-service.js';
 import { SocialPushService } from './services/social-push-service.js';
 import { inspectWebp, THEME_ARTWORK_MAX_BYTES } from './storage/webp.js';
 import { CUSTOM_AVATAR_BYTES, CUSTOM_AVATAR_DIMENSION } from './storage/custom-avatar.js';
+import { isQuestionImageKey, R2ImageStorage } from './storage/image-storage.js';
 
 export { ChallengeRoom, MatchRoom, MatchmakingQueue, PresenceHub, SocialRealtimeHub, TicketBroker };
 
@@ -406,6 +408,34 @@ async function customAvatarRoute(
   return new Response(request.method === 'HEAD' ? null : avatar.data, { headers });
 }
 
+/**
+ * Bucket privado: a URL pública passa pelo Worker e só abre objetos já
+ * referenciados por uma pergunta. Nunca há `r2.dev`, listagem de chave ou
+ * credencial exposta ao cliente.
+ */
+async function questionImageRoute(request: Request, env: Env, key: string): Promise<Response> {
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Método não permitido.');
+  }
+  if (!isQuestionImageKey(key)) throw new ApiError(404, 'NOT_FOUND', 'Imagem não encontrada.');
+  const referenced = await env.QUESTIONS_DB.prepare('SELECT 1 FROM questions WHERE image_key = ?1 LIMIT 1')
+    .bind(key).first();
+  if (referenced === null) throw new ApiError(404, 'NOT_FOUND', 'Imagem não encontrada.');
+  const object = await new R2ImageStorage(env.QUESTION_IMAGES).object(key);
+  if (object === null || object.httpMetadata?.contentType !== 'image/webp') {
+    throw new ApiError(404, 'NOT_FOUND', 'Imagem não encontrada.');
+  }
+  const headers = new Headers({
+    'Cache-Control': 'public, max-age=31536000, immutable',
+    'Content-Length': String(object.size),
+    'Content-Type': 'image/webp',
+    ETag: object.httpEtag,
+    'X-Content-Type-Options': 'nosniff',
+  });
+  if (request.headers.get('If-None-Match') === object.httpEtag) return new Response(null, { headers, status: 304 });
+  return new Response(request.method === 'HEAD' ? null : object.body, { headers });
+}
+
 const CSV_IMPORT_MAX_BYTES = 256 * 1024;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -462,6 +492,79 @@ async function adminImportRoute(request: Request, env: Env, url: URL): Promise<R
     imported: result.imported, questionCount: importedQuestions.length, status: result.status,
   });
   return json(result, { status: result.status === 'APPLIED' ? 201 : 200 });
+}
+
+function exportFilename(themeId: string, format: 'csv' | 'json'): string {
+  return `quiz-gomes-${themeId}-perguntas.${format}`;
+}
+
+/**
+ * Exportação integral sem OFFSET e sem materializar o catálogo todo. O arquivo
+ * contém também itens em revisão/rejeitados/desativados: é um relatório
+ * editorial, não um payload de partida nem um atalho de importação pública.
+ */
+async function adminThemeQuestionsExportRoute(
+  request: Request,
+  env: Env,
+  themeId: string,
+  format: 'csv' | 'json',
+): Promise<Response> {
+  if (request.method !== 'GET') throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Método não permitido.');
+  const identity = await requireUser(request, env);
+  await requireAdmin(identity, env);
+  const profile = await new UserRepository(env.CORE_DB).findByFirebaseUid(identity.uid);
+  if (profile === null) throw new ApiError(409, 'PROFILE_REQUIRED', 'Conclua seu perfil.');
+  if (await new ThemeRepository(env.CORE_DB).themeEditAccess(themeId, profile.userId) === null) {
+    throw new ApiError(404, 'THEME_NOT_FOUND', 'Tema não encontrado.');
+  }
+
+  const questions = new QuestionEditorialRepository(env.QUESTIONS_DB);
+  const encoder = new TextEncoder();
+  const exportedAt = new Date().toISOString();
+  let cursor: string | null = null;
+  let started = false;
+  let firstJsonRecord = true;
+  let complete = false;
+  const stream = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        if (!started) {
+          started = true;
+          controller.enqueue(encoder.encode(format === 'csv'
+            ? questionExportCsvHeader()
+            : `{"schemaVersion":1,"themeId":${JSON.stringify(themeId)},"exportedAt":${JSON.stringify(exportedAt)},"questions":[`));
+        }
+        if (complete) {
+          controller.close();
+          return;
+        }
+        const page = await questions.listForExport({ cursor, themeId });
+        for (const question of page.questions) {
+          const chunk = format === 'csv'
+            ? questionExportCsvRow(question)
+            : `${firstJsonRecord ? '' : ','}${JSON.stringify(question)}`;
+          firstJsonRecord = false;
+          controller.enqueue(encoder.encode(chunk));
+        }
+        cursor = page.nextCursor;
+        if (cursor === null) {
+          if (format === 'json') controller.enqueue(encoder.encode(']}'));
+          complete = true;
+        }
+      } catch (error) {
+        controller.error(error);
+      }
+    },
+  });
+  await auditLog(env, profile.userId, 'EXPORT_THEME_QUESTIONS', 'theme', themeId, { format });
+  return new Response(stream, {
+    headers: {
+      'Cache-Control': 'no-store',
+      'Content-Disposition': `attachment; filename="${exportFilename(themeId, format)}"`,
+      'Content-Type': format === 'csv' ? 'text/csv; charset=utf-8' : 'application/json; charset=utf-8',
+      'X-Content-Type-Options': 'nosniff',
+    },
+  });
 }
 
 function artworkMutationError(error: unknown): never {
@@ -1607,6 +1710,13 @@ async function apiRoute(request: Request, env: Env, url: URL, context: Execution
     );
   }
 
+  const adminThemeExportMatch = /^\/api\/admin\/themes\/([a-z0-9_-]{1,128})\/questions\/(csv|json)$/i.exec(url.pathname);
+  if (adminThemeExportMatch?.[1] !== undefined && adminThemeExportMatch[2] !== undefined) {
+    return adminThemeQuestionsExportRoute(
+      request, env, decodeURIComponent(adminThemeExportMatch[1]), adminThemeExportMatch[2].toLowerCase() as 'csv' | 'json',
+    );
+  }
+
   const adminThemeEditMatch = /^\/api\/admin\/themes\/([a-z0-9_-]{1,128})$/i.exec(url.pathname);
   if (adminThemeEditMatch?.[1] !== undefined && request.method === 'PATCH') {
     return adminThemeModerationRoute(request, env, decodeURIComponent(adminThemeEditMatch[1]), 'edit');
@@ -1637,6 +1747,10 @@ async function apiRoute(request: Request, env: Env, url: URL, context: Execution
   }
 
   const themes = new ThemeRepository(env.CORE_DB);
+  const questionImageMatch = /^\/api\/question-images\/(questions\/[0-9a-f-]{36}\/v[1-9]\d*\.webp)$/i.exec(url.pathname);
+  if (questionImageMatch?.[1] !== undefined) {
+    return questionImageRoute(request, env, decodeURIComponent(questionImageMatch[1]));
+  }
   const customAvatarMatch = /^\/api\/avatars\/([a-z0-9_-]{1,128})\/v([1-9]\d*)\.webp$/i.exec(url.pathname);
   if (customAvatarMatch?.[1] !== undefined && customAvatarMatch[2] !== undefined) {
     const version = Number(customAvatarMatch[2]);

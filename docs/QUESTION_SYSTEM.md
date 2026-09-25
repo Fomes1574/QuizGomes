@@ -9,6 +9,14 @@
 - sharding sem alterar UI ou regras de domínio;
 - nenhuma resposta correta futura no cliente.
 
+## Exportação administrativa
+
+ADMIN pode baixar todas as perguntas de um tema em CSV ou JSON. É um relatório
+editorial completo: inclui `ACTIVE`, `IN_REVIEW`, `REJECTED` e `DISABLED`, fontes,
+metadados de moderação e referência de imagem. A exportação pagina por
+`(pool_id, id)`, sem `OFFSET` e sem carregar o catálogo inteiro em memória. CSV
+mantém fontes serializadas em `sourcesJson`; JSON é o formato de maior fidelidade.
+
 ## Pool denso
 
 Existe exatamente um pool por tema (id determinístico `${themeId}:pool`; decisão de produto de 2026-09-24 aposentou Fácil/Médio/Difícil, então não há mais um pool por dificuldade). O pool guarda `active_count`. Toda pergunta ativa ocupa um `slot` único entre 1 e N. `difficulty` permanece na tabela `question_pools` só como coluna física herdada de compatibilidade com registros antigos; nenhum fluxo novo a lê para decidir modo, seleção, fila ou hash.
@@ -74,10 +82,14 @@ Importadores aceitam JSON/CSV normalizado, validam:
 - metadata/licença de imagem;
 - imagem menor que 100 KB.
 
-`image_key` é uma referência opaca. Só pode ser aceita/publicada quando o
-`ImageStorage` ativo consegue servi-la; sem backend de imagens autorizado, a
-pergunta permanece sem imagem e o admin informa essa indisponibilidade. R2 fica
-preparado apenas como adapter futuro, sem bucket, binding ou upload fantasma na V1.
+`image_key` é uma referência opaca. O R2 privado `quiz-gomes-question-images`
+fica ligado somente ao Worker como `QUESTION_IMAGES`: a URL versionada
+`/api/question-images/questions/:id/v:version.webp` só abre uma chave já
+referenciada no banco, sem `r2.dev`, listagem ou credenciais no cliente. O
+adapter valida chave, tipo WebP e tamanho antes de gravar metadados de licença e
+fonte. A tela de cadastro de imagens continua uma entrega separada: enquanto ela
+não existir, novas perguntas permanecem sem imagem em vez de aceitar referência
+sem objeto realmente servível.
 
 Falhas retornam linhas/campos sem importação parcial. Fixtures usam namespace e seed separados.
 
