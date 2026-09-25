@@ -2,6 +2,16 @@ import type { ImportedQuestion } from '../http/schemas.js';
 import { ApiError } from '../http/api-error.js';
 import { questionContentHashCandidates, questionPoolId } from './question-content.js';
 
+// Limite documentado do D1 por instrução. Cada pergunta consulta também três
+// hashes legados; um lote de 100 pode chegar a 400 valores no IN (...).
+const D1_MAX_BOUND_PARAMETERS = 100;
+
+function chunks<T>(items: readonly T[], size: number): T[][] {
+  const result: T[][] = [];
+  for (let index = 0; index < items.length; index += size) result.push(items.slice(index, index + size));
+  return result;
+}
+
 export class QuestionImportService {
   constructor(
     private readonly coreDb: D1Database,
@@ -39,12 +49,16 @@ export class QuestionImportService {
       throw new ApiError(400, 'DUPLICATE_IN_BATCH', 'O lote contém perguntas duplicadas.');
     }
     const allHashCandidates = [...new Set(hashCandidates.flat())];
-    const hashPlaceholders = allHashCandidates.map((_, index) => `?${index + 1}`).join(',');
-    const existingDuplicate = await this.questionsDb.prepare(
-      `SELECT 1 FROM questions WHERE content_hash IN (${hashPlaceholders}) LIMIT 1`,
-    ).bind(...allHashCandidates).first();
-    if (existingDuplicate !== null) {
-      throw new ApiError(409, 'DUPLICATE_QUESTION', 'Uma ou mais perguntas já existem.');
+    // Nunca monte um IN acima dos 100 parâmetros do D1. Este era o motivo de
+    // o CSV válido de 100 perguntas falhar com erro genérico em produção.
+    for (const hashChunk of chunks(allHashCandidates, D1_MAX_BOUND_PARAMETERS)) {
+      const hashPlaceholders = hashChunk.map((_, index) => `?${index + 1}`).join(',');
+      const existingDuplicate = await this.questionsDb.prepare(
+        `SELECT 1 FROM questions WHERE content_hash IN (${hashPlaceholders}) LIMIT 1`,
+      ).bind(...hashChunk).first();
+      if (existingDuplicate !== null) {
+        throw new ApiError(409, 'DUPLICATE_QUESTION', 'Uma ou mais perguntas já existem.');
+      }
     }
 
     const batchId = crypto.randomUUID();
