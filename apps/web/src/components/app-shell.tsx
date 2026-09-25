@@ -1,3 +1,4 @@
+import type { CSSProperties } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { levelProgress } from '@quiz-gomes/domain';
 import { useAuth } from '../features/auth-context.js';
@@ -19,9 +20,17 @@ export function AppShell() {
   const restoring = loading && profile === null && firebaseUser === null;
   const { onlineCount, pendingCount } = useSocial();
   const location = useLocation();
-  const level = profile === null ? null : levelProgress(
+  const progress = profile === null ? null : levelProgress(
     typeof profile.totalXp === 'number' ? profile.totalXp : 0,
-  ).level;
+  );
+  const level = progress?.level ?? null;
+  const activeIndex = destinations.findIndex((destination) => (
+    destination.to === '/'
+      ? location.pathname === '/' || location.pathname.startsWith('/temas/')
+      : location.pathname.startsWith(destination.to)
+  ));
+  const navStyle = { '--nav-index': Math.max(0, activeIndex) } as CSSProperties;
+  const ringStyle = { '--xp-progress': progress?.progress ?? 0 } as CSSProperties;
   return (
     <div className="app-shell">
       <header className="app-header">
@@ -40,23 +49,27 @@ export function AppShell() {
             <small>{level === null ? (firebaseUser ? 'Complete seu perfil' : restoring ? 'Restaurando sessão' : 'Visitante') : `Nível ${level}`}</small>
             <strong>{profile?.displayName ?? firebaseUser?.displayName ?? (restoring ? '...' : 'Entrar')}</strong>
           </span>
-          <AvatarFrame frameId={profile?.equippedFrameId}>
-            <Avatar
-              customUrl={profile?.customAvatarUrl}
-              googleUrl={profile?.photoUrl ?? firebaseUser?.photoURL}
-              name={profile?.displayName ?? firebaseUser?.displayName ?? 'Visitante'}
-              size="small"
-            />
-          </AvatarFrame>
+          <span className={`xp-ring${progress === null ? ' xp-ring--empty' : ''}`} style={ringStyle}>
+            <AvatarFrame frameId={profile?.equippedFrameId}>
+              <Avatar
+                customUrl={profile?.customAvatarUrl}
+                googleUrl={profile?.photoUrl ?? firebaseUser?.photoURL}
+                name={profile?.displayName ?? firebaseUser?.displayName ?? 'Visitante'}
+                size="small"
+              />
+            </AvatarFrame>
+            {level !== null && <span aria-hidden="true" className="xp-ring__level">{level}</span>}
+          </span>
         </NavLink>
       </header>
       <main className="app-content" id="conteudo-principal" key={location.pathname}>
         <Outlet />
       </main>
-      <nav className="bottom-nav" aria-label="Navegação principal">
-        {destinations.map((destination) => (
+      <nav className={`bottom-nav${activeIndex < 0 ? ' bottom-nav--none' : ''}`} aria-label="Navegação principal" style={navStyle}>
+        <span aria-hidden="true" className="bottom-nav__indicator" />
+        {destinations.map((destination, index) => (
           <NavLink
-            className={({ isActive }) => `bottom-nav__item${isActive ? ' bottom-nav__item--active' : ''}`}
+            className={({ isActive }) => `bottom-nav__item${isActive || index === activeIndex ? ' bottom-nav__item--active' : ''}`}
             end={destination.to === '/'}
             key={destination.to}
             to={destination.to}

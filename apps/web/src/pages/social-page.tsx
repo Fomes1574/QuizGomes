@@ -31,6 +31,84 @@ const PRESENCE_ORDER: Record<FriendPresence, number> = {
   RECONNECTING: 3,
 };
 
+interface InviteProfile {
+  customAvatarUrl: string | null;
+  displayName: string;
+  equippedFrameId: string | null;
+  photoUrl: string | null;
+  publicId: string;
+}
+
+/** Cartão de convite: o ID público em destaque e um jeito rápido de chamar a galera. */
+function InviteCard({ lonely, profile }: { lonely: boolean; profile: InviteProfile }) {
+  const [copied, setCopied] = useState<'id' | 'invite' | null>(null);
+  const resetTimer = useRef<number | null>(null);
+  useEffect(() => () => { if (resetTimer.current !== null) window.clearTimeout(resetTimer.current); }, []);
+
+  async function copy(text: string, kind: 'id' | 'invite') {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(kind);
+      if (resetTimer.current !== null) window.clearTimeout(resetTimer.current);
+      resetTimer.current = window.setTimeout(() => setCopied(null), 2_000);
+    } catch {
+      setCopied(null);
+    }
+  }
+
+  async function invite() {
+    const text = `Bora duelar no Quiz Gomes? Me adiciona: ${profile.publicId}`;
+    const url = window.location.origin;
+    const touch = typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches;
+    if (touch && typeof navigator.share === 'function') {
+      try {
+        await navigator.share({ text, title: 'Quiz Gomes', url });
+      } catch {
+        // Fechar a folha de compartilhamento não é erro.
+      }
+      return;
+    }
+    await copy(`${text} ${url}`, 'invite');
+  }
+
+  return (
+    <section aria-label="Seu cartão de jogador" className={`invite-card${lonely ? ' invite-card--lonely' : ''}`}>
+      {lonely && (
+        <div aria-hidden="true" className="invite-orbit">
+          <span className="invite-orbit__ring">
+            {[0, 1, 2, 3].map((slot) => <i className="invite-orbit__slot" key={slot}><Icon name="add" /></i>)}
+          </span>
+          <span className="invite-orbit__center">
+            <AvatarFrame frameId={profile.equippedFrameId}>
+              <Avatar customUrl={profile.customAvatarUrl} googleUrl={profile.photoUrl} name={profile.displayName} size="large" />
+            </AvatarFrame>
+          </span>
+        </div>
+      )}
+      <div className="invite-card__copy">
+        {lonely ? <h2>Sua roda está esperando</h2> : <small>Seu ID público</small>}
+        <button
+          aria-label={`Copiar seu ID público ${profile.publicId}`}
+          className="invite-card__id"
+          onClick={() => void copy(profile.publicId, 'id')}
+          type="button"
+        >
+          {profile.publicId}
+          <Icon name={copied === 'id' ? 'check' : 'copy'} />
+        </button>
+        <p>{lonely
+          ? 'Passe esse código pra galera te achar na busca e desafiar você.'
+          : 'Toque no código para copiar e mandar pra quem quiser duelar.'}</p>
+      </div>
+      <Button className="invite-card__action" onClick={() => void invite()} variant={lonely ? 'primary' : 'secondary'}>
+        <Icon name={copied === 'invite' ? 'check' : 'share'} />
+        {copied === 'invite' ? 'Convite copiado!' : 'Chamar amigos'}
+      </Button>
+      <span aria-live="polite" className="sr-only">{copied === 'id' ? 'ID copiado' : copied === 'invite' ? 'Convite copiado' : ''}</span>
+    </section>
+  );
+}
+
 function SocialIdentity({ presence, user }: { presence?: FriendPresence; user: SocialUser }) {
   return (
     <div className="social-person__identity">
@@ -214,10 +292,7 @@ function FriendsSection({
         ) : null}
       </div>
       {friends.length === 0 ? (
-        <EmptyState
-          description="Busque um jogador pelo nome ou pelo ID público para começar."
-          title="Sua lista está pronta para crescer"
-        />
+        <p className="social-section__empty">Busque um jogador pelo nome ou pelo ID público para começar.</p>
       ) : null}
       {organizedFriends.rows.length > 0 ? (
         <div className="social-friends__list" ref={friendList}>
@@ -468,6 +543,7 @@ export function SocialPage() {
         />
       ) : (
         <>
+          {!loading && <InviteCard lonely={snapshot.friends.length === 0} profile={profile} />}
           <label className="search-field">
             <Icon name="search" />
             <span className="sr-only">Buscar jogador por nome ou ID público</span>

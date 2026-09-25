@@ -1,10 +1,13 @@
 import { LIVE_ROUND_RESULT_MS, QUESTION_DURATION_MS, displayedSeconds, remainingAt } from '@quiz-gomes/domain';
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
+import { feedback } from '../lib/feedback.js';
 import { playDuelFlip, takeDuelOrigin, type DuelSeat } from '../lib/match-handoff.js';
 import { Avatar } from './avatar.js';
 import { AvatarFrame } from './avatar-frame.js';
 
 const OPTION_LABELS = ['A', 'B', 'C', 'D'] as const;
+const OPTION_KEYS: Record<string, number> = { 1: 0, 2: 1, 3: 2, 4: 3, a: 0, b: 1, c: 2, d: 3 };
+const STREAK_VISIBLE_FROM = 2;
 const DUEL_SEATS: readonly DuelSeat[] = ['viewer', 'opponent'];
 const ROUND_OPPONENT_REVEAL_MS = 250;
 const ROUND_SCORE_REVEAL_MS = 550;
@@ -99,6 +102,7 @@ function MatchTimer({
   }, [deadlineMs, onExpire, resolved]);
 
   const running = !resolved && animationStartRemaining > 0;
+  const urgent = running && snapshot.seconds > 0 && snapshot.seconds <= 3;
   const style: MatchTimerStyle = {
     '--timer-duration': `${Math.max(1, animationStartRemaining)}ms`,
     '--timer-from-ratio': animationStartRemaining / QUESTION_DURATION_MS,
@@ -106,15 +110,55 @@ function MatchTimer({
   };
 
   return (
-    <div className="match-timer" role="timer" aria-label={`${snapshot.seconds} segundos restantes`}>
+    <div className={`match-timer${urgent ? ' match-timer--urgent' : ''}`} role="timer" aria-label={`${snapshot.seconds} segundos restantes`}>
       <span
         aria-hidden="true"
         className={`match-timer__bar${running ? ' match-timer__bar--running' : ''}`}
         key={`${resolved ? 'resolved' : 'running'}:${deadlineMs}`}
         style={style}
       />
-      <strong aria-hidden="true">{snapshot.seconds}</strong>
+      <strong aria-hidden="true" key={urgent ? snapshot.seconds : 'calm'}>{snapshot.seconds}</strong>
     </div>
+  );
+}
+
+/** Anel de contagem acima da pergunta: mesma deadline do timer, sem decidir expiração. */
+function MatchTimerRing({ deadlineMs, initialRemainingMs, resolved, verdict }: {
+  deadlineMs: number;
+  initialRemainingMs: number;
+  resolved: boolean;
+  verdict: 'correct' | 'none' | 'wrong';
+}) {
+  const start = normalizedRemaining(resolved ? 0 : initialRemainingMs);
+  const [seconds, setSeconds] = useState(() => displayedSeconds(start));
+  useEffect(() => {
+    if (resolved) return undefined;
+    let timer: number | null = null;
+    const update = () => {
+      const remainingMs = normalizedRemaining(remainingAt(Date.now(), deadlineMs));
+      setSeconds(displayedSeconds(remainingMs));
+      if (remainingMs <= 0) return;
+      const remainder = remainingMs % 1_000;
+      timer = window.setTimeout(update, Math.min(1_000, Math.max(16, remainder === 0 ? 1_000 : remainder)));
+    };
+    update();
+    return () => { if (timer !== null) window.clearTimeout(timer); };
+  }, [deadlineMs, resolved]);
+  const running = !resolved && start > 0;
+  const style = {
+    '--ring-duration': `${Math.max(1, start)}ms`,
+    '--ring-from': start / QUESTION_DURATION_MS,
+    '--ring-now': (seconds * 1_000) / QUESTION_DURATION_MS,
+  } as CSSProperties;
+  const urgent = running && seconds > 0 && seconds <= 3;
+  return (
+    <span aria-hidden="true" className={`timer-ring${running ? ' timer-ring--running' : ''}${urgent ? ' timer-ring--urgent' : ''}${resolved ? ` timer-ring--${verdict}` : ''}`} style={style}>
+      <svg viewBox="0 0 64 64">
+        <circle className="timer-ring__track" cx="32" cy="32" r="28" />
+        <circle className="timer-ring__fill" cx="32" cy="32" pathLength="100" r="28" />
+      </svg>
+      <strong key={resolved ? verdict : urgent ? seconds : 'calm'}>{resolved ? { correct: '✓', none: '–', wrong: '×' }[verdict] : seconds}</strong>
+    </span>
   );
 }
 
@@ -135,6 +179,7 @@ export function MatchScreen({
   resolution,
   round,
   selectedOption,
+  streak = 0,
 }: {
   deadlineMs: number;
   /** Sala desta partida; habilita a continuidade dos retratos vindos do lobby na primeira rodada. */
@@ -154,6 +199,8 @@ export function MatchScreen({
   resolution?: MatchResolutionView | undefined;
   round?: { number: number; total: number } | undefined;
   selectedOption?: number | null | undefined;
+  /** Acertos seguidos do jogador até a última rodada resolvida; só apresentação. */
+  streak?: number;
 }) {
   const [localSelected, setLocalSelected] = useState<number | null>(selectedOption ?? resolution?.viewer.selectedOption ?? null);
   const [expiredDeadline, setExpiredDeadline] = useState<number | null>(null);
@@ -169,6 +216,32 @@ export function MatchScreen({
   const visuallyExpired = expiredDeadline === deadlineMs || remainingMs <= 0;
   const opponentSelected = resolution?.opponent.selectedOption ?? null;
   const handleExpire = useCallback(() => setExpiredDeadline(deadlineMs), [deadlineMs]);
+  const answersLocked = preparing || selected !== null || visuallyExpired || resolved;
+  const choose = useCallback((index: number) => {
+    feedback('tap');
+    setLocalSelected(index);
+    onAnswer(index);
+  }, [onAnswer]);
+
+  useEffect(() => {
+    if (answersLocked) return undefined;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.altKey || event.ctrlKey || event.metaKey || event.repeat) return;
+      const index = OPTION_KEYS[event.key.toLowerCase()];
+      if (index === undefined) return;
+      event.preventDefault();
+      choose(index);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [answersLocked, choose]);
+
+  const viewerAnsweredThisRound = resolution?.viewer.selectedOption !== null && resolution?.viewer.selectedOption !== undefined;
+  const viewerCorrect = resolution?.viewer.correct;
+  useEffect(() => {
+    if (!resolved || !viewerAnsweredThisRound) return;
+    feedback(viewerCorrect === true ? 'correct' : 'wrong');
+  }, [resolved, viewerAnsweredThisRound, viewerCorrect]);
   const screenStyle: MatchScreenStyle = {
     '--match-question-delay': `${questionEntranceDelayMs}ms`,
     '--match-result-duration': `${LIVE_ROUND_RESULT_MS}ms`,
@@ -232,11 +305,26 @@ export function MatchScreen({
             >{opponentPending ? '—' : displayedScores.opponent}</strong>
           </span>
         </div>
-        {round !== undefined && <span className="round-counter">PERGUNTA {round.number} / {round.total}</span>}
+        {round !== undefined && (
+          <span className="round-counter">
+            <span>Pergunta {round.number} de {round.total}</span>
+            <span aria-hidden="true" className="round-steps">
+              {Array.from({ length: round.total }, (_, index) => (
+                <i data-step={index + 1 < round.number ? 'done' : index + 1 === round.number ? 'current' : 'next'} key={index} />
+              ))}
+            </span>
+          </span>
+        )}
         <div className="player-chip">
           <span className="match-scoreboard__copy">
             <small>Você</small>
             <strong aria-live="polite" key={displayedScores.player}>{displayedScores.player}</strong>
+            {streak >= STREAK_VISIBLE_FROM && (
+              <span aria-label={`${streak} acertos seguidos`} className="streak-chip" key={streak}>
+                <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 22c4 0 7-2.7 7-6.8 0-3.4-2.1-5.6-3.6-7.4-.4 1.9-1.4 3-2.6 3.4.3-3.5-1.3-6.6-4.3-9.2.2 3.4-1.4 5.3-3 7.2C4.3 10.7 5 13.1 5 15.2 5 19.3 8 22 12 22Z" /></svg>
+                {streak}
+              </span>
+            )}
             {resolved && resolution.viewer.roundScore > 0 && (
               <span aria-label={`${resolution.viewer.roundScore} pontos ganhos`} className="score-gain">
                 +{resolution.viewer.roundScore}
@@ -249,6 +337,15 @@ export function MatchScreen({
         </div>
       </header>
       <section className="question-stage">
+        {!preparing && (
+          <MatchTimerRing
+            deadlineMs={deadlineMs}
+            initialRemainingMs={remainingMs}
+            key={`${deadlineMs}:${resolved ? 'resolved' : 'active'}`}
+            resolved={resolved}
+            verdict={!viewerAnsweredThisRound ? 'none' : viewerCorrect === true ? 'correct' : 'wrong'}
+          />
+        )}
         {question.imageUrl && <img alt="Imagem da pergunta" className="question-image" src={question.imageUrl} />}
         <h1>{question.prompt}</h1>
         <div className="answer-grid">
@@ -270,9 +367,10 @@ export function MatchScreen({
               <button
                 aria-label={`${OPTION_LABELS[index]}: ${option}${correct ? ' — correta' : incorrect ? ' — incorreta' : ''}${viewerRevealedHere ? ' — sua resposta' : ''}${opponentRevealedHere ? ' — resposta do adversário' : ''}`}
                 className={className}
-                disabled={preparing || selected !== null || visuallyExpired || resolved}
+                data-option={OPTION_LABELS[index]}
+                disabled={answersLocked}
                 key={OPTION_LABELS[index]}
-                onClick={() => { setLocalSelected(index); onAnswer(index); }}
+                onClick={() => choose(index)}
                 type="button"
               >
                 <span aria-hidden="true" className="answer-option__marker">{marker}</span>
