@@ -1488,6 +1488,46 @@ migrations foi iniciada no ambiente local, mas não terminou de emitir resultado
 nesta sessão, portanto o smoke/pipeline Workers continua obrigatório antes de
 declarar deploy.
 
+### 2026-09-25 — Pacote de engajamento aprovado pelo proprietário
+
+Implementado no branch `claude/epic-curie-6fhob6` (pendente de aprovação para a
+`main`). Rejeitados pelo proprietário e **não** implementados: "Hora do Duelo" e
+fila "Qualquer tema". Adiados: jogar sem conta e logins alternativos (telefone
+exige SMS/Blaze, vetado; e-mail e Microsoft dependem de mudar a regra que hoje
+limita o Firebase a Google) — decisão pendente registrada.
+
+- **Recorde pessoal por tema e modo** (Core `0017`): gravado no mesmo lote do
+  `result_ledger` (idempotente), com backfill das partidas ao vivo concluídas,
+  exibido na página do tema e anunciado no resultado.
+- **Resultado**: "Jogar de novo" (mesma fila), "Adicionar <adversário>" (rota que
+  descobre o adversário pela partida, sem IDOR), revisão com ✓ certa/× escolhida
+  só depois de cada rodada resolvida, carta 9:16 para stories e convite para
+  instalar o PWA na primeira vitória.
+- **Fotos nas perguntas**: upload ADMIN (arquivo, arrastar, Ctrl+V), compressão
+  no navegador (~60 KB, ≤ 960 px, EXIF aplicado e descartado), validação no Worker,
+  R2 com chave versionada e limpeza de órfãos, moldura de altura fixa, ampliação
+  sem pausar o relógio e `ROUND_READY` só depois da foto (teto 4 s < carência
+  7 s). Sem campo de licença. Índice parcial `image_key` (Questions `0009`).
+- **Fila visível**: contagem por tema+modo (nunca identidades) via hub social,
+  persistida no storage do DO, com agrupamento de 1,5 s e sem polling. Inclui o
+  "Surpreenda-me" priorizando filas com gente, a sugestão de fila vizinha, as
+  saídas no timeout (Chamar alguém / Desafiar amigo / Tentar de novo) e o link
+  "Me chama nessa fila" (`?jogar=`), compartilhado antes de entrar na fila.
+  Celular fora do app por ≥ 20 s pausa a busca em vez de gerar partida anulada
+  para o adversário.
+- **Aviso "amigo na fila"** (Core `0018`): opt-in; só se o amigo segue na mesma
+  fila após 10 s; respeita bloqueio e silenciamento; ≤ 20 destinatários, 1 rodada
+  a cada 30 min por remetente e 1 aviso por hora por destinatário.
+- **Prévia de link** de `/temas/:slug` via HTMLRewriter. Os cabeçalhos de
+  segurança da API continuam restritos a `/api/*`.
+- **Votação "Qual tema você quer ver?"** (tabelas da `0017`): o ADMIN define os
+  candidatos e os jogadores votam, com contagem recalculada no mesmo lote.
+- **Avatares no R2** (Core `0019`, autorizado pelo proprietário nesta rodada):
+  reconstrução de `user_custom_avatars` preservando todas as linhas; novos
+  avatares vão para `avatars/` no bucket privado existente, sem recurso novo.
+
+Custo: nenhum produto novo; DO, D1 e R2 continuam no free tier.
+
 ## Critério de saída desta execução
 
 - Milestones 8 e 8.5 aprovados fisicamente e congelados;

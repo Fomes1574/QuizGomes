@@ -260,9 +260,10 @@ function assertFinalSchema(scenario) {
 
   const appliedMigrations = query(scenario, 'SELECT name FROM d1_migrations ORDER BY id');
   assert(
-    appliedMigrations.at(-1)?.name === '0018_friend_queue_alerts.sql',
-    `${scenario.name}: 0018 de avisos de amigo na fila não foi registrada como última migration`,
+    appliedMigrations.at(-1)?.name === '0019_avatar_object_storage.sql',
+    `${scenario.name}: 0019 de avatar no armazenamento de objetos não foi registrada como última migration`,
   );
+  assertAvatarObjectStorageSchema(scenario);
   assertPersonalRecordsAndVotesSchema(scenario);
   assertFriendQueueAlertsSchema(scenario);
   const upgradedTheme = query(scenario, `
@@ -860,6 +861,58 @@ function assertArtworkInvariants(scenario) {
 }
 
 /** @param {MigrationScenario} scenario */
+function assertAvatarObjectStorageSchema(scenario) {
+  const columns = query(scenario, 'PRAGMA table_info(user_custom_avatars)').map(({ name }) => name);
+  assert(columns.includes('object_key'), `${scenario.name}: coluna object_key do avatar ausente`);
+  const probeId = `avatar-object-${scenario.name}`;
+  executeSql(scenario, `
+    INSERT INTO users (id, firebase_uid) VALUES ('${probeId}', 'firebase-${probeId}');
+    INSERT INTO user_custom_avatars (user_id, version, active, content_type, width, height, byte_length, object_key)
+    VALUES ('${probeId}', 3, 1, 'image/webp', 256, 256, 900, 'avatars/${probeId}/v3.webp');
+  `);
+  // Chave de outra versão/usuário, ou BLOB e ponteiro juntos, nunca passam.
+  executeSql(scenario, `UPDATE user_custom_avatars SET object_key = 'avatars/${probeId}/v9.webp' WHERE user_id = '${probeId}';`, true);
+  executeSql(scenario, `UPDATE user_custom_avatars SET image_data = X'00', byte_length = 1 WHERE user_id = '${probeId}';`, true);
+  executeSql(scenario, `UPDATE user_custom_avatars SET object_key = NULL WHERE user_id = '${probeId}';`, true);
+  const foreignKeys = query(scenario, 'PRAGMA foreign_key_list(user_custom_avatars)');
+  assert(
+    foreignKeys.some((key) => key.table === 'users' && key.on_delete === 'CASCADE'),
+    `${scenario.name}: FK do avatar para users perdeu o CASCADE na reconstrução`,
+  );
+  executeSql(scenario, `DELETE FROM users WHERE id = '${probeId}';`);
+  assert(
+    query(scenario, `SELECT 1 FROM user_custom_avatars WHERE user_id = '${probeId}'`).length === 0,
+    `${scenario.name}: excluir o usuário não removeu o avatar`,
+  );
+}
+
+/** Avatares antes da 0019: BLOB ativo e remoção precisam sobreviver à reconstrução. @param {MigrationScenario} scenario */
+function seedAvatarRebuildFixture(scenario) {
+  const userId = `avatar-rebuild-${scenario.name}`;
+  executeSql(scenario, `
+    INSERT INTO users (id, firebase_uid) VALUES ('${userId}', 'firebase-${userId}');
+    INSERT INTO user_custom_avatars (user_id, version, active, content_type, width, height, byte_length, image_data, updated_at)
+    VALUES ('${userId}', 7, 1, 'image/webp', 256, 256, 3, X'010203', '2026-01-02 03:04:05');
+  `);
+  return userId;
+}
+
+/** @param {MigrationScenario} scenario @param {string} userId */
+function assertAvatarRebuildPreserved(scenario, userId) {
+  const rows = query(scenario, `
+    SELECT version, active, byte_length, hex(image_data) AS data, object_key, updated_at
+      FROM user_custom_avatars WHERE user_id = '${userId}'
+  `);
+  assert(
+    rows.length === 1 && rows[0].version === 7 && rows[0].active === 1 && rows[0].byte_length === 3
+      && rows[0].data === '010203' && rows[0].object_key === null && rows[0].updated_at === '2026-01-02 03:04:05',
+    `${scenario.name}: reconstrução da tabela de avatar perdeu dados`,
+  );
+  const upgraded = query(scenario, `SELECT COUNT(*) AS total FROM user_custom_avatars`);
+  assert(upgraded[0]?.total >= 2, `${scenario.name}: linhas antigas de avatar sumiram na reconstrução`);
+}
+
+/** @param {MigrationScenario} scenario */
 function assertFriendQueueAlertsSchema(scenario) {
   const alertColumns = query(scenario, 'PRAGMA table_info(friend_queue_alerts)').map(({ name }) => name);
   assert(
@@ -1231,6 +1284,10 @@ try {
     migrationNames.includes('0018_friend_queue_alerts.sql'),
     'Migration Core 0018 de avisos de amigo na fila ausente',
   );
+  assert(
+    migrationNames.includes('0019_avatar_object_storage.sql'),
+    'Migration Core 0019 de avatar no armazenamento de objetos ausente',
+  );
   assert(questionMigrationNames.includes('0003_expand_synthetic_smoke_test.sql'), 'Migration Questions 0003 ausente');
   assert(
     questionMigrationNames.includes('0004_question_editorial_versioning.sql'),
@@ -1291,6 +1348,7 @@ try {
       '0016_reset_stale_pool_discovery.sql',
       '0017_personal_records_and_theme_votes.sql',
       '0018_friend_queue_alerts.sql',
+      '0019_avatar_object_storage.sql',
     ].includes(name)),
   );
   console.log('Validando upgrade D1 exato de 0003 para 0004...');
@@ -1434,6 +1492,14 @@ try {
     join(upgradeDatabase.migrationsDirectory, '0018_friend_queue_alerts.sql'),
   );
   applyMigrations(upgradeDatabase);
+  console.log('Validando upgrade D1 atual exato de 0018 para 0019 avatar no armazenamento de objetos...');
+  const avatarRebuildUserId = seedAvatarRebuildFixture(upgradeDatabase);
+  await copyFile(
+    join(coreSourceMigrationsDirectory, '0019_avatar_object_storage.sql'),
+    join(upgradeDatabase.migrationsDirectory, '0019_avatar_object_storage.sql'),
+  );
+  applyMigrations(upgradeDatabase);
+  assertAvatarRebuildPreserved(upgradeDatabase, avatarRebuildUserId);
   assertFinalSchema(upgradeDatabase);
   console.log('Validando rollback transacional de migration com erro...');
   await assertRollback(upgradeDatabase);
@@ -1539,7 +1605,7 @@ try {
   applyMigrations(upgradeQuestions);
   assertQuestionImageKeyIndex(upgradeQuestions);
 
-  console.log('Migrations D1 aprovadas: parser Wrangler, bancos vazios, upgrades Core 0003→0004→0005→0006→0007→0008→0009→0010→0011→0012→0013→0014→0015→0016→0017→0018 e Questions 0002→0003→0004→0005→0006→0007→0008→0009, invariantes sociais, de desafio, de ledger de conclusão, de denúncia, editoriais, pool único por tema, índices de exportação e de foto, rollback e schemas finais.');
+  console.log('Migrations D1 aprovadas: parser Wrangler, bancos vazios, upgrades Core 0003→0004→0005→0006→0007→0008→0009→0010→0011→0012→0013→0014→0015→0016→0017→0018→0019 e Questions 0002→0003→0004→0005→0006→0007→0008→0009, invariantes sociais, de desafio, de ledger de conclusão, de denúncia, editoriais, pool único por tema, índices de exportação e de foto, rollback e schemas finais.');
 } finally {
   await rm(temporaryRoot, { force: true, recursive: true });
 }

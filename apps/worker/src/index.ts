@@ -449,9 +449,16 @@ async function profileAvatarRoute(request: Request, env: Env): Promise<Response>
     if (dimensions?.width !== CUSTOM_AVATAR_DIMENSION || dimensions.height !== CUSTOM_AVATAR_DIMENSION) {
       throw new ApiError(400, 'AVATAR_INVALID', 'O avatar precisa ser WebP válido de 256 × 256 px, sem metadata.');
     }
-    profile = await repository.replaceCustomAvatar(identity.uid, data);
+    try {
+      profile = await repository.replaceCustomAvatar(identity.uid, data, env.QUESTION_IMAGES);
+    } catch (error) {
+      if (error instanceof Error && error.message === 'AVATAR_VERSION_CONFLICT') {
+        throw new ApiError(409, 'AVATAR_VERSION_CONFLICT', 'O avatar mudou em outra sessão. Tente de novo.');
+      }
+      throw error;
+    }
   } else if (request.method === 'DELETE') {
-    profile = await repository.removeCustomAvatar(identity.uid);
+    profile = await repository.removeCustomAvatar(identity.uid, env.QUESTION_IMAGES);
   } else {
     throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Método não permitido.');
   }
@@ -462,6 +469,7 @@ async function profileAvatarRoute(request: Request, env: Env): Promise<Response>
 async function customAvatarRoute(
   request: Request,
   repository: UserRepository,
+  bucket: R2Bucket,
   userId: string,
   version: number,
 ): Promise<Response> {
@@ -478,7 +486,12 @@ async function customAvatarRoute(
     ETag: etag,
   });
   if (request.headers.get('If-None-Match') === etag) return new Response(null, { headers, status: 304 });
-  return new Response(request.method === 'HEAD' ? null : avatar.data, { headers });
+  if (avatar.kind === 'blob') return new Response(request.method === 'HEAD' ? null : avatar.data, { headers });
+  // Ponteiro validado pelo D1 (CHECK da 0019): o cliente nunca escolhe a chave.
+  const object = await bucket.get(avatar.objectKey);
+  if (object === null) throw new ApiError(404, 'AVATAR_NOT_FOUND', 'Avatar não encontrado.');
+  headers.set('Content-Length', String(object.size));
+  return new Response(request.method === 'HEAD' ? null : object.body, { headers });
 }
 
 /**
@@ -1999,7 +2012,7 @@ async function apiRoute(request: Request, env: Env, url: URL, context: Execution
   if (customAvatarMatch?.[1] !== undefined && customAvatarMatch[2] !== undefined) {
     const version = Number(customAvatarMatch[2]);
     if (!Number.isSafeInteger(version)) throw new ApiError(404, 'NOT_FOUND', 'Rota não encontrada.');
-    return customAvatarRoute(request, new UserRepository(env.CORE_DB), decodeURIComponent(customAvatarMatch[1]), version);
+    return customAvatarRoute(request, new UserRepository(env.CORE_DB), env.QUESTION_IMAGES, decodeURIComponent(customAvatarMatch[1]), version);
   }
   const artworkMatch = /^\/api\/theme-artwork\/([a-z0-9_-]{1,128})\/v([1-9]\d*)\.webp$/i.exec(url.pathname);
   if (artworkMatch?.[1] !== undefined && artworkMatch[2] !== undefined) {

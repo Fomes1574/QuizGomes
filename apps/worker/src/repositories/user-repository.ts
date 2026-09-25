@@ -92,6 +92,11 @@ function safeGooglePhoto(url: string | null): string | null {
   }
 }
 
+/** Mesmo formato exigido pelo CHECK da migration 0019. */
+export function customAvatarObjectKey(userId: string, version: number): string {
+  return `avatars/${userId}/v${version}.webp`;
+}
+
 export class UserRepository {
   constructor(private readonly db: D1Database) {}
 
@@ -227,28 +232,53 @@ export class UserRepository {
     return this.findByFirebaseUid(uid);
   }
 
-  async replaceCustomAvatar(uid: string, data: ArrayBuffer): Promise<UserProfileRecord | null> {
-    await this.db.prepare(
-      `INSERT INTO user_custom_avatars (
-         user_id, version, active, content_type, width, height, byte_length, image_data
-       )
-       SELECT id, 1, 1, 'image/webp', 256, 256, ?1, ?2
-         FROM users
-        WHERE firebase_uid = ?3 AND disabled_at IS NULL
-       ON CONFLICT(user_id) DO UPDATE SET
-         version = user_custom_avatars.version + 1,
-         active = 1,
-         content_type = 'image/webp',
-         width = 256,
-         height = 256,
-         byte_length = excluded.byte_length,
-         image_data = excluded.image_data,
-         updated_at = CURRENT_TIMESTAMP`,
-    ).bind(data.byteLength, data, uid).run();
+  /**
+   * Novo avatar vai para o R2 (bucket privado, prefixo "avatars/") com chave
+   * nova por versão; o D1 guarda só o ponteiro. CAS pela versão anterior:
+   * duas trocas simultâneas nunca se sobrescrevem em silêncio. Se o D1
+   * recusar, o objeto recém-gravado é apagado. O objeto anterior sai do
+   * bucket depois que o ponteiro já mudou.
+   */
+  async replaceCustomAvatar(uid: string, data: ArrayBuffer, bucket: R2Bucket): Promise<UserProfileRecord | null> {
+    const current = await this.db.prepare(
+      `SELECT u.id AS user_id, a.version, a.object_key
+         FROM users u
+         LEFT JOIN user_custom_avatars a ON a.user_id = u.id
+        WHERE u.firebase_uid = ?1 AND u.disabled_at IS NULL`,
+    ).bind(uid).first<{ object_key: string | null; user_id: string; version: number | null }>();
+    if (current === null) return null;
+    const nextVersion = (current.version ?? 0) + 1;
+    const key = customAvatarObjectKey(current.user_id, nextVersion);
+    await bucket.put(key, data, { httpMetadata: { contentType: 'image/webp' } });
+    const statement = current.version === null
+      ? this.db.prepare(
+        `INSERT OR IGNORE INTO user_custom_avatars (
+           user_id, version, active, content_type, width, height, byte_length, image_data, object_key
+         ) VALUES (?1, ?2, 1, 'image/webp', 256, 256, ?3, NULL, ?4)`,
+      ).bind(current.user_id, nextVersion, data.byteLength, key)
+      : this.db.prepare(
+        `UPDATE user_custom_avatars
+            SET version = ?2, active = 1, content_type = 'image/webp', width = 256, height = 256,
+                byte_length = ?3, image_data = NULL, object_key = ?4, updated_at = CURRENT_TIMESTAMP
+          WHERE user_id = ?1 AND version = ?5`,
+      ).bind(current.user_id, nextVersion, data.byteLength, key, current.version);
+    let changes = 0;
+    try {
+      changes = (await statement.run()).meta.changes ?? 0;
+    } finally {
+      if (changes !== 1) await bucket.delete(key).catch(() => undefined);
+    }
+    if (changes !== 1) throw new Error('AVATAR_VERSION_CONFLICT');
+    if (current.object_key !== null) await bucket.delete(current.object_key).catch(() => undefined);
     return this.findByFirebaseUid(uid);
   }
 
-  async removeCustomAvatar(uid: string): Promise<UserProfileRecord | null> {
+  async removeCustomAvatar(uid: string, bucket: R2Bucket): Promise<UserProfileRecord | null> {
+    const current = await this.db.prepare(
+      `SELECT a.object_key FROM user_custom_avatars a
+         JOIN users u ON u.id = a.user_id
+        WHERE u.firebase_uid = ?1 AND u.disabled_at IS NULL AND a.active = 1`,
+    ).bind(uid).first<{ object_key: string | null }>();
     await this.db.prepare(
       `UPDATE user_custom_avatars
           SET version = version + 1,
@@ -258,35 +288,43 @@ export class UserRepository {
               height = NULL,
               byte_length = NULL,
               image_data = NULL,
+              object_key = NULL,
               updated_at = CURRENT_TIMESTAMP
         WHERE user_id = (
           SELECT id FROM users WHERE firebase_uid = ?1 AND disabled_at IS NULL
         ) AND active = 1`,
     ).bind(uid).run();
+    if (current?.object_key != null) await bucket.delete(current.object_key).catch(() => undefined);
     return this.findByFirebaseUid(uid);
   }
 
-  async readCustomAvatar(userId: string, version: number): Promise<{
-    byteLength: number;
-    contentType: 'image/webp';
-    data: ArrayBuffer;
-  } | null> {
+  /** Avatar ativo nesta versão: BLOB antigo no D1 ou ponteiro para o R2. */
+  async readCustomAvatar(userId: string, version: number): Promise<
+    | { byteLength: number; contentType: 'image/webp'; data: ArrayBuffer; kind: 'blob' }
+    | { byteLength: number; contentType: 'image/webp'; kind: 'object'; objectKey: string }
+    | null
+  > {
     const row = await this.db.prepare(
-      `SELECT content_type, byte_length, image_data
+      `SELECT content_type, byte_length, image_data, object_key
          FROM user_custom_avatars
         WHERE user_id = ?1 AND version = ?2 AND active = 1`,
     ).bind(userId, version).first<{
       byte_length: number;
       content_type: 'image/webp';
       image_data: unknown;
+      object_key: string | null;
     }>();
     if (row === null) return null;
+    if (row.object_key !== null) {
+      return { byteLength: row.byte_length, contentType: row.content_type, kind: 'object', objectKey: row.object_key };
+    }
     const data = d1BlobToArrayBuffer(row.image_data, row.byte_length);
     if (data === null) return null;
     return {
       byteLength: row.byte_length,
       contentType: row.content_type,
       data,
+      kind: 'blob',
     };
   }
 

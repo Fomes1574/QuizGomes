@@ -136,8 +136,8 @@ npm run deploy:cloudflare -w @quiz-gomes/worker
 
 `test:migrations` aplica somente migrations pendentes:
 
-- `QUESTIONS_DB`: `0001_questions.sql` até `0008_question_export_index.sql`;
-- `CORE_DB`: `0001_core.sql` até `0016_reset_stale_pool_discovery.sql`.
+- `QUESTIONS_DB`: `0001_questions.sql` até `0009_question_image_key_index.sql`;
+- `CORE_DB`: `0001_core.sql` até `0019_avatar_object_storage.sql`.
 
 Questions é aplicado primeiro para que o tema temporário só fique visível depois que seu pool estiver pronto. Wrangler registra o histórico em `d1_migrations`; retries não reaplicam versões concluídas. Se uma migration falhar, o D1 reverte integralmente aquela migration, preserva as anteriores e o deploy não começa. Arquivos já aplicados são imutáveis e qualquer correção posterior é forward-only. Uma migration que falhou e não foi registrada, como a primeira tentativa remota da `0004_theme_artwork.sql`, continua pendente e deve ser corrigida no próprio arquivo antes do retry — não recebe uma compensação vazia ou manual.
 
@@ -145,8 +145,8 @@ Questions é aplicado primeiro para que o tema temporário só fique visível de
 
 - lê e passa todas as migrations pelo splitter SQL exportado pelo Wrangler, incluindo o statement de tracking;
 - exige LF e bloqueia `CREATE TRIGGER`, pois compound statements continuam sujeitos a diferenças entre o splitter local e o parser multi-statement do endpoint D1 `/query` usado por migrations remotas;
-- aplica Core `0001–0016` e Questions `0001–0008` em bancos vazios e isolados;
-- prova os upgrades Core `0003→0004→0005→0006→0007→0008→0009→0010→0011→0012→0013→0014→0015→0016` e Questions `0002→0003→0004→0005→0006→0007→0008`, incluindo a passagem exata do pool sintético de 30 para 250 slots;
+- aplica Core `0001–0019` e Questions `0001–0009` em bancos vazios e isolados;
+- prova os upgrades Core `0003→0004→0005→0006→0007→0008→0009→0010→0011→0012→0013→0014→0015→0016→0017→0018→0019` e Questions `0002→0003→0004→0005→0006→0007→0008→0009` (a `0019` reconstrói `user_custom_avatars` e o gate confere que BLOBs, versões, datas e a FK com CASCADE sobrevivem), incluindo a passagem exata do pool sintético de 30 para 250 slots;
 - valida pedidos cruzados, constraints direcionais de recusas/bloqueios e instalações FCM no schema social;
 - inspeciona colunas, índice e FK composta, e tenta estados inválidos de metadata/BLOB;
 - injeta uma migration temporária que falha depois de criar/escrever e comprova rollback de schema e de `d1_migrations`.
@@ -221,7 +221,14 @@ Nenhum destes itens foi executado fisicamente nesta entrega; ficam pendentes de 
 
 Antes do primeiro deploy desta versão, crie em **Cloudflare → R2 → Create bucket** o bucket privado com o nome exato `quiz-gomes-question-images`. Mantenha o bucket sem domínio público e não habilite `r2.dev`: o binding `QUESTION_IMAGES` de `apps/worker/wrangler.jsonc` permite acesso somente pelo Worker. Não existe token, API key, variável de ambiente ou credencial R2 para colocar no GitHub.
 
-O Worker só serve `GET`/`HEAD` para a chave WebP versionada que também consta em `questions.image_key`; uma chave arbitrária, objeto sem referência no D1 ou tipo incorreto retorna 404. As respostas recebem ETag, cache imutável e `nosniff`. O adapter preserva os metadados de licença/fonte, mas esta entrega não inclui uma tela de upload de imagens: perguntas novas continuam sem imagem até a próxima função administrativa validar e enviar os arquivos. Isso evita referências fantasma e mantém o bucket privado.
+O Worker só serve `GET`/`HEAD` para a chave WebP versionada que também consta em `questions.image_key`; uma chave arbitrária, objeto sem referência no D1 ou tipo incorreto retorna 404. As respostas recebem ETag, cache imutável e `nosniff`.
+
+O mesmo bucket guarda, sem nenhum recurso novo na Cloudflare:
+
+- `questions/<id>/v<instante>.webp`: fotos de perguntas enviadas pelo ADMIN em `PUT /api/admin/questions/:id/image` (WebP revalidado no Worker, < 100 KB, sem campo de licença). A pergunta só aponta para a chave depois que o objeto existe; o objeto anterior é apagado quando nenhuma pergunta ou rascunho o referencia.
+- `avatars/<userId>/v<versão>.webp`: avatares personalizados a partir da migration Core `0019`. O D1 guarda só o ponteiro (o CHECK exige exatamente essa chave para a versão ativa); avatares antigos em BLOB continuam servidos e migram quando o jogador troca a foto.
+
+Nenhum dos dois prefixos é listável ou acessível sem passar pelo Worker.
 
 ## Fontes oficiais consultadas
 

@@ -21,24 +21,26 @@ beforeAll(async () => {
 });
 
 describe('avatar personalizado no runtime Workers', () => {
-  it('troca, versiona, serve com cache imutável e remove sem guardar o original', async () => {
+  it('troca, versiona, guarda no R2, serve com cache imutável e remove sem guardar o original', async () => {
     const repository = new UserRepository(env.CORE_DB);
     const bytes = avatarBytes();
-    const first = await repository.replaceCustomAvatar(FIREBASE_UID, bytes);
+    const first = await repository.replaceCustomAvatar(FIREBASE_UID, bytes, env.QUESTION_IMAGES);
     expect(first?.customAvatarUrl).toBe(`/api/avatars/${USER_ID}/v1.webp`);
     expect(first?.photoUrl).toBe('https://lh3.googleusercontent.com/fallback-real');
     expect(JSON.stringify(first)).not.toContain(AVATAR_256_WEBP.slice(0, 32));
     expect(await env.CORE_DB.prepare(
-      `SELECT active, content_type, width, height, byte_length, length(image_data) AS stored_length
+      `SELECT active, content_type, width, height, byte_length, image_data, object_key
          FROM user_custom_avatars WHERE user_id = ?1`,
     ).bind(USER_ID).first()).toEqual({
       active: 1,
       byte_length: bytes.byteLength,
       content_type: 'image/webp',
       height: 256,
-      stored_length: bytes.byteLength,
+      image_data: null,
+      object_key: `avatars/${USER_ID}/v1.webp`,
       width: 256,
     });
+    expect(await env.QUESTION_IMAGES.head(`avatars/${USER_ID}/v1.webp`)).not.toBeNull();
 
     const image = await SELF.fetch(`https://quiz.test${first?.customAvatarUrl}`);
     expect(image.status).toBe(200);
@@ -50,21 +52,59 @@ describe('avatar personalizado no runtime Workers', () => {
     });
     expect(notModified.status).toBe(304);
 
-    const replacement = await repository.replaceCustomAvatar(FIREBASE_UID, bytes);
+    const replacement = await repository.replaceCustomAvatar(FIREBASE_UID, bytes, env.QUESTION_IMAGES);
     expect(replacement?.customAvatarUrl).toBe(`/api/avatars/${USER_ID}/v2.webp`);
     expect(await SELF.fetch(`https://quiz.test/api/avatars/${USER_ID}/v1.webp`).then((response) => response.status))
       .toBe(404);
+    expect(await env.QUESTION_IMAGES.head(`avatars/${USER_ID}/v1.webp`)).toBeNull();
     expect(await env.CORE_DB.prepare('SELECT COUNT(*) AS total FROM user_custom_avatars WHERE user_id = ?1')
       .bind(USER_ID).first()).toEqual({ total: 1 });
 
-    const removed = await repository.removeCustomAvatar(FIREBASE_UID);
+    const removed = await repository.removeCustomAvatar(FIREBASE_UID, env.QUESTION_IMAGES);
     expect(removed?.customAvatarUrl).toBeNull();
     expect(removed?.photoUrl).toBe('https://lh3.googleusercontent.com/fallback-real');
     expect(await env.CORE_DB.prepare(
       'SELECT active, version, image_data, byte_length FROM user_custom_avatars WHERE user_id = ?1',
     ).bind(USER_ID).first()).toEqual({ active: 0, byte_length: null, image_data: null, version: 3 });
+    expect(await env.QUESTION_IMAGES.head(`avatars/${USER_ID}/v2.webp`)).toBeNull();
     expect(await SELF.fetch(`https://quiz.test/api/avatars/${USER_ID}/v2.webp`).then((response) => response.status))
       .toBe(404);
+  });
+
+  it('avatar antigo em BLOB no D1 continua sendo servido e migra para o R2 na próxima troca', async () => {
+    const legacyId = 'avatar-user-legacy-blob';
+    const legacyUid = 'avatar-legacy-firebase';
+    const bytes = avatarBytes();
+    await env.CORE_DB.batch([
+      env.CORE_DB.prepare('INSERT INTO users (id, firebase_uid) VALUES (?1, ?2)').bind(legacyId, legacyUid),
+      env.CORE_DB.prepare("INSERT INTO user_profiles (user_id, public_id, display_name) VALUES (?1, '#QGAVATAR3', 'Legado')").bind(legacyId),
+      env.CORE_DB.prepare(
+        `INSERT INTO user_custom_avatars (user_id, version, active, content_type, width, height, byte_length, image_data)
+         VALUES (?1, 4, 1, 'image/webp', 256, 256, ?2, ?3)`,
+      ).bind(legacyId, bytes.byteLength, bytes),
+    ]);
+    const legacy = await SELF.fetch(`https://quiz.test/api/avatars/${legacyId}/v4.webp`);
+    expect(legacy.status).toBe(200);
+    expect(await legacy.arrayBuffer()).toEqual(bytes);
+    const migrated = await new UserRepository(env.CORE_DB).replaceCustomAvatar(legacyUid, bytes, env.QUESTION_IMAGES);
+    expect(migrated?.customAvatarUrl).toBe(`/api/avatars/${legacyId}/v5.webp`);
+    expect(await env.CORE_DB.prepare('SELECT image_data, object_key FROM user_custom_avatars WHERE user_id = ?1')
+      .bind(legacyId).first()).toEqual({ image_data: null, object_key: `avatars/${legacyId}/v5.webp` });
+  });
+
+  it('o ponteiro do R2 só aceita a chave da própria versão', async () => {
+    const id = 'avatar-user-pointer';
+    await env.CORE_DB.batch([
+      env.CORE_DB.prepare('INSERT INTO users (id, firebase_uid) VALUES (?1, ?2)').bind(id, 'avatar-pointer-firebase'),
+    ]);
+    await expect(env.CORE_DB.prepare(
+      `INSERT INTO user_custom_avatars (user_id, version, active, content_type, width, height, byte_length, object_key)
+       VALUES (?1, 1, 1, 'image/webp', 256, 256, 10, 'questions/outra-coisa.webp')`,
+    ).bind(id).run()).rejects.toThrow(/CHECK constraint failed/);
+    await expect(env.CORE_DB.prepare(
+      `INSERT INTO user_custom_avatars (user_id, version, active, content_type, width, height, byte_length, image_data, object_key)
+       VALUES (?1, 1, 1, 'image/webp', 256, 256, 1, X'00', 'avatars/avatar-user-pointer/v1.webp')`,
+    ).bind(id).run()).rejects.toThrow(/CHECK constraint failed/);
   });
 
   it('faz a mutação somente pela identidade autenticada e bloqueia upload anônimo', async () => {
