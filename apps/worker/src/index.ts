@@ -52,7 +52,7 @@ import { questionExportCsvHeader, questionExportCsvRow } from './services/questi
 import { parseQuestionsCsv } from './services/question-csv.js';
 import { DirectChallengeService } from './services/direct-challenge-service.js';
 import { SocialPushService } from './services/social-push-service.js';
-import { inspectWebp, THEME_ARTWORK_MAX_BYTES } from './storage/webp.js';
+import { inspectQuestionImageWebp, inspectWebp, QUESTION_IMAGE_MAX_BYTES, THEME_ARTWORK_MAX_BYTES } from './storage/webp.js';
 import { CUSTOM_AVATAR_BYTES, CUSTOM_AVATAR_DIMENSION } from './storage/custom-avatar.js';
 import { isQuestionImageKey, R2ImageStorage } from './storage/image-storage.js';
 
@@ -923,6 +923,68 @@ async function editorialQuestionBatchApprovalRoute(request: Request, env: Env, t
   return json(result);
 }
 
+/**
+ * Foto de pergunta (somente ADMIN). O cliente já reencoda em WebP; o Worker
+ * revalida o contêiner, grava no R2 com chave nova e versionada e só então
+ * aponta a pergunta para ela (CAS pela chave anterior). Se o D1 recusar, o
+ * objeto recém-gravado é apagado. O objeto antigo só sai do bucket quando
+ * nenhuma pergunta (inclusive rascunho de edição) ainda o referencia.
+ */
+async function adminQuestionImageRoute(request: Request, env: Env, questionId: string): Promise<Response> {
+  if (request.method !== 'PUT' && request.method !== 'DELETE') {
+    throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Método não permitido.');
+  }
+  const identity = await requireUser(request, env);
+  await requireAdmin(identity, env);
+  const profile = await new UserRepository(env.CORE_DB).findByFirebaseUid(identity.uid);
+  if (profile === null) throw new ApiError(409, 'PROFILE_REQUIRED', 'Conclua seu perfil.');
+  const questions = new QuestionEditorialRepository(env.QUESTIONS_DB);
+  const current = await env.QUESTIONS_DB.prepare('SELECT status, image_key FROM questions WHERE id = ?1')
+    .bind(questionId).first<{ image_key: string | null; status: string }>();
+  if (current === null) throw new ApiError(404, 'QUESTION_NOT_FOUND', 'Pergunta não encontrada.');
+  if (current.status !== 'ACTIVE' && current.status !== 'IN_REVIEW') {
+    throw new ApiError(409, 'QUESTION_IMAGE_STATUS', 'Só perguntas publicadas ou em revisão aceitam foto.');
+  }
+  const storage = new R2ImageStorage(env.QUESTION_IMAGES);
+
+  let next: { bytes: number; key: string } | null = null;
+  if (request.method === 'PUT') {
+    if (request.headers.get('Content-Type')?.split(';', 1)[0]?.trim().toLowerCase() !== 'image/webp') {
+      throw new ApiError(415, 'QUESTION_IMAGE_TYPE_INVALID', 'Envie a foto reencodada em WebP.');
+    }
+    const data = await readBytes(request, QUESTION_IMAGE_MAX_BYTES, new ApiError(
+      413, 'QUESTION_IMAGE_TOO_LARGE', 'A foto deve ter menos de 100 KB depois de comprimida.',
+    ));
+    const dimensions = inspectQuestionImageWebp(data);
+    if (dimensions === null) {
+      throw new ApiError(400, 'QUESTION_IMAGE_INVALID', 'A foto precisa ser WebP válida, sem EXIF/XMP, entre 64 e 1280 px e proporção até 3:1.');
+    }
+    // Versão = instante do envio: chave nova a cada troca, então caches
+    // imutáveis nunca servem a foto antiga com o nome novo.
+    next = { bytes: data.byteLength, key: `questions/${questionId.toLowerCase()}/v${Date.now()}.webp` };
+    await storage.put({ ...next, contentType: 'image/webp', license: '', sourceUrl: null }, data);
+  } else if (current.image_key === null) {
+    return json({ question: await questions.findForModeration(questionId) });
+  }
+
+  try {
+    await questions.setImage({ expectedKey: current.image_key, image: next, questionId });
+  } catch (error) {
+    if (next !== null) await env.QUESTION_IMAGES.delete(next.key).catch(() => undefined);
+    throw error;
+  }
+  if (current.image_key !== null && !await questions.isImageReferenced(current.image_key)) {
+    // Limpeza de órfão é melhor-esforço: falhar aqui não desfaz a troca.
+    await env.QUESTION_IMAGES.delete(current.image_key).catch(() => {
+      console.error(JSON.stringify({ code: 'QUESTION_IMAGE_ORPHAN_DELETE_FAILED', key: current.image_key }));
+    });
+  }
+  await auditLog(env, profile.userId, next === null ? 'REMOVE_QUESTION_IMAGE' : 'UPLOAD_QUESTION_IMAGE', 'question', questionId, {
+    bytes: next?.bytes ?? null,
+  });
+  return json({ question: await questions.findForModeration(questionId) });
+}
+
 async function adminThemeArtworkRoute(request: Request, env: Env, themeId: string): Promise<Response> {
   const identity = await requireUser(request, env);
   await requireAdmin(identity, env);
@@ -1757,6 +1819,9 @@ async function apiRoute(request: Request, env: Env, url: URL, context: Execution
   if (adminCategoryMatch?.[1] !== undefined) {
     return adminCategoryUpdateRoute(request, env, decodeURIComponent(adminCategoryMatch[1]));
   }
+
+  const adminQuestionImageMatch = /^\/api\/admin\/questions\/([a-f0-9-]{36})\/image$/i.exec(url.pathname);
+  if (adminQuestionImageMatch?.[1] !== undefined) return adminQuestionImageRoute(request, env, adminQuestionImageMatch[1]);
 
   const adminArtworkMatch = /^\/api\/admin\/themes\/([a-z0-9_-]{1,128})\/artwork$/i.exec(url.pathname);
   if (adminArtworkMatch?.[1] !== undefined) {

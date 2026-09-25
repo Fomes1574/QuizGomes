@@ -12,6 +12,36 @@ const DUEL_SEATS: readonly DuelSeat[] = ['viewer', 'opponent'];
 const ROUND_OPPONENT_REVEAL_MS = 250;
 const ROUND_SCORE_REVEAL_MS = 550;
 
+/**
+ * Moldura de altura fixa: o layout não pula quando a foto chega e as
+ * alternativas ficam sempre no mesmo lugar. Tocar amplia sem pausar o
+ * relógio; se a foto falhar, a pergunta segue só com o texto.
+ */
+function QuestionMedia({ url }: { url: string }) {
+  const [failed, setFailed] = useState(false);
+  const [zoomed, setZoomed] = useState(false);
+  useEffect(() => {
+    if (!zoomed) return undefined;
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setZoomed(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [zoomed]);
+  if (failed) return null;
+  return (
+    <>
+      <button aria-label="Ampliar a foto da pergunta" className="question-media" onClick={() => setZoomed(true)} type="button">
+        <img alt="Foto da pergunta" decoding="async" draggable={false} onError={() => setFailed(true)} src={url} />
+      </button>
+      {zoomed && (
+        <button aria-label="Fechar a foto ampliada" className="question-media-zoom" onClick={() => setZoomed(false)} type="button">
+          <img alt="Foto da pergunta ampliada" draggable={false} src={url} />
+          <span aria-hidden="true">× Fechar · o tempo continua correndo</span>
+        </button>
+      )}
+    </>
+  );
+}
+
 interface MatchParticipantView {
   customAvatarUrl?: string | null;
   frameId?: string | null;
@@ -346,7 +376,7 @@ export function MatchScreen({
             verdict={!viewerAnsweredThisRound ? 'none' : viewerCorrect === true ? 'correct' : 'wrong'}
           />
         )}
-        {question.imageUrl && <img alt="Imagem da pergunta" className="question-image" src={question.imageUrl} />}
+        {question.imageUrl && <QuestionMedia key={question.imageUrl} url={question.imageUrl} />}
         <h1>{question.prompt}</h1>
         <div className="answer-grid">
           {question.options.map((option, index) => {

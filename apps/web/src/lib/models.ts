@@ -51,6 +51,8 @@ export interface EditorialQuestion {
   createdAt: string;
   createdByUserId: string | null;
   id: string;
+  /** Foto opcional, servida pelo Worker. */
+  imageUrl?: string | null;
   options: readonly [string, string, string, string];
   poolId: string;
   prompt: string;

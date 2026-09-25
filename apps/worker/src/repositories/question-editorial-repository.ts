@@ -1,4 +1,5 @@
 import { ApiError } from '../http/api-error.js';
+import { questionImageUrl } from '../storage/image-storage.js';
 import { questionContentHash, questionContentHashCandidates, questionPoolId } from '../services/question-content.js';
 
 export interface QuestionSourceInput {
@@ -20,6 +21,8 @@ export interface QuestionModerationRecord {
   createdAt: string;
   createdByUserId: string | null;
   id: string;
+  /** URL servida pelo Worker; nunca a chave ou o bucket. */
+  imageUrl: string | null;
   options: [string, string, string, string];
   poolId: string;
   prompt: string;
@@ -33,7 +36,7 @@ export interface QuestionModerationRecord {
 }
 
 /** Registro completo e estável para exportação administrativa; nunca usado na partida. */
-export interface QuestionExportRecord extends QuestionModerationRecord {
+export interface QuestionExportRecord extends Omit<QuestionModerationRecord, 'imageUrl'> {
   imageBytes: number | null;
   imageKey: string | null;
   imageLicense: string | null;
@@ -111,6 +114,7 @@ async function attachSources(db: D1Database, questions: QuestionRow[]): Promise<
     createdAt: row.created_at,
     createdByUserId: row.created_by_user_id,
     id: row.id,
+    imageUrl: row.image_key === null ? null : questionImageUrl(row.image_key),
     options: [row.option_a, row.option_b, row.option_c, row.option_d],
     poolId: row.pool_id,
     prompt: row.prompt,
@@ -125,12 +129,15 @@ async function attachSources(db: D1Database, questions: QuestionRow[]): Promise<
 }
 
 function mapExportRecord(question: QuestionModerationRecord, row: QuestionRow): QuestionExportRecord {
-  return {
+  // A exportação mantém o formato estável (chave, não URL servida).
+  const exported: QuestionExportRecord & { imageUrl?: string | null } = {
     ...question,
     imageBytes: row.image_bytes,
     imageKey: row.image_key,
     imageLicense: row.image_license,
   };
+  delete exported.imageUrl;
+  return exported;
 }
 
 /**
@@ -183,10 +190,10 @@ export class QuestionEditorialRepository {
     sources: readonly QuestionSourceInput[];
   }): Promise<{ draftId: string }> {
     const active = await this.db.prepare(
-      `SELECT q.pool_id, p.theme_id FROM questions q
+      `SELECT q.pool_id, p.theme_id, q.image_key, q.image_bytes FROM questions q
         JOIN question_pools p ON p.id = q.pool_id
        WHERE q.id = ?1 AND q.status = 'ACTIVE'`,
-    ).bind(input.questionId).first<{ pool_id: string; theme_id: string }>();
+    ).bind(input.questionId).first<{ image_bytes: number | null; image_key: string | null; pool_id: string; theme_id: string }>();
     if (active === null) throw new ApiError(404, 'QUESTION_NOT_ACTIVE', 'Só uma pergunta publicada pode ser editada.');
     const draftId = crypto.randomUUID();
     // A revisão é escopada pela pergunta publicada. Assim é possível corrigir
@@ -196,14 +203,16 @@ export class QuestionEditorialRepository {
       ...input, revisionOf: input.questionId, themeId: active.theme_id,
     });
     const statements: D1PreparedStatement[] = [
+      // A foto acompanha o rascunho: editar o texto não pode apagá-la. A
+      // chave é compartilhada até alguém enviar outra foto para o rascunho.
       this.db.prepare(
         `INSERT INTO questions (
            id, pool_id, prompt, option_a, option_b, option_c, option_d, correct_option,
-           content_hash, status, created_by_user_id, replaces_question_id
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'IN_REVIEW', ?10, ?11)`,
+           content_hash, status, created_by_user_id, replaces_question_id, image_key, image_bytes
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'IN_REVIEW', ?10, ?11, ?12, ?13)`,
       ).bind(
         draftId, active.pool_id, input.prompt, ...input.options, input.correctOption, contentHash,
-        input.actorUserId, input.questionId,
+        input.actorUserId, input.questionId, active.image_key, active.image_bytes,
       ),
       ...input.sources.map((source) => this.db.prepare(
         'INSERT INTO question_sources (id, question_id, url, title, source_kind) VALUES (?1, ?2, ?3, ?4, ?5)',
@@ -468,6 +477,34 @@ export class QuestionEditorialRepository {
       throw new ApiError(409, 'QUESTION_CONFLICT', 'Esta pergunta mudou de estado. Atualize a tela.');
     }
     return { themeId: current.themeId };
+  }
+
+  /**
+   * Troca (ou remove, com `image = null`) a foto de uma pergunta em revisão
+   * ou publicada. CAS pela chave anterior: duas trocas simultâneas não se
+   * sobrescrevem em silêncio. Devolve a chave antiga para o chamador limpar
+   * o objeto se ninguém mais o referenciar.
+   */
+  async setImage(input: {
+    expectedKey: string | null;
+    image: { bytes: number; key: string } | null;
+    questionId: string;
+  }): Promise<{ previousKey: string | null; themeId: string }> {
+    const result = await this.db.prepare(
+      `UPDATE questions SET image_key = ?1, image_bytes = ?2, image_license = NULL
+        WHERE id = ?3 AND status IN ('ACTIVE', 'IN_REVIEW') AND image_key IS ?4`,
+    ).bind(input.image?.key ?? null, input.image?.bytes ?? null, input.questionId, input.expectedKey).run();
+    if ((result.meta.changes ?? 0) !== 1) {
+      throw new ApiError(409, 'QUESTION_IMAGE_CONFLICT', 'A pergunta mudou enquanto a foto era enviada. Atualize a tela.');
+    }
+    const row = await this.db.prepare(
+      'SELECT p.theme_id FROM questions q JOIN question_pools p ON p.id = q.pool_id WHERE q.id = ?1',
+    ).bind(input.questionId).first<{ theme_id: string }>();
+    return { previousKey: input.expectedKey, themeId: row?.theme_id ?? '' };
+  }
+
+  async isImageReferenced(key: string): Promise<boolean> {
+    return await this.db.prepare('SELECT 1 FROM questions WHERE image_key = ?1 LIMIT 1').bind(key).first() !== null;
   }
 
   private async assertNoLegacyDuplicate(hashes: readonly string[]): Promise<void> {

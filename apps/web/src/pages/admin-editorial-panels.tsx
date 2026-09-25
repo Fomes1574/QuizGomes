@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Button } from '../components/button.js';
 import { ConfirmDialog } from '../components/confirm-dialog.js';
+import { QuestionImageField } from '../components/question-image-field.js';
 import { ClientApiError, apiDownload, apiRequest, apiUpload } from '../lib/api.js';
 import type {
   AdminThemeSummary, CategoryAdmin, EditorialQuestion, EditorialQuestionPage, QuestionSourceInput,
@@ -629,6 +630,16 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
                   </ul>
                 )}
                 {question.resolutionNote !== null && <p className="report-card__note"><strong>Nota:</strong> {question.resolutionNote}</p>}
+                {(question.status === 'ACTIVE' || question.status === 'IN_REVIEW') && (
+                  <QuestionImageField
+                    getToken={getToken}
+                    onChanged={(updated) => setPage((current) => ({
+                      ...current,
+                      questions: current.questions.map((item) => (item.id === updated.id ? updated : item)),
+                    }))}
+                    question={question}
+                  />
+                )}
                 <div className="admin-card__actions">
                   {question.status === 'IN_REVIEW' && (
                     <>

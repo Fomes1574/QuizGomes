@@ -1,6 +1,10 @@
 export const THEME_ARTWORK_MAX_BYTES = 60 * 1_024;
 export const THEME_ARTWORK_MAX_DIMENSION = 512;
 export const THEME_ARTWORK_MIN_DIMENSION = 256;
+/** Foto de pergunta: `questions.image_bytes` exige menos de 100 KB. */
+export const QUESTION_IMAGE_MAX_BYTES = 100 * 1_024 - 1;
+export const QUESTION_IMAGE_MAX_DIMENSION = 1_280;
+export const QUESTION_IMAGE_MIN_DIMENSION = 64;
 
 export interface WebpInspection {
   height: number;
@@ -46,8 +50,13 @@ function vp8xDimensions(bytes: Uint8Array, offset: number, size: number): WebpIn
   return { height: uint24(bytes, offset + 7) + 1, width: uint24(bytes, offset + 4) + 1 };
 }
 
-export function inspectWebp(data: ArrayBuffer): WebpInspection | null {
-  if (data.byteLength < 30 || data.byteLength > THEME_ARTWORK_MAX_BYTES) return null;
+/**
+ * Valida o contêiner RIFF/WebP inteiro (sem EXIF/XMP, sem animação, sem
+ * chunk desconhecido) e devolve as dimensões. Regras de proporção e tamanho
+ * ficam nos invólucros abaixo.
+ */
+function inspectWebpContainer(data: ArrayBuffer, maxBytes: number): WebpInspection | null {
+  if (data.byteLength < 30 || data.byteLength > maxBytes) return null;
   const bytes = new Uint8Array(data);
   const view = new DataView(data);
   if (fourCc(bytes, 0) !== 'RIFF' || fourCc(bytes, 8) !== 'WEBP') return null;
@@ -107,9 +116,27 @@ export function inspectWebp(data: ArrayBuffer): WebpInspection | null {
   if (canvas === null && iccpChunk) return null;
   if (alphaChunk && canvas === null) return null;
   const dimensions = canvas ?? encoded;
-  if (dimensions === null) return null;
   if (canvas !== null && (canvas.width !== encoded.width || canvas.height !== encoded.height)) return null;
+  return dimensions;
+}
+
+/** Arte de tema/avatar: WebP quadrado entre 256 e 512 px. */
+export function inspectWebp(data: ArrayBuffer): WebpInspection | null {
+  const dimensions = inspectWebpContainer(data, THEME_ARTWORK_MAX_BYTES);
+  if (dimensions === null) return null;
   if (dimensions.width !== dimensions.height) return null;
   if (dimensions.width < THEME_ARTWORK_MIN_DIMENSION || dimensions.width > THEME_ARTWORK_MAX_DIMENSION) return null;
+  return dimensions;
+}
+
+/** Foto de pergunta: qualquer proporção razoável, lado maior até 1280 px. */
+export function inspectQuestionImageWebp(data: ArrayBuffer): WebpInspection | null {
+  const dimensions = inspectWebpContainer(data, QUESTION_IMAGE_MAX_BYTES);
+  if (dimensions === null) return null;
+  const longest = Math.max(dimensions.width, dimensions.height);
+  const shortest = Math.min(dimensions.width, dimensions.height);
+  if (longest > QUESTION_IMAGE_MAX_DIMENSION || shortest < QUESTION_IMAGE_MIN_DIMENSION) return null;
+  // Panorâmicas extremas viram uma faixa ilegível no quadro fixo da partida.
+  if (longest / shortest > 3) return null;
   return dimensions;
 }

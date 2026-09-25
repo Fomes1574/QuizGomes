@@ -21,6 +21,7 @@ import { useAuth } from '../features/auth-context.js';
 import { apiRequest, websocketUrl } from '../lib/api.js';
 import { clearDuelHandoff } from '../lib/match-handoff.js';
 import { takePreparedMatchRoom } from '../lib/preloaded-match-room.js';
+import { QUESTION_IMAGE_READY_CAP_MS, waitForQuestionImage } from '../lib/question-image-ready.js';
 import type { SeenQuestion } from '../lib/reports.js';
 
 interface TerminalResult {
@@ -98,6 +99,8 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
     let retryStartedAtMonotonicMs: number | null = null;
     let retryTimer: number | null = null;
     let roundReadyTimer: number | null = null;
+    // Invalida um ROUND_READY que ainda espera a foto quando a rodada muda.
+    let roundReadyToken = 0;
     let countdownTimer: number | null = null;
     let heartbeatTimer: number | null = null;
     let pauseExitTimer: number | null = null;
@@ -168,6 +171,7 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
     };
 
     const clearRoundReady = () => {
+      roundReadyToken += 1;
       if (roundReadyTimer !== null) window.clearTimeout(roundReadyTimer);
       roundReadyTimer = null;
     };
@@ -222,13 +226,20 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
       clearRoundReady();
       const presentationMs = Math.max(0, delayMs);
       setRoundIntro(showPresentation ? { ...match.round, durationMs: presentationMs } : null);
+      // A foto começa a baixar junto com a apresentação; o teto conta a
+      // partir de agora, então apresentação + foto nunca passam de ~4 s.
+      const imageReady = waitForQuestionImage(match.question?.imageUrl, Math.max(presentationMs, QUESTION_IMAGE_READY_CAP_MS));
+      const token = roundReadyToken;
       roundReadyTimer = window.setTimeout(() => {
         roundReadyTimer = null;
         setRoundIntro(null);
         if (showPresentation) setStatusMessage('Sincronizando jogadores');
-        if (socket.readyState === WebSocket.OPEN) {
-          socket.send(JSON.stringify({ roundNumber: match.round?.number, type: 'ROUND_READY' }));
-        }
+        void imageReady.then(() => {
+          if (token !== roundReadyToken) return;
+          if (socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({ roundNumber: match.round?.number, type: 'ROUND_READY' }));
+          }
+        });
       }, presentationMs);
     };
     const applyProjection = (match: LiveMatchProjection) => {
