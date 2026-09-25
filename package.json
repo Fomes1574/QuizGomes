@@ -14,8 +14,9 @@
   ],
   "scripts": {
     "build": "npm run build -w @quiz-gomes/domain && npm run build -w @quiz-gomes/web && npm run build -w @quiz-gomes/worker",
-    "build:cloudflare": "npm ci && npm run check",
+    "build:cloudflare": "npm ci && npm run check:deploy",
     "check": "npm run lint && npm run typecheck && npm run test && npm run test:migrations && npm run build",
+    "check:deploy": "npm run lint && npm run typecheck && npm run test && node scripts/run-migrations-check-if-needed.mjs && npm run build",
     "db:migrate:remote": "npm run db:migrate:remote -w @quiz-gomes/worker",
     "dev:web": "npm run dev -w @quiz-gomes/web",
     "dev:worker": "npm run dev -w @quiz-gomes/worker",

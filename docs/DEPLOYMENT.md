@@ -75,7 +75,7 @@ O root `/` é intencional. É nele que ficam `package-lock.json`, o `package.jso
 - `apps/web`;
 - `apps/worker`.
 
-O build executa `npm ci` e depois `npm run check`, que inclui lint, typecheck, todos os testes, a validação isolada das migrations D1 e os três builds. O deploy só é liberado quando `WORKERS_CI=1` e `WORKERS_CI_BRANCH=main`; imediatamente antes de tocar o D1 remoto, repete o gate de migrations, aplica somente versões pendentes e executa `wrangler deploy`. Nenhum script de produção referencia a pasta `seeds`.
+O build executa `npm ci` e depois `npm run check:deploy`, que inclui lint, typecheck, todos os testes e os três builds; a validação isolada das migrations D1 (`test:migrations`) roda dentro dele condicionalmente — ver seção 4. O deploy só é liberado quando `WORKERS_CI=1` e `WORKERS_CI_BRANCH=main`; imediatamente antes de tocar o D1 remoto, aplica somente versões pendentes e executa `wrangler deploy`. Nenhum script de produção referencia a pasta `seeds`.
 
 Desative builds de branches não produtivas. Uma versão de preview usaria os mesmos bindings D1 reais e não existe um ambiente D1 separado autorizado para isso.
 
@@ -122,12 +122,14 @@ O evento nunca contém ID Token, refresh token, cookie, UID, email, payload ou c
 
 ## 4. Migrations
 
-`npm run test:migrations` já roda uma vez dentro do **Build command** (`build:cloudflare` → `check`), sobre o mesmo commit que o **Deploy command** vai publicar. Repeti-lo dentro de `deploy:cloudflare` era puro desperdício (a mesma validação local de ~6 minutos, sem cobrir nada novo) e consumia uma fração relevante do timeout de 20 min do Workers Builds Free (`docs/FREE_TIER_GUARDRAILS.md`) — corrigido: `deploy:cloudflare` não roda mais `test:migrations`. O gate `assert-cloudflare-production.mjs` já impede que este comando rode fora de `WORKERS_CI=1`/`WORKERS_CI_BRANCH=main`, e nesse ambiente o Deploy command só executa depois que o Build command (que inclui `test:migrations`) já passou no mesmo pipeline; não existe caminho de produção em que `deploy:cloudflare` rode sem essa validação ter acabado de passar sobre o mesmo commit.
+`npm run test:migrations` roda dentro do **Build command** (`build:cloudflare` → `check:deploy`), sobre o mesmo commit que o **Deploy command** vai publicar. Repeti-lo dentro de `deploy:cloudflare` era puro desperdício (a mesma validação, sem cobrir nada novo) e consumia uma fração relevante do timeout de 20 min do Workers Builds Free (`docs/FREE_TIER_GUARDRAILS.md`) — `deploy:cloudflare` não roda `test:migrations`. O gate `assert-cloudflare-production.mjs` já impede que este comando rode fora de `WORKERS_CI=1`/`WORKERS_CI_BRANCH=main`, e nesse ambiente o Deploy command só executa depois que o Build command já passou no mesmo pipeline.
+
+Dentro do Build command, `check:deploy` chama `scripts/run-migrations-check-if-needed.mjs` em vez de `test:migrations` diretamente. Esse wrapper compara `git diff HEAD~1 HEAD`: se o commit publicado não toca `apps/worker/migrations/**`, `scripts/validate-d1-migrations.mjs` nem `apps/worker/wrangler.jsonc` (bindings D1), ele pula a suíte pesada e só registra por quê; qualquer outra situação — inclusive não conseguir calcular o diff com segurança (histórico raso, primeiro commit) — roda a suíte completa normalmente. Isso existe porque, em 2026-09-25, um deploy de uma correção sem nenhuma mudança de schema (`fix(import): chunk duplicate hashes for D1`) levou a build a mais de 20 minutos rodando a auditoria histórica inteira de migrations, quase estourando o timeout do Workers Builds. `npm run check` (o script usado localmente antes de qualquer push, conforme a seção de Qualidade e processo) continua sempre incondicional e sempre roda `test:migrations` por completo — o atalho existe só no pipeline de deploy, nunca como substituto da validação manual.
 
 O pipeline executa, nessa ordem e antes do deploy:
 
 ```bash
-npm run build:cloudflare   # inclui test:migrations, entre outros checks
+npm run build:cloudflare   # inclui test:migrations quando arquivos sensíveis a migration mudam, entre outros checks
 npm run db:migrate:remote
 npm run deploy:cloudflare -w @quiz-gomes/worker
 ```
