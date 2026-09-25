@@ -1526,3 +1526,29 @@ declarar deploy.
   deploy; exportação CSV/JSON preserva perguntas em todos os estados, fontes e
   metadados, e o upload de imagens permanece uma função futura para não aceitar
   arquivo ou referência sem validação completa.
+- Bug corrigido em 2026-09-25 (primeiro smoke físico real de Matchmaking em
+  produção, após o build passar a publicar de fato): "Puxar partida" falhava
+  imediatamente com "A conexão com a fila foi interrompida." Causa raiz:
+  `/api/realtime/matchmaking` reserva a presença do jogador (`idle` →
+  `matchmaking`) antes de contatar a fila, mas nenhum caminho a liberava se a
+  tentativa fosse interrompida antes do socket confirmar (queda de rede, aba
+  fechada, ou a própria Durable Object da fila lançando exceção) — a presença
+  ficava travada em `matchmaking` para sempre, e toda tentativa seguinte
+  falhava com `PLAYER_BUSY` (409) antes mesmo do handshake WebSocket chegar a
+  101, o que o cliente só consegue reportar como a mensagem genérica de
+  conexão interrompida. Corrigido com autocura: uma presença já travada em
+  `matchmaking` (nunca tem `matches` para preservar, diferente de uma partida
+  em andamento) é liberada antes de reservar de novo; e a chamada à fila
+  ganhou `try/catch` liberando a presença em qualquer falha, não só em
+  resposta HTTP não-101. A lacuna de teste que permitiu o bug passar
+  despercebido também foi fechada: nenhuma suíte cobria o caminho HTTP real
+  (ticket + upgrade de WebSocket) de nenhuma rota realtime, só as Durable
+  Objects isoladamente; `apps/worker/src/test/matchmaking-http.worker.test.ts`
+  agora exercita `/api/realtime/tickets` + `/api/realtime/matchmaking` de
+  ponta a ponta via `SELF.fetch`, com um Firebase ID Token real assinado na
+  hora (par RSA gerado no teste, `apps/worker/src/test/firebase-test-token.ts`)
+  já que o Worker `main` roda fora do grafo de módulos do Vite e não é afetado
+  por `vi.mock`. O teste de autocura falha com 409 sem a correção e passa com
+  ela, confirmando a causa raiz. `lint`, `typecheck`, `test:unit`,
+  `test:worker` (197) e `test:migrations` verdes; smoke físico da correção
+  ainda pendente de confirmação em produção pelo proprietário.

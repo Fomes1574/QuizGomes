@@ -272,20 +272,48 @@ async function realtimeRoute(request: Request, env: Env, url: URL): Promise<Resp
       'SELECT knowledge FROM theme_rankings WHERE user_id = ?1 AND theme_id = ?2',
     ).bind(userRow.id, themeId).first<{ knowledge: number }>();
     const presence = env.PRESENCE_HUB.get(env.PRESENCE_HUB.idFromName(uid));
+    // Autocura: uma tentativa anterior pode ter deixado a presença travada em
+    // 'matchmaking' sem partida nenhuma por trás (queda de rede, fila que não
+    // respondeu, aba fechada antes do socket confirmar). Diferente de uma
+    // partida em andamento, esse estado nunca tem `matches` para preservar, e
+    // sem essa liberação o jogador nunca mais conseguiria clicar em "Puxar
+    // partida" de novo.
+    const staleState = await presence.fetch('https://presence.internal/state');
+    if (staleState.ok) {
+      const state = await staleState.json<ActivityState>();
+      if (state.activity === 'matchmaking') {
+        await presence.fetch('https://presence.internal/transition', {
+          body: JSON.stringify({ from: 'matchmaking', fromResource: state.resource, resource: null, to: 'idle' }),
+          method: 'POST',
+        });
+      }
+    }
     const reserved = await presence.fetch('https://presence.internal/transition', {
       body: JSON.stringify({ from: 'idle', resource, to: 'matchmaking' }),
       method: 'POST',
     });
     if (!reserved.ok) throw new ApiError(409, 'PLAYER_BUSY', 'Você já está em outra atividade.');
     const queue = env.MATCHMAKING_QUEUE.get(env.MATCHMAKING_QUEUE.idFromName(resource));
-    const response = await queue.fetch(new Request('https://queue.internal/socket', {
-      headers: {
-        Upgrade: 'websocket',
-        'X-QG-Authenticated-Uid': uid,
-        'X-QG-Match-Resource': resource,
-        'X-QG-Theme-Knowledge': String(ranking?.knowledge ?? 0),
-      },
-    }));
+    let response: Response;
+    try {
+      response = await queue.fetch(new Request('https://queue.internal/socket', {
+        headers: {
+          Upgrade: 'websocket',
+          'X-QG-Authenticated-Uid': uid,
+          'X-QG-Match-Resource': resource,
+          'X-QG-Theme-Knowledge': String(ranking?.knowledge ?? 0),
+        },
+      }));
+    } catch (queueError) {
+      // Sem isso, uma falha ao contatar a fila (DO indisponível, erro de
+      // rede interno) deixaria a presença travada em 'matchmaking' para
+      // sempre: nenhum outro caminho do sistema libera esse estado.
+      await presence.fetch('https://presence.internal/transition', {
+        body: JSON.stringify({ from: 'matchmaking', resource: null, to: 'idle' }),
+        method: 'POST',
+      });
+      throw queueError;
+    }
     if (response.status !== 101) {
       await presence.fetch('https://presence.internal/transition', {
         body: JSON.stringify({ from: 'matchmaking', resource: null, to: 'idle' }),
