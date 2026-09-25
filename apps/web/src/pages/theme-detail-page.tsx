@@ -71,7 +71,7 @@ export function ThemeDetailPage() {
     const intent = consumePlayAuthIntent();
     consumedIntent.current = true;
     if (intent === null || intent.themeId !== data.theme.id || intent.themeSlug !== slug) return;
-    void startMatchmaking(intent.themeId, intent.mode, intent.themeSlug);
+    void startMatchmaking(intent.themeId, intent.mode, intent.themeSlug, data.theme.name);
   }, [data, profile, slug, startMatchmaking]);
 
   // "Jogar de novo" chega aqui com autoPlay: entra na fila uma única vez e limpa o
@@ -84,7 +84,7 @@ export function ThemeDetailPage() {
     const autoMode = invitedMode ?? (restored?.mode === 'RANKED' ? 'RANKED' : 'CASUAL');
     void navigate(location.pathname, { replace: true, state: { mode: autoMode } });
     if (data.theme.activeQuestionCount < questionsForMode(autoMode)) return;
-    void startMatchmaking(data.theme.id, autoMode, slug);
+    void startMatchmaking(data.theme.id, autoMode, slug, data.theme.name);
   }, [data, invitedMode, location.pathname, navigate, profile, restored, slug, startMatchmaking]);
 
   // Nome do tema vizinho com gente esperando só é necessário durante a busca.
@@ -205,7 +205,7 @@ export function ThemeDetailPage() {
                 <Button
                   className="play-card__cta"
                   disabled={!canPlay || !realtimeEnabled}
-                  onClick={() => { feedback('tap'); void matchmaking.start(data.theme.id, mode, slug); }}
+                  onClick={() => { feedback('tap'); void matchmaking.start(data.theme.id, mode, slug, data.theme.name); }}
                 ><Icon name="play" />Puxar partida</Button>
                 {mode === 'CASUAL' && (
                   <Button
@@ -296,7 +296,7 @@ export function ThemeDetailPage() {
           onChallengeFriend: mode === 'CASUAL' && friends.length > 0
             ? () => { matchmaking.cancel(); setChallengePickerOpen(true); }
             : undefined,
-          onRetry: () => { void matchmaking.start(data.theme.id, mode, slug); },
+          onRetry: () => { void matchmaking.start(data.theme.id, mode, slug, data.theme.name); },
         }}
         waitingOthers={Math.max(0, waitingHere - 1)}
         opponent={matchmaking.opponent}

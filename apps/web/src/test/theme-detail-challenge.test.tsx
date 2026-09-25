@@ -76,7 +76,7 @@ describe('desafiar amigo a partir do tema', () => {
     mocks.start.mockClear();
     mocks.presence = new Map([['#QGANA1', { presence: 'MATCHMAKING', publicId: '#QGANA1', queueThemeId: 'theme-1', revision: 2 }]]);
     render(page('/tema/elden-ring?jogar=rankeada'));
-    await waitFor(() => expect(mocks.start).toHaveBeenCalledWith('theme-1', 'RANKED', 'elden-ring'));
+    await waitFor(() => expect(mocks.start).toHaveBeenCalledWith('theme-1', 'RANKED', 'elden-ring', 'Elden Ring'));
     expect(mocks.start).toHaveBeenCalledTimes(1);
     expect(await screen.findByText('Ana está na fila deste tema agora.')).toBeInTheDocument();
   });

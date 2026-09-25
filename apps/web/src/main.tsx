@@ -8,6 +8,7 @@ import { AuthProvider } from './features/auth-context.js';
 import { SocialProvider } from './features/social-context.js';
 import { ThemeModeProvider } from './hooks/use-theme-mode.js';
 import { buildFingerprint, safeAppUpdate } from './lib/app-update.js';
+import { captureInstallPrompt } from './lib/install-prompt.js';
 import './styles/global.css';
 
 const hadServiceWorkerController = navigator.serviceWorker?.controller !== null;
@@ -35,6 +36,7 @@ document.documentElement.dataset.qgBuild = buildFingerprint;
 const root = document.getElementById('root');
 if (root === null) throw new Error('Elemento raiz não encontrado.');
 
+captureInstallPrompt();
 createRoot(root).render(
   <StrictMode>
     <ThemeModeProvider>

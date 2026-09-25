@@ -18,6 +18,17 @@ interface CachedAccessToken {
 
 let cachedAccessToken: CachedAccessToken | null = null;
 
+export const FRIEND_QUEUE_ALERT_LIMITS = Object.freeze({
+  /** No máximo 20 amigos avisados por rodada. */
+  maxRecipients: 20,
+  /** Quem recebe: no máximo um aviso de fila por hora, de qualquer amigo. */
+  recipientCooldownMs: 60 * 60 * 1_000,
+  /** Quem entra na fila: uma rodada de avisos a cada 30 min. */
+  senderCooldownMs: 30 * 60 * 1_000,
+});
+/** Só avisa se o amigo continua procurando depois disso (pareou rápido = ninguém precisa vir). */
+export const FRIEND_QUEUE_ALERT_DELAY_MS = 10_000;
+
 function base64Url(bytes: Uint8Array): string {
   let binary = '';
   for (const byte of bytes) binary += String.fromCharCode(byte);
@@ -225,6 +236,77 @@ export class SocialPushService {
         console.warn(JSON.stringify({ challengeId: input.challengeId, code: 'FCM_DELIVERY_UNAVAILABLE' }));
       }
     }));
+  }
+
+  /**
+   * "Seu amigo está na fila de X agora". Opcional para quem recebe, limitado
+   * nos dois lados e nunca para quem já está com o app aberto (esse vê a
+   * fila ao vivo). O link leva direto à fila do mesmo tema e modo.
+   */
+  async sendFriendInQueue(input: {
+    isOnline: (userIds: string[]) => Promise<Set<string>>;
+    mode: 'CASUAL' | 'RANKED';
+    origin: string;
+    senderDisplayName: string;
+    senderUserId: string;
+    themeName: string;
+    themeSlug: string;
+  }): Promise<number> {
+    const account = accountFrom(this.env);
+    if (account === null) return 0;
+    const now = Date.now();
+    const candidates = await this.repository.friendQueueAlertRecipients(input.senderUserId, now, FRIEND_QUEUE_ALERT_LIMITS);
+    if (candidates.length === 0) return 0;
+    const online = await input.isOnline(candidates).catch(() => new Set<string>(candidates));
+    const recipients = candidates.filter((userId) => !online.has(userId));
+    if (recipients.length === 0) return 0;
+    await this.repository.recordFriendQueueAlerts(input.senderUserId, recipients, now);
+    let accessToken: string;
+    try {
+      accessToken = await this.accessToken(account);
+    } catch {
+      console.warn(JSON.stringify({ code: 'FCM_AUTH_UNAVAILABLE', event: 'friend_queue_alert' }));
+      return 0;
+    }
+    const path = `/temas/${encodeURIComponent(input.themeSlug)}?jogar=${input.mode === 'RANKED' ? 'rankeada' : 'normal'}`;
+    const modeLabel = input.mode === 'RANKED' ? 'rankeada' : 'normal';
+    const installations = (await Promise.all(recipients.map((userId) => this.repository.enabledInstallations(userId)))).flat();
+    await Promise.allSettled(installations.map(async (installationId) => {
+      try {
+        const response = await this.fetcher(
+          `https://fcm.googleapis.com/v1/projects/${encodeURIComponent(this.env.FIREBASE_PROJECT_ID)}/messages:send`,
+          {
+            body: JSON.stringify({
+              message: {
+                data: {
+                  body: `${input.senderDisplayName} está na fila ${modeLabel} de ${input.themeName}. Entra agora!`,
+                  title: 'Seu amigo está na fila',
+                  type: 'FRIEND_IN_QUEUE',
+                  url: path,
+                },
+                fid: installationId,
+                webpush: {
+                  ...(input.origin === '' ? {} : { fcm_options: { link: `${input.origin}${path}` } }),
+                  // A fila dura 60 s: um aviso atrasado não serve para nada.
+                  headers: { TTL: '60', Urgency: 'high' },
+                },
+              },
+            }),
+            headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+            method: 'POST',
+          },
+        );
+        if (response.ok) {
+          await this.repository.markInstallationSuccess(installationId);
+          return;
+        }
+        if (response.status === 404) await this.repository.disableInstallation(installationId);
+        console.warn(JSON.stringify({ code: 'FCM_DELIVERY_FAILED', event: 'friend_queue_alert', status: response.status }));
+      } catch {
+        console.warn(JSON.stringify({ code: 'FCM_DELIVERY_UNAVAILABLE', event: 'friend_queue_alert' }));
+      }
+    }));
+    return recipients.length;
   }
 
   private async accessToken(account: ServiceAccount): Promise<string> {

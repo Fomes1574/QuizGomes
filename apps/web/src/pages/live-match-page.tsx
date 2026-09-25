@@ -550,7 +550,7 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
   };
 
   const matchOrigin = (location.state as {
-    matchOrigin?: { mode?: string; returnTo?: string };
+    matchOrigin?: { mode?: string; returnTo?: string; themeName?: string };
   } | null)?.matchOrigin;
 
   const cancelledChallenge = isChallenge && terminal?.voidReason === 'CANCELLED';
@@ -608,6 +608,7 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
         onReport={(question) => setReportTarget(question)}
         personalRecord={viewer.personalRecord === true}
         ranked={rankedMatch}
+        themeName={typeof matchOrigin?.themeName === 'string' ? matchOrigin.themeName.slice(0, 80) : null}
         opponent={{
           customAvatarUrl: projection?.opponent.customAvatarUrl ?? null,
           frameId: projection?.opponent.frameId ?? null,

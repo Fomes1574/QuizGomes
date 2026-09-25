@@ -7,6 +7,8 @@ import { AvatarFrame } from './avatar-frame.js';
 import { Button } from './button.js';
 import { Icon } from './icons.js';
 import { Logo } from './logo.js';
+import { InstallInvite } from './install-invite.js';
+import { ShareResultButton } from './share-result-button.js';
 
 interface ResultParticipant {
   customAvatarUrl?: string | null;
@@ -110,6 +112,7 @@ export function MatchResultScreen({
   personalRecord = false,
   questions,
   ranked,
+  themeName,
   viewer,
   voidReason,
   xpDelta,
@@ -130,6 +133,8 @@ export function MatchResultScreen({
   personalRecord?: boolean;
   /** Normal nunca altera Conhecimento; indefinido mantém os três indicadores. */
   ranked?: boolean | undefined;
+  /** Nome do tema, só para a carta de story (texto de exibição). */
+  themeName?: string | null | undefined;
   viewer: ResultParticipant;
   voidReason?: string | undefined;
   xpDelta: number;
@@ -255,6 +260,17 @@ export function MatchResultScreen({
           </Button>
         )}
         {addFriend?.status === 'error' && addFriend.message !== undefined && <p className="form-error">{addFriend.message}</p>}
+        {!cancelledBeforeStart && viewer.result !== 'VOID' && (
+          <ShareResultButton input={{
+            opponent: { name: opponent.name, score: opponent.score },
+            personalRecord,
+            ranked: ranked === true,
+            result: viewer.result,
+            themeName: themeName ?? null,
+            viewer: { name: viewer.name, score: viewer.score },
+          }} />
+        )}
+        {viewer.result === 'WIN' && <InstallInvite />}
         <Button onClick={onBack} variant={onPlayAgain !== undefined && !cancelledBeforeStart ? 'ghost' : 'primary'}>{cancelledBeforeStart ? 'Voltar ao tema' : 'Voltar aos temas'}</Button>
       </div>
     </main>

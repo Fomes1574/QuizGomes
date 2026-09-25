@@ -573,6 +573,66 @@ export class SocialRepository {
     if ((result.meta.changes ?? 0) === 0) throw unavailable();
   }
 
+  async friendQueueAlertsEnabled(userId: string): Promise<boolean> {
+    const row = await this.db.prepare('SELECT enabled FROM friend_queue_alert_preferences WHERE user_id = ?1')
+      .bind(userId).first<{ enabled: number }>();
+    return row?.enabled === 1;
+  }
+
+  async setFriendQueueAlerts(userId: string, enabled: boolean): Promise<void> {
+    await this.db.prepare(
+      `INSERT INTO friend_queue_alert_preferences (user_id, enabled) VALUES (?1, ?2)
+       ON CONFLICT (user_id) DO UPDATE SET enabled = excluded.enabled, updated_at = CURRENT_TIMESTAMP`,
+    ).bind(userId, enabled ? 1 : 0).run();
+  }
+
+  /**
+   * Quem pode receber "seu amigo está na fila": amigo ativo, sem bloqueio,
+   * que ligou o aviso, não silenciou o remetente e não recebeu nenhum aviso
+   * desses na última hora. O remetente também respeita um intervalo próprio.
+   */
+  async friendQueueAlertRecipients(senderUserId: string, nowMs: number, limits: {
+    maxRecipients: number;
+    recipientCooldownMs: number;
+    senderCooldownMs: number;
+  }): Promise<string[]> {
+    const recent = await this.db.prepare(
+      'SELECT 1 FROM friend_queue_alerts WHERE sender_user_id = ?1 AND sent_at_ms > ?2 LIMIT 1',
+    ).bind(senderUserId, nowMs - limits.senderCooldownMs).first();
+    if (recent !== null) return [];
+    const rows = await this.db.prepare(
+      `SELECT pref.user_id
+         FROM friendships f
+         JOIN friend_queue_alert_preferences pref
+           ON pref.user_id = CASE WHEN f.user_low_id = ?1 THEN f.user_high_id ELSE f.user_low_id END
+          AND pref.enabled = 1
+         JOIN users u ON u.id = pref.user_id AND u.disabled_at IS NULL
+        WHERE (f.user_low_id = ?1 OR f.user_high_id = ?1)
+          AND NOT EXISTS (
+            SELECT 1 FROM user_blocks b
+             WHERE (b.blocker_user_id = ?1 AND b.blocked_user_id = pref.user_id)
+                OR (b.blocker_user_id = pref.user_id AND b.blocked_user_id = ?1)
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM friendship_mutes m WHERE m.muter_user_id = pref.user_id AND m.muted_user_id = ?1
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM friend_queue_alerts a WHERE a.recipient_user_id = pref.user_id AND a.sent_at_ms > ?2
+          )
+        LIMIT ?3`,
+    ).bind(senderUserId, nowMs - limits.recipientCooldownMs, limits.maxRecipients).all<{ user_id: string }>();
+    return rows.results.map((row) => row.user_id);
+  }
+
+  /** Registra antes de enviar: um retry nunca manda o mesmo aviso duas vezes. */
+  async recordFriendQueueAlerts(senderUserId: string, recipientUserIds: readonly string[], nowMs: number): Promise<void> {
+    if (recipientUserIds.length === 0) return;
+    await this.db.batch(recipientUserIds.map((recipientUserId) => this.db.prepare(
+      `INSERT INTO friend_queue_alerts (recipient_user_id, sender_user_id, sent_at_ms) VALUES (?1, ?2, ?3)
+       ON CONFLICT (recipient_user_id, sender_user_id) DO UPDATE SET sent_at_ms = excluded.sent_at_ms`,
+    ).bind(recipientUserId, senderUserId, nowMs)));
+  }
+
   async enabledInstallations(userId: string): Promise<string[]> {
     const rows = await this.db.prepare(
       'SELECT installation_id FROM push_installations WHERE user_id = ?1 AND enabled = 1 LIMIT 20',

@@ -1357,3 +1357,9 @@ input, select, textarea { font-size: max(16px, 1em); }
 .matchmaking-timeout__actions { display: grid; gap: 8px; width: min(100%, 320px); }
 .play-deck__live { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; }
 .friends-in-queue { display: flex; align-items: center; gap: 8px; margin: 0; padding: 8px 12px; border-radius: 12px; background: color-mix(in srgb, var(--presence-online) 12%, var(--surface-soft)); font-weight: 700; font-size: .9rem; }
+.settings-card__stack { display: grid; gap: 10px; justify-items: start; }
+.friend-queue-alert { display: grid; gap: 4px; }
+.friend-queue-alert small { color: var(--text-secondary); font-size: .8rem; }
+.install-invite { display: grid; gap: 8px; width: 100%; padding: 14px 16px; border: 1px solid var(--border); border-radius: 18px; background: var(--surface-soft); text-align: left; }
+.install-invite p { margin: 0; color: var(--text-secondary); font-size: .9rem; line-height: 1.45; }
+.install-invite__actions { display: flex; flex-wrap: wrap; gap: 8px; }

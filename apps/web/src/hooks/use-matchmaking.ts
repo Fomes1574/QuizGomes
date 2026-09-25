@@ -75,6 +75,8 @@ interface RealtimeMessage {
 interface MatchOrigin {
   mode: MatchMode;
   returnTo: string;
+  /** Só para exibição (carta de story); nunca decide nada no servidor. */
+  themeName?: string;
 }
 
 function delay(milliseconds: number): Promise<void> {
@@ -125,7 +127,7 @@ export function useMatchmaking() {
   const originRef = useRef<MatchOrigin | null>(null);
   const navigatingRef = useRef(false);
   const statusRef = useRef<MatchmakingStatus>('idle');
-  const lastStartRef = useRef<{ mode: MatchMode; themeId: string; themeSlug?: string | undefined } | null>(null);
+  const lastStartRef = useRef<{ mode: MatchMode; themeId: string; themeName?: string | undefined; themeSlug?: string | undefined } | null>(null);
   const wentHiddenRef = useRef(false);
   const [status, setStatusState] = useState<MatchmakingStatus>('idle');
   const [error, setError] = useState<string | null>(null);
@@ -263,12 +265,13 @@ export function useMatchmaking() {
     }
   }, [getToken, navigate, setStatus]);
 
-  const start = useCallback(async (themeId: string, mode: MatchMode, themeSlug?: string) => {
-    lastStartRef.current = { mode, themeId, themeSlug };
+  const start = useCallback(async (themeId: string, mode: MatchMode, themeSlug?: string, themeName?: string) => {
+    lastStartRef.current = { mode, themeId, themeName, themeSlug };
     wentHiddenRef.current = typeof document !== 'undefined' && document.visibilityState === 'hidden';
     originRef.current = themeSlug === undefined ? null : {
       mode,
       returnTo: `/temas/${encodeURIComponent(themeSlug)}`,
+      ...(themeName === undefined ? {} : { themeName }),
     };
     setError(null);
     setOpponent(null);
@@ -351,7 +354,7 @@ export function useMatchmaking() {
   const resume = useCallback(() => {
     const last = lastStartRef.current;
     if (last === null) return;
-    void start(last.themeId, last.mode, last.themeSlug);
+    void start(last.themeId, last.mode, last.themeSlug, last.themeName);
   }, [start]);
 
   return { cancel, elapsedSeconds, error, opponent, paused: status === 'paused', preparing, resume, start, status, timeoutAt };

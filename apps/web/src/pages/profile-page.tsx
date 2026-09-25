@@ -12,6 +12,7 @@ import { useAuth } from '../features/auth-context.js';
 import { useSocial } from '../features/social-context.js';
 import { useThemeMode, type ThemeMode } from '../hooks/use-theme-mode.js';
 import { apiRequest } from '../lib/api.js';
+import { FriendQueueAlertToggle } from '../components/friend-queue-alert-toggle.js';
 import { feedback, setFeedbackPreference, useFeedbackPreferences } from '../lib/feedback.js';
 import type { CategoryAverage, MatchSummary } from '../lib/models.js';
 import { activateFriendNotifications, browserNotificationState, publicVapidKey } from '../lib/social-notifications.js';
@@ -260,7 +261,10 @@ export function ProfilePage() {
         ) : notificationState === 'unsupported' ? (
           <span className="settings-card__status">Notificações indisponíveis neste navegador</span>
         ) : notificationState === 'granted' ? (
-          <span className="settings-card__status settings-card__status--enabled">Pedidos de amizade ativados</span>
+          <div className="settings-card__stack">
+            <span className="settings-card__status settings-card__status--enabled">Pedidos de amizade ativados</span>
+            {pushConfigured && <FriendQueueAlertToggle getToken={getToken} />}
+          </div>
         ) : !pushConfigured || publicVapidKey() === '' ? (
           <span className="settings-card__status">Notificações ainda não configuradas</span>
         ) : (

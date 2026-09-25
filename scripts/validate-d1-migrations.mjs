@@ -260,10 +260,11 @@ function assertFinalSchema(scenario) {
 
   const appliedMigrations = query(scenario, 'SELECT name FROM d1_migrations ORDER BY id');
   assert(
-    appliedMigrations.at(-1)?.name === '0017_personal_records_and_theme_votes.sql',
-    `${scenario.name}: 0017 de recordes pessoais e votação de temas não foi registrada como última migration`,
+    appliedMigrations.at(-1)?.name === '0018_friend_queue_alerts.sql',
+    `${scenario.name}: 0018 de avisos de amigo na fila não foi registrada como última migration`,
   );
   assertPersonalRecordsAndVotesSchema(scenario);
+  assertFriendQueueAlertsSchema(scenario);
   const upgradedTheme = query(scenario, `
     SELECT artwork_kind, artwork_icon_key, artwork_version, active_question_count
       FROM themes
@@ -859,6 +860,33 @@ function assertArtworkInvariants(scenario) {
 }
 
 /** @param {MigrationScenario} scenario */
+function assertFriendQueueAlertsSchema(scenario) {
+  const alertColumns = query(scenario, 'PRAGMA table_info(friend_queue_alerts)').map(({ name }) => name);
+  assert(
+    ['recipient_user_id', 'sender_user_id', 'sent_at_ms'].every((column) => alertColumns.includes(column)),
+    `${scenario.name}: colunas de friend_queue_alerts ausentes`,
+  );
+  const probeId = `queue-alert-${scenario.name}`;
+  executeSql(scenario, `
+    INSERT INTO users (id, firebase_uid) VALUES ('${probeId}', 'firebase-${probeId}');
+    INSERT INTO friend_queue_alert_preferences (user_id) VALUES ('${probeId}');
+  `);
+  const preference = query(scenario, `SELECT enabled FROM friend_queue_alert_preferences WHERE user_id = '${probeId}'`);
+  assert(preference[0]?.enabled === 0, `${scenario.name}: aviso de amigo na fila precisa nascer desligado`);
+  executeSql(scenario, `UPDATE friend_queue_alert_preferences SET enabled = 2 WHERE user_id = '${probeId}';`, true);
+  executeSql(scenario, `
+    INSERT INTO friend_queue_alerts (recipient_user_id, sender_user_id, sent_at_ms) VALUES ('${probeId}', '${probeId}', 0);
+  `, true);
+  const plan = query(scenario, `
+    EXPLAIN QUERY PLAN SELECT 1 FROM friend_queue_alerts WHERE sender_user_id = 'x' AND sent_at_ms > 1 LIMIT 1
+  `);
+  assert(
+    plan.some(({ detail }) => String(detail).includes('idx_friend_queue_alerts_sender')),
+    `${scenario.name}: limite do remetente não usa índice`,
+  );
+}
+
+/** @param {MigrationScenario} scenario */
 function assertPersonalRecordsAndVotesSchema(scenario) {
   const recordColumns = query(scenario, 'PRAGMA table_info(theme_personal_records)').map(({ name }) => name);
   assert(
@@ -1199,6 +1227,10 @@ try {
     migrationNames.includes('0017_personal_records_and_theme_votes.sql'),
     'Migration Core 0017 de recordes pessoais e votação de temas ausente',
   );
+  assert(
+    migrationNames.includes('0018_friend_queue_alerts.sql'),
+    'Migration Core 0018 de avisos de amigo na fila ausente',
+  );
   assert(questionMigrationNames.includes('0003_expand_synthetic_smoke_test.sql'), 'Migration Questions 0003 ausente');
   assert(
     questionMigrationNames.includes('0004_question_editorial_versioning.sql'),
@@ -1258,6 +1290,7 @@ try {
       '0015_admin_user_search_index.sql',
       '0016_reset_stale_pool_discovery.sql',
       '0017_personal_records_and_theme_votes.sql',
+      '0018_friend_queue_alerts.sql',
     ].includes(name)),
   );
   console.log('Validando upgrade D1 exato de 0003 para 0004...');
@@ -1395,6 +1428,12 @@ try {
   );
   applyMigrations(upgradeDatabase);
   assertPersonalRecordBackfill(upgradeDatabase, recordUserId);
+  console.log('Validando upgrade D1 atual exato de 0017 para 0018 avisos de amigo na fila...');
+  await copyFile(
+    join(coreSourceMigrationsDirectory, '0018_friend_queue_alerts.sql'),
+    join(upgradeDatabase.migrationsDirectory, '0018_friend_queue_alerts.sql'),
+  );
+  applyMigrations(upgradeDatabase);
   assertFinalSchema(upgradeDatabase);
   console.log('Validando rollback transacional de migration com erro...');
   await assertRollback(upgradeDatabase);
@@ -1500,7 +1539,7 @@ try {
   applyMigrations(upgradeQuestions);
   assertQuestionImageKeyIndex(upgradeQuestions);
 
-  console.log('Migrations D1 aprovadas: parser Wrangler, bancos vazios, upgrades Core 0003→0004→0005→0006→0007→0008→0009→0010→0011→0012→0013→0014→0015→0016→0017 e Questions 0002→0003→0004→0005→0006→0007→0008→0009, invariantes sociais, de desafio, de ledger de conclusão, de denúncia, editoriais, pool único por tema, índices de exportação e de foto, rollback e schemas finais.');
+  console.log('Migrations D1 aprovadas: parser Wrangler, bancos vazios, upgrades Core 0003→0004→0005→0006→0007→0008→0009→0010→0011→0012→0013→0014→0015→0016→0017→0018 e Questions 0002→0003→0004→0005→0006→0007→0008→0009, invariantes sociais, de desafio, de ledger de conclusão, de denúncia, editoriais, pool único por tema, índices de exportação e de foto, rollback e schemas finais.');
 } finally {
   await rm(temporaryRoot, { force: true, recursive: true });
 }

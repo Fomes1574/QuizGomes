@@ -51,7 +51,8 @@ import { QuestionImportService } from './services/question-import-service.js';
 import { questionExportCsvHeader, questionExportCsvRow } from './services/question-export.js';
 import { parseQuestionsCsv } from './services/question-csv.js';
 import { DirectChallengeService } from './services/direct-challenge-service.js';
-import { SocialPushService } from './services/social-push-service.js';
+import { themeLinkPreview } from './http/link-preview.js';
+import { FRIEND_QUEUE_ALERT_DELAY_MS, SocialPushService } from './services/social-push-service.js';
 import { inspectQuestionImageWebp, inspectWebp, QUESTION_IMAGE_MAX_BYTES, THEME_ARTWORK_MAX_BYTES } from './storage/webp.js';
 import { CUSTOM_AVATAR_BYTES, CUSTOM_AVATAR_DIMENSION } from './storage/custom-avatar.js';
 import { isQuestionImageKey, R2ImageStorage } from './storage/image-storage.js';
@@ -205,7 +206,42 @@ async function consumeRealtimeTicket(
   return result.uid;
 }
 
-async function realtimeRoute(request: Request, env: Env, url: URL): Promise<Response> {
+/**
+ * Espera um pouco e só avisa os amigos se a pessoa ainda estiver na MESMA
+ * fila: quem pareou em segundos não precisa de ninguém. Tudo fora do caminho
+ * da resposta (waitUntil) e melhor-esforço.
+ */
+async function alertFriendsInQueue(env: Env, input: {
+  origin: string; resource: string; themeId: string; uid: string; userId: string;
+}): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, FRIEND_QUEUE_ALERT_DELAY_MS));
+  const state = await env.PRESENCE_HUB.get(env.PRESENCE_HUB.idFromName(input.uid))
+    .fetch('https://presence.internal/state').then((response) => response.json<ActivityState>());
+  if (state.activity !== 'matchmaking' || state.resource !== input.resource) return;
+  const mode = input.resource.endsWith(':RANKED') ? 'RANKED' : 'CASUAL';
+  const details = await env.CORE_DB.prepare(
+    `SELECT t.slug, t.name, p.display_name
+       FROM themes t, user_profiles p
+      WHERE t.id = ?1 AND t.status = 'ACTIVE' AND p.user_id = ?2`,
+  ).bind(input.themeId, input.userId).first<{ display_name: string; name: string; slug: string }>();
+  if (details === null) return;
+  await new SocialPushService(env, new SocialRepository(env.CORE_DB)).sendFriendInQueue({
+    isOnline: async (userIds) => {
+      const response = await socialRealtimeHub(env).fetch('https://social.internal/online', {
+        body: JSON.stringify({ userIds }), method: 'POST',
+      });
+      return new Set((await response.json<{ online: string[] }>()).online);
+    },
+    mode,
+    origin: input.origin,
+    senderDisplayName: details.display_name,
+    senderUserId: input.userId,
+    themeName: details.name,
+    themeSlug: details.slug,
+  });
+}
+
+async function realtimeRoute(request: Request, env: Env, url: URL, context?: ExecutionContext): Promise<Response> {
   if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
     throw new ApiError(426, 'WEBSOCKET_REQUIRED', 'Esta rota exige WebSocket.');
   }
@@ -319,6 +355,12 @@ async function realtimeRoute(request: Request, env: Env, url: URL): Promise<Resp
         body: JSON.stringify({ from: 'matchmaking', resource: null, to: 'idle' }),
         method: 'POST',
       });
+    } else if (context !== undefined && new SocialPushService(env, new SocialRepository(env.CORE_DB)).configured) {
+      context.waitUntil(alertFriendsInQueue(env, {
+        origin: url.origin, resource, themeId, uid, userId: userRow.id,
+      }).catch(() => {
+        console.warn(JSON.stringify({ code: 'FRIEND_QUEUE_ALERT_FAILED' }));
+      }));
     }
     return response;
   }
@@ -1624,6 +1666,19 @@ async function socialRoute(request: Request, env: Env, url: URL, context: Execut
   if (url.pathname === '/api/social' && request.method === 'GET') {
     return json(await social.snapshot(profile.userId));
   }
+  if (url.pathname === '/api/social/push/queue-alerts') {
+    // Aviso "amigo na fila": desligado por padrão, liga/desliga só para si.
+    if (request.method === 'GET') {
+      return json({ enabled: await social.friendQueueAlertsEnabled(profile.userId) });
+    }
+    if (request.method === 'PUT') {
+      const body = await readJson(request) as { enabled?: unknown } | null;
+      if (typeof body?.enabled !== 'boolean') throw new ApiError(400, 'INVALID_PREFERENCE', 'Informe se o aviso fica ligado.');
+      await social.setFriendQueueAlerts(profile.userId, body.enabled);
+      return json({ enabled: body.enabled });
+    }
+    throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Método não permitido.');
+  }
   if (url.pathname === '/api/social/summary' && request.method === 'GET') {
     return json({ pendingCount: await social.pendingCount(profile.userId), pushConfigured: push.configured });
   }
@@ -1803,7 +1858,7 @@ async function apiRoute(request: Request, env: Env, url: URL, context: Execution
     return challengeRoute(request, env, url, context);
   }
   if (url.pathname === '/api/realtime/tickets' && request.method === 'POST') return createRealtimeTicket(request, env);
-  if (url.pathname.startsWith('/api/realtime/') && request.headers.get('Upgrade') !== null) return realtimeRoute(request, env, url);
+  if (url.pathname.startsWith('/api/realtime/') && request.headers.get('Upgrade') !== null) return realtimeRoute(request, env, url, context);
   if (url.pathname === '/api/reports') return reportsRoute(request, env);
   if (url.pathname === '/api/admin/questions/import') return adminImportRoute(request, env, url);
   if (url.pathname === '/api/admin/themes') return adminThemesRoute(request, env, url);
@@ -1966,6 +2021,14 @@ async function handle(request: Request, env: Env, context: ExecutionContext): Pr
       return applyCors(await apiRoute(request, env, url, context), request, env.ALLOWED_ORIGINS);
     } catch (error) {
       return applyCors(apiErrorResponse(error), request, env.ALLOWED_ORIGINS);
+    }
+  }
+  if (url.pathname.startsWith('/temas/')) {
+    try {
+      const preview = await themeLinkPreview(request, env, url);
+      if (preview !== null) return preview;
+    } catch {
+      // Prévia é enfeite: sem ela, a SPA abre normalmente.
     }
   }
   return env.ASSETS.fetch(request);
