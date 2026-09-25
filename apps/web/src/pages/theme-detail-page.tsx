@@ -1,6 +1,6 @@
 import { questionsForMode, type MatchMode } from '@quiz-gomes/domain';
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
-import { Link, useLocation, useParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { Avatar } from '../components/avatar.js';
 import { AvatarFrame } from '../components/avatar-frame.js';
 import { Button } from '../components/button.js';
@@ -22,7 +22,9 @@ import type { SocialFriend, SocialSnapshot } from '../lib/social.js';
 export function ThemeDetailPage() {
   const { slug = '' } = useParams();
   const location = useLocation();
-  const restored = location.state as { mode?: MatchMode } | null;
+  const restored = location.state as { autoPlay?: boolean; mode?: MatchMode } | null;
+  const navigate = useNavigate();
+  const consumedAutoPlay = useRef(false);
   const { getToken, profile, signIn } = useAuth();
   const [data, setData] = useState<ThemeDetailResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -63,6 +65,17 @@ export function ThemeDetailPage() {
     void startMatchmaking(intent.themeId, intent.mode, intent.themeSlug);
   }, [data, profile, slug, startMatchmaking]);
 
+  // "Jogar de novo" chega aqui com autoPlay: entra na fila uma única vez e limpa o
+  // estado do histórico para um recarregamento não abrir outra busca sozinho.
+  useEffect(() => {
+    if (consumedAutoPlay.current || restored?.autoPlay !== true || profile === null || data === null) return;
+    consumedAutoPlay.current = true;
+    const autoMode = restored.mode === 'RANKED' ? 'RANKED' : 'CASUAL';
+    void navigate(location.pathname, { replace: true, state: { mode: autoMode } });
+    if (data.theme.activeQuestionCount < questionsForMode(autoMode)) return;
+    void startMatchmaking(data.theme.id, autoMode, slug);
+  }, [data, location.pathname, navigate, profile, restored, slug, startMatchmaking]);
+
   if (data === null && error === null) return <LoadingState label="Abrindo o tema" />;
   if (error !== null || data === null) return <ErrorState message={error ?? 'Tema indisponível.'} onRetry={() => setReload((value) => value + 1)} />;
 
@@ -74,6 +87,8 @@ export function ThemeDetailPage() {
   const modeIndex = mode === 'CASUAL' ? 0 : 1;
   const podium = [data.topFive[1], data.topFive[0], data.topFive[2]];
   const discovered = data.personal?.discoveredPercentage ?? 0;
+  const records = data.personal?.records;
+  const modeRecord = records?.[mode] ?? null;
 
   return (
     <section className="page page--theme-detail">
@@ -116,6 +131,7 @@ export function ThemeDetailPage() {
                 ? 'Vitória rende 30 XP e mexe no seu Conhecimento deste tema.'
                 : 'Vitória rende 20 XP. Seu Conhecimento fica intacto.'}</p>
               <ul className="play-deck__facts">
+                {modeRecord !== null && <li className="play-deck__record"><Icon name="crown" />Seu recorde: {modeRecord.toLocaleString('pt-BR')}</li>}
                 <li><Icon name="bolt" />10 s por pergunta</li>
                 <li>{available.toLocaleString('pt-BR')} {available === 1 ? 'disponível' : 'disponíveis'}</li>
               </ul>
@@ -177,7 +193,7 @@ export function ThemeDetailPage() {
         </aside>
       </div>
 
-      <article className="personal-theme-card"><div><span className="eyebrow">Seu cartão</span><h2>{profile?.displayName ?? 'Entre para acompanhar'}</h2><p>{profile ? (data.personal?.rankedMatches ? 'Seu histórico neste tema é calculado apenas pelas partidas Ranqueadas.' : 'Sua história competitiva neste tema começa na primeira Ranqueada.') : 'Ranking, descoberta histórica e Conhecimento ficam reunidos aqui.'}</p></div><div className="personal-theme-card__stats"><RankBadge knowledge={data.personal?.knowledge ?? 0} showKnowledge /><span className="discovery-ring" style={{ '--discovered': Math.min(1, discovered / 100) } as CSSProperties}><strong>{discovered.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%</strong><small>descoberto</small></span><span><strong>{data.personal?.position ? `#${data.personal.position}` : '—'}</strong><small>posição</small></span></div></article>
+      <article className="personal-theme-card"><div><span className="eyebrow">Seu cartão</span><h2>{profile?.displayName ?? 'Entre para acompanhar'}</h2><p>{profile ? (data.personal?.rankedMatches ? 'Seu histórico neste tema é calculado apenas pelas partidas Ranqueadas.' : 'Sua história competitiva neste tema começa na primeira Ranqueada.') : 'Ranking, descoberta histórica e Conhecimento ficam reunidos aqui.'}</p></div><div className="personal-theme-card__stats"><RankBadge knowledge={data.personal?.knowledge ?? 0} showKnowledge /><span className="discovery-ring" style={{ '--discovered': Math.min(1, discovered / 100) } as CSSProperties}><strong>{discovered.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%</strong><small>descoberto</small></span><span><strong>{data.personal?.position ? `#${data.personal.position}` : '—'}</strong><small>posição</small></span></div>{profile !== null && <div className="personal-records" aria-label="Recordes pessoais neste tema"><span><Icon name="crown" /><small>Recorde Normal</small><strong>{records?.CASUAL != null ? records.CASUAL.toLocaleString('pt-BR') : '—'}</strong></span><span><Icon name="crown" /><small>Recorde Rankeada</small><strong>{records?.RANKED != null ? records.RANKED.toLocaleString('pt-BR') : '—'}</strong></span></div>}</article>
 
       {challengePickerOpen && mode === 'CASUAL' && (
         <FriendChallengeDialog

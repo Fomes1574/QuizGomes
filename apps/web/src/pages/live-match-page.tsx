@@ -9,7 +9,7 @@ import {
   type MatchConnectionScreenKind,
 } from '../components/match-connection-screen.js';
 import { MatchLobbyDuel } from '../components/match-lobby-duel.js';
-import { MatchResultScreen } from '../components/match-result-screen.js';
+import { MatchResultScreen, type OpponentFriendStatus } from '../components/match-result-screen.js';
 import {
   MATCH_QUESTION_ENTRANCE_MS,
   MatchRoundTransition,
@@ -29,6 +29,7 @@ interface TerminalResult {
     knowledgeAfter: number;
     knowledgeBefore: number;
     knowledgeDelta: number;
+    personalRecord?: boolean;
     result: MatchResult;
     score: number;
     xpDelta: number;
@@ -247,6 +248,21 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
               roundNumber,
             }]
         ));
+        const resolution = match.resolution;
+        if (resolution !== undefined) {
+          setSeenQuestions((current) => current.map((seen) => (
+            seen.roundNumber !== roundNumber || seen.outcome !== undefined
+              ? seen
+              : {
+                ...seen,
+                outcome: {
+                  correctOption: resolution.correctOption,
+                  options: question.options,
+                  selectedOption: resolution.viewer.selectedOption,
+                },
+              }
+          )));
+        }
       }
       if (match.phase === 'ANSWERING' && match.remainingMs !== undefined) {
         setDeadlineMs(Date.now() + match.remainingMs);
@@ -499,6 +515,29 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
   }
   const rankedMatch = projection?.round === undefined ? undefined : projection.round.total === questionsForMode('RANKED');
 
+  // Amizade com o adversário: o servidor resolve quem ele é pela própria partida.
+  const [friendStatus, setFriendStatus] = useState<{ message?: string; status: OpponentFriendStatus }>({ status: 'idle' });
+  const terminalReady = terminal !== null;
+  useEffect(() => {
+    if (!terminalReady || isChallenge) return undefined;
+    let active = true;
+    void apiRequest<{ status: 'FRIEND' | 'NONE' }>(`/api/social/match-opponent/${encodeURIComponent(sessionId)}`, { getToken })
+      .then((response) => { if (active && response.status === 'FRIEND') setFriendStatus({ status: 'friend' }); })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, [getToken, isChallenge, sessionId, terminalReady]);
+  const addOpponentFriend = () => {
+    setFriendStatus({ status: 'sending' });
+    void apiRequest<{ status: 'FRIEND' | 'SENT' }>(`/api/social/match-opponent/${encodeURIComponent(sessionId)}`, {
+      getToken,
+      method: 'POST',
+    }).then((response) => setFriendStatus({ status: response.status === 'FRIEND' ? 'friend' : 'sent' }))
+      .catch((requestError: unknown) => setFriendStatus({
+        message: requestError instanceof Error ? requestError.message : 'Não foi possível enviar o pedido.',
+        status: 'error',
+      }));
+  };
+
   const matchOrigin = (location.state as {
     matchOrigin?: { mode?: string; returnTo?: string };
   } | null)?.matchOrigin;
@@ -517,6 +556,12 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
     }
     void navigate('/social');
   }, [cancelledChallenge, navigate, returnMode, returnTo]);
+
+  const playAgain = typeof matchOrigin?.returnTo === 'string' && matchOrigin.returnTo.startsWith('/temas/') && !isChallenge
+    ? () => {
+      void navigate(matchOrigin.returnTo as string, { state: { autoPlay: true, mode: matchOrigin.mode } });
+    }
+    : undefined;
 
   const backToTheme = () => {
     if (typeof matchOrigin?.returnTo === 'string' && matchOrigin.returnTo.startsWith('/temas/')) {
@@ -543,11 +588,14 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
     return (
       <>
       <MatchResultScreen
+        addFriend={isChallenge ? undefined : { ...friendStatus, onClick: addOpponentFriend }}
         cancelledBy={terminal.cancelledBy}
         knowledgeAfter={viewer.knowledgeAfter}
         knowledgeDelta={viewer.knowledgeDelta}
         onBack={backToTheme}
+        onPlayAgain={playAgain}
         onReport={(question) => setReportTarget(question)}
+        personalRecord={viewer.personalRecord === true}
         ranked={rankedMatch}
         opponent={{
           customAvatarUrl: projection?.opponent.customAvatarUrl ?? null,

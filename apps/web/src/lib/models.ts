@@ -128,6 +128,8 @@ export interface ThemeDetailResponse {
     knowledge: number;
     position: number | null;
     rankedMatches: number;
+    /** Maior pontuação em partida concluída, por modo; ausente em respostas antigas. */
+    records?: { CASUAL: number | null; RANKED: number | null };
   };
   theme: ThemeSummary;
   topFive: LeaderboardEntry[];

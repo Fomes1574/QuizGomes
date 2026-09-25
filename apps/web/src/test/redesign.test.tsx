@@ -101,6 +101,67 @@ describe('resultado', () => {
     />);
     expect(screen.getByText('Por um triz. Foi no detalhe.')).toBeInTheDocument();
   });
+
+  it('oferece jogar de novo, adicionar o adversário e anuncia recorde pessoal', () => {
+    const onPlayAgain = vi.fn();
+    const onAddFriend = vi.fn();
+    const { rerender } = render(<MatchResultScreen
+      addFriend={{ onClick: onAddFriend, status: 'idle' }}
+      knowledgeAfter={150}
+      knowledgeDelta={0}
+      onBack={() => {}}
+      onPlayAgain={onPlayAgain}
+      opponent={{ name: 'Ana Souza', result: 'LOSS', score: 40 }}
+      personalRecord
+      ranked={false}
+      viewer={{ name: 'Gomes', result: 'WIN', score: 60 }}
+      xpDelta={20}
+    />);
+    expect(screen.getByText('Novo recorde pessoal neste tema!')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Jogar de novo' }));
+    expect(onPlayAgain).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole('button', { name: /Adicionar Ana/ }));
+    expect(onAddFriend).toHaveBeenCalledTimes(1);
+    rerender(<MatchResultScreen
+      addFriend={{ onClick: onAddFriend, status: 'friend' }}
+      knowledgeAfter={150}
+      knowledgeDelta={0}
+      onBack={() => {}}
+      opponent={{ name: 'Ana Souza', result: 'LOSS', score: 40 }}
+      ranked={false}
+      viewer={{ name: 'Gomes', result: 'WIN', score: 60 }}
+      xpDelta={20}
+    />);
+    expect(screen.queryByRole('button', { name: /Adicionar Ana/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Jogar de novo' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Novo recorde pessoal neste tema!')).not.toBeInTheDocument();
+  });
+
+  it('na revisão mostra a resposta certa com ✓ e a escolha errada com ×', () => {
+    render(<MatchResultScreen
+      knowledgeAfter={150}
+      knowledgeDelta={0}
+      onBack={() => {}}
+      onReport={() => {}}
+      opponent={{ name: 'Ana', result: 'WIN', score: 60 }}
+      questions={[
+        {
+          contextId: 'm', contextKind: 'MATCH', prompt: 'Capital do Brasil?', questionId: 'q1', roundNumber: 1,
+          outcome: { correctOption: 1, options: ['Rio', 'Brasília', 'Recife', 'Belém'], selectedOption: 0 },
+        },
+        {
+          contextId: 'm', contextKind: 'MATCH', prompt: 'Maior planeta?', questionId: 'q2', roundNumber: 2,
+          outcome: { correctOption: 2, options: ['Marte', 'Terra', 'Júpiter', 'Vênus'], selectedOption: null },
+        },
+      ]}
+      ranked={false}
+      viewer={{ name: 'Gomes', result: 'LOSS', score: 40 }}
+      xpDelta={0}
+    />);
+    expect(screen.getByText(/✓\s*B · Brasília/)).toBeInTheDocument();
+    expect(screen.getByText(/×\s*Você: A · Rio/)).toBeInTheDocument();
+    expect(screen.getByText('Você não respondeu')).toBeInTheDocument();
+  });
 });
 
 describe('partida pelo teclado', () => {

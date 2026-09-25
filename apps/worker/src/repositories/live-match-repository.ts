@@ -47,6 +47,7 @@ interface ProgressRow {
 interface FinalizedPlayerRow {
   knowledge_before: number | null;
   knowledge_delta: number | null;
+  personal_record: number;
   score: number;
   seat: LiveSeat;
   user_id: string;
@@ -68,6 +69,8 @@ export interface FinalizedLivePlayer {
   knowledgeAfter: number;
   knowledgeBefore: number;
   knowledgeDelta: number;
+  /** Ausente em resumos antigos já persistidos no DO antes do recorde existir. */
+  personalRecord?: boolean;
   result: MatchResult;
   score: number;
   seat: LiveSeat;
@@ -464,6 +467,23 @@ export class LiveMatchRepository {
         ),
       );
 
+      if (outcome.kind === 'COMPLETED' && player.score > 0) {
+        // Upsert só melhora o recorde; o ledger garante uma única aplicação.
+        statements.push(this.coreDb.prepare(
+          `INSERT INTO theme_personal_records (user_id, theme_id, mode, best_score, match_id)
+           SELECT ?1, ?2, ?3, ?4, ?5
+            WHERE EXISTS (
+              SELECT 1 FROM result_ledger
+               WHERE match_id = ?5 AND user_id = ?1 AND applied = 0
+            )
+           ON CONFLICT (user_id, theme_id, mode) DO UPDATE
+              SET best_score = excluded.best_score,
+                  match_id = excluded.match_id,
+                  achieved_at = CURRENT_TIMESTAMP
+            WHERE excluded.best_score > theme_personal_records.best_score`,
+        ).bind(player.userId, state.themeId, state.mode, player.score, state.matchId));
+      }
+
       const poolState = poolStates?.[index];
       if (poolState !== undefined && servedSlots.length > 0) {
         const nextState = servedSlots.reduce((current, slot) => markAnswered(current, slot), poolState.state);
@@ -560,10 +580,14 @@ export class LiveMatchRepository {
     ).bind(state.matchId).first<FinalizedMatchRow>();
     if (match === null) return null;
     const result = await this.coreDb.prepare(
-      `SELECT user_id, seat, score, knowledge_before, knowledge_delta, xp_delta
-         FROM match_players
-        WHERE match_id = ?1
-        ORDER BY seat`,
+      `SELECT mp.user_id, mp.seat, mp.score, mp.knowledge_before, mp.knowledge_delta, mp.xp_delta,
+              EXISTS (
+                SELECT 1 FROM theme_personal_records r
+                 WHERE r.user_id = mp.user_id AND r.match_id = mp.match_id
+              ) AS personal_record
+         FROM match_players mp
+        WHERE mp.match_id = ?1
+        ORDER BY mp.seat`,
     ).bind(state.matchId).all<FinalizedPlayerRow>();
     const rows = result.results;
     const first = rows[0];
@@ -576,6 +600,7 @@ export class LiveMatchRepository {
         knowledgeAfter: clampKnowledge(knowledgeBefore + knowledgeDelta),
         knowledgeBefore,
         knowledgeDelta,
+        personalRecord: row.personal_record === 1,
         result: matchResultForPlayer(match.status, match.winner_user_id, row.user_id),
         score: row.score,
         seat: row.seat,

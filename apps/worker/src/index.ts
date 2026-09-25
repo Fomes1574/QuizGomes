@@ -1591,6 +1591,39 @@ async function socialRoute(request: Request, env: Env, url: URL, context: Execut
   if (url.pathname === '/api/social/search' && request.method === 'GET') {
     return json({ users: await social.search(profile.userId, url.searchParams.get('q') ?? '') });
   }
+  const matchOpponent = /^\/api\/social\/match-opponent\/([a-f0-9-]{36})$/i.exec(url.pathname);
+  if (matchOpponent?.[1] !== undefined && (request.method === 'GET' || request.method === 'POST')) {
+    // O adversário vem da própria partida; o cliente nunca informa quem é.
+    const opponent = await env.CORE_DB.prepare(
+      `SELECT them.user_id, p.public_id
+         FROM match_players me
+         JOIN match_players them ON them.match_id = me.match_id AND them.user_id <> me.user_id
+         JOIN matches m ON m.id = me.match_id
+         JOIN user_profiles p ON p.user_id = them.user_id
+        WHERE me.match_id = ?1 AND me.user_id = ?2 AND m.status IN ('FINISHED', 'VOID')`,
+    ).bind(matchOpponent[1], profile.userId).first<{ public_id: string; user_id: string }>();
+    if (opponent === null) throw new ApiError(404, 'MATCH_NOT_FOUND', 'Partida não encontrada.');
+    const [low, high] = profile.userId < opponent.user_id
+      ? [profile.userId, opponent.user_id]
+      : [opponent.user_id, profile.userId];
+    const friends = await env.CORE_DB.prepare(
+      'SELECT 1 AS linked FROM friendships WHERE user_low_id = ?1 AND user_high_id = ?2',
+    ).bind(low, high).first();
+    if (friends !== null) return json({ status: 'FRIEND' });
+    if (request.method === 'GET') return json({ status: 'NONE' });
+    const result = await social.sendRequest(profile.userId, opponent.public_id);
+    if (result.created) invalidateSocial(env, context, [profile.userId, result.targetUserId]);
+    if (result.created && push.configured) {
+      context.waitUntil(push.sendFriendRequest({
+        origin: url.origin,
+        requestId: result.requestId,
+        senderDisplayName: profile.displayName,
+        senderUserId: profile.userId,
+        targetUserId: result.targetUserId,
+      }));
+    }
+    return json({ status: 'SENT' }, { status: result.created ? 201 : 200 });
+  }
   if (url.pathname === '/api/social/requests' && request.method === 'GET') {
     const direction = url.searchParams.get('direction') === 'outgoing' ? 'outgoing' : 'incoming';
     return json(await social.requests(profile.userId, direction, url.searchParams.get('cursor')));
@@ -1830,6 +1863,7 @@ async function apiRoute(request: Request, env: Env, url: URL, context: Execution
       knowledge: number;
       position: number | null;
       rankedMatches: number;
+      records: { CASUAL: number | null; RANKED: number | null };
     } = null;
     if (request.headers.get('Authorization') !== null) {
       const identity = await requireUser(request, env);
@@ -1842,7 +1876,12 @@ async function apiRoute(request: Request, env: Env, url: URL, context: Execution
           discoveredPercentage = (discoveredCount(state.state, pool.activeCount) / pool.activeCount) * 100;
         }
         const ranking = await themes.personalRanking(theme.id, profile.userId);
-        personal = { discoveredPercentage, ...ranking };
+        const recordRows = await env.CORE_DB.prepare(
+          'SELECT mode, best_score FROM theme_personal_records WHERE user_id = ?1 AND theme_id = ?2',
+        ).bind(profile.userId, theme.id).all<{ best_score: number; mode: 'CASUAL' | 'RANKED' }>();
+        const records = { CASUAL: null as number | null, RANKED: null as number | null };
+        for (const row of recordRows.results) records[row.mode] = row.best_score;
+        personal = { discoveredPercentage, ...ranking, records };
       }
     }
     return json({ personal, theme, topFive });

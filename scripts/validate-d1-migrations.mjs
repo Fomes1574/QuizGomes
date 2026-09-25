@@ -260,9 +260,10 @@ function assertFinalSchema(scenario) {
 
   const appliedMigrations = query(scenario, 'SELECT name FROM d1_migrations ORDER BY id');
   assert(
-    appliedMigrations.at(-1)?.name === '0016_reset_stale_pool_discovery.sql',
-    `${scenario.name}: 0016 de reset de descoberta de pool antigo não foi registrada como última migration`,
+    appliedMigrations.at(-1)?.name === '0017_personal_records_and_theme_votes.sql',
+    `${scenario.name}: 0017 de recordes pessoais e votação de temas não foi registrada como última migration`,
   );
+  assertPersonalRecordsAndVotesSchema(scenario);
   const upgradedTheme = query(scenario, `
     SELECT artwork_kind, artwork_icon_key, artwork_version, active_question_count
       FROM themes
@@ -857,6 +858,72 @@ function assertArtworkInvariants(scenario) {
   );
 }
 
+/** @param {MigrationScenario} scenario */
+function assertPersonalRecordsAndVotesSchema(scenario) {
+  const recordColumns = query(scenario, 'PRAGMA table_info(theme_personal_records)').map(({ name }) => name);
+  assert(
+    ['user_id', 'theme_id', 'mode', 'best_score', 'match_id', 'achieved_at'].every((column) => recordColumns.includes(column)),
+    `${scenario.name}: colunas de theme_personal_records ausentes`,
+  );
+  const voteColumns = query(scenario, 'PRAGMA table_info(theme_suggestion_votes)').map(({ name }) => name);
+  assert(
+    ['suggestion_id', 'user_id', 'created_at'].every((column) => voteColumns.includes(column)),
+    `${scenario.name}: colunas de theme_suggestion_votes ausentes`,
+  );
+  const suggestionId = `suggestion-${scenario.name}`;
+  const voterId = `voter-${scenario.name}`;
+  executeSql(scenario, `
+    INSERT INTO users (id, firebase_uid) VALUES ('${voterId}', 'firebase-${voterId}');
+    INSERT INTO theme_suggestions (id, name) VALUES ('${suggestionId}', 'Tema candidato');
+    INSERT INTO theme_suggestion_votes (suggestion_id, user_id) VALUES ('${suggestionId}', '${voterId}');
+  `);
+  executeSql(scenario, `
+    INSERT INTO theme_suggestion_votes (suggestion_id, user_id) VALUES ('${suggestionId}', '${voterId}');
+  `, true);
+  executeSql(scenario, `INSERT INTO theme_suggestions (id, name) VALUES ('${suggestionId}-short', 'x');`, true);
+  executeSql(scenario, `
+    INSERT INTO theme_personal_records (user_id, theme_id, mode, best_score, match_id)
+    VALUES ('${voterId}', '${syntheticThemeId}', 'CASUAL', 0, 'probe');
+  `, true);
+  executeSql(scenario, `
+    DELETE FROM theme_suggestions WHERE id = '${suggestionId}';
+    DELETE FROM users WHERE id = '${voterId}';
+  `);
+  const orphanVotes = query(scenario, `SELECT 1 FROM theme_suggestion_votes WHERE suggestion_id = '${suggestionId}'`);
+  assert(orphanVotes.length === 0, `${scenario.name}: voto não foi removido junto com o tema candidato`);
+}
+
+/** Partidas antes da 0017: só o melhor placar ao vivo concluído vira recorde. @param {MigrationScenario} scenario */
+function seedPersonalRecordFixture(scenario) {
+  const userId = `record-${scenario.name}`;
+  const match = (id, status, kind, score) => `
+    INSERT INTO matches (id, theme_id, difficulty, mode, kind, status, question_shard_id, finished_at)
+    VALUES ('${id}', '${syntheticThemeId}', 'MEDIUM', 'CASUAL', '${kind}', '${status}', 'questions-01', '2026-09-0${score % 9 + 1}');
+    INSERT INTO match_players (match_id, user_id, seat, score) VALUES ('${id}', '${userId}', 1, ${score});
+  `;
+  executeSql(scenario, `
+    INSERT INTO users (id, firebase_uid) VALUES ('${userId}', 'firebase-${userId}');
+    ${match(`${userId}-low`, 'FINISHED', 'MATCHMAKING', 40)}
+    ${match(`${userId}-best`, 'FINISHED', 'DIRECT_LIVE', 70)}
+    ${match(`${userId}-void`, 'VOID', 'MATCHMAKING', 99)}
+  `);
+  return userId;
+}
+
+/** @param {MigrationScenario} scenario @param {string} userId */
+function assertPersonalRecordBackfill(scenario, userId) {
+  const records = query(scenario, `
+    SELECT mode, best_score, match_id FROM theme_personal_records WHERE user_id = '${userId}'
+  `);
+  assert(
+    records.length === 1
+      && records[0].mode === 'CASUAL'
+      && records[0].best_score === 70
+      && records[0].match_id === `${userId}-best`,
+    `${scenario.name}: backfill de recorde pessoal não escolheu a melhor partida concluída`,
+  );
+}
+
 /** @param {MigrationScenario} scenario @returns {string} */
 function seedPoolDiscoveryFixture(scenario) {
   const userId = `pool-discovery-${scenario.name}`;
@@ -982,14 +1049,28 @@ function assertUnifiedQuestionPoolInvariants(scenario) {
 function assertQuestionExportIndex(scenario) {
   const appliedMigrations = query(scenario, 'SELECT name FROM d1_migrations ORDER BY id');
   assert(
-    appliedMigrations.at(-1)?.name === '0008_question_export_index.sql',
-    `${scenario.name}: 0008 de índice da exportação não foi registrada como última migration de Questions`,
+    appliedMigrations.some(({ name }) => name === '0008_question_export_index.sql'),
+    `${scenario.name}: 0008 de índice da exportação não foi registrada`,
   );
   const index = query(scenario, `
     SELECT 1 FROM sqlite_master
      WHERE type = 'index' AND name = 'idx_questions_pool_id'
   `);
   assert(index.length === 1, `${scenario.name}: índice de paginação da exportação ausente`);
+}
+
+/** @param {MigrationScenario} scenario */
+function assertQuestionImageKeyIndex(scenario) {
+  const appliedMigrations = query(scenario, 'SELECT name FROM d1_migrations ORDER BY id');
+  assert(
+    appliedMigrations.at(-1)?.name === '0009_question_image_key_index.sql',
+    `${scenario.name}: 0009 de índice de foto não foi registrada como última migration de Questions`,
+  );
+  const plan = query(scenario, "EXPLAIN QUERY PLAN SELECT 1 FROM questions WHERE image_key = 'questions/x/v1.webp' LIMIT 1");
+  assert(
+    plan.some(({ detail }) => String(detail).includes('idx_questions_image_key')),
+    `${scenario.name}: consulta por image_key não usa o índice parcial`,
+  );
 }
 
 /**
@@ -1114,6 +1195,10 @@ try {
     migrationNames.includes('0016_reset_stale_pool_discovery.sql'),
     'Migration Core 0016 de reset de descoberta de pool antigo ausente',
   );
+  assert(
+    migrationNames.includes('0017_personal_records_and_theme_votes.sql'),
+    'Migration Core 0017 de recordes pessoais e votação de temas ausente',
+  );
   assert(questionMigrationNames.includes('0003_expand_synthetic_smoke_test.sql'), 'Migration Questions 0003 ausente');
   assert(
     questionMigrationNames.includes('0004_question_editorial_versioning.sql'),
@@ -1134,6 +1219,10 @@ try {
   assert(
     questionMigrationNames.includes('0008_question_export_index.sql'),
     'Migration Questions 0008 do índice de exportação ausente',
+  );
+  assert(
+    questionMigrationNames.includes('0009_question_image_key_index.sql'),
+    'Migration Questions 0009 do índice de foto ausente',
   );
 
   await assertRemoteParser(coreSourceMigrationsDirectory, migrationNames);
@@ -1168,6 +1257,7 @@ try {
       '0014_challenge_progression_retry.sql',
       '0015_admin_user_search_index.sql',
       '0016_reset_stale_pool_discovery.sql',
+      '0017_personal_records_and_theme_votes.sql',
     ].includes(name)),
   );
   console.log('Validando upgrade D1 exato de 0003 para 0004...');
@@ -1297,6 +1387,14 @@ try {
   );
   applyMigrations(upgradeDatabase);
   assertPoolDiscoveryReset(upgradeDatabase, discoveryUserId);
+  console.log('Validando upgrade D1 atual exato de 0016 para 0017 recordes pessoais e votação de temas...');
+  const recordUserId = seedPersonalRecordFixture(upgradeDatabase);
+  await copyFile(
+    join(coreSourceMigrationsDirectory, '0017_personal_records_and_theme_votes.sql'),
+    join(upgradeDatabase.migrationsDirectory, '0017_personal_records_and_theme_votes.sql'),
+  );
+  applyMigrations(upgradeDatabase);
+  assertPersonalRecordBackfill(upgradeDatabase, recordUserId);
   assertFinalSchema(upgradeDatabase);
   console.log('Validando rollback transacional de migration com erro...');
   await assertRollback(upgradeDatabase);
@@ -1311,6 +1409,7 @@ try {
   applyMigrations(emptyQuestions);
   assertUnifiedQuestionPoolInvariants(emptyQuestions);
   assertQuestionExportIndex(emptyQuestions);
+  assertQuestionImageKeyIndex(emptyQuestions);
   assertQuestionVersioningInvariants(emptyQuestions);
   assertQuestionStatisticsInvariants(emptyQuestions);
 
@@ -1323,6 +1422,7 @@ try {
       '0006_question_statistics_retry.sql',
       '0007_unify_question_pools.sql',
       '0008_question_export_index.sql',
+      '0009_question_image_key_index.sql',
     ].includes(name)),
     {
       binding: 'QUESTIONS_DB',
@@ -1392,8 +1492,15 @@ try {
   );
   applyMigrations(upgradeQuestions);
   assertQuestionExportIndex(upgradeQuestions);
+  console.log('Validando upgrade Questions D1 exato de 0008 para 0009 índice de foto...');
+  await copyFile(
+    join(questionSourceMigrationsDirectory, '0009_question_image_key_index.sql'),
+    join(upgradeQuestions.migrationsDirectory, '0009_question_image_key_index.sql'),
+  );
+  applyMigrations(upgradeQuestions);
+  assertQuestionImageKeyIndex(upgradeQuestions);
 
-  console.log('Migrations D1 aprovadas: parser Wrangler, bancos vazios, upgrades Core 0003→0004→0005→0006→0007→0008→0009→0010→0011→0012→0013→0014→0015→0016 e Questions 0002→0003→0004→0005→0006→0007→0008, invariantes sociais, de desafio, de ledger de conclusão, de denúncia, editoriais, pool único por tema e índice de exportação, rollback e schemas finais.');
+  console.log('Migrations D1 aprovadas: parser Wrangler, bancos vazios, upgrades Core 0003→0004→0005→0006→0007→0008→0009→0010→0011→0012→0013→0014→0015→0016→0017 e Questions 0002→0003→0004→0005→0006→0007→0008→0009, invariantes sociais, de desafio, de ledger de conclusão, de denúncia, editoriais, pool único por tema, índices de exportação e de foto, rollback e schemas finais.');
 } finally {
   await rm(temporaryRoot, { force: true, recursive: true });
 }

@@ -635,6 +635,7 @@ export class MatchRoom {
           knowledgeAfter: viewer.knowledgeAfter,
           knowledgeBefore: viewer.knowledgeBefore,
           knowledgeDelta: viewer.knowledgeDelta,
+          personalRecord: viewer.personalRecord === true,
           result: viewer.result,
           score: viewer.score,
           xpDelta: viewer.xpDelta,

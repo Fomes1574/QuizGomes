@@ -18,6 +18,12 @@ export const REPORT_REASON_ORDER: readonly ReportReason[] = [
 export interface SeenQuestion {
   contextId: string;
   contextKind: ReportContextKind;
+  /** Preenchido só depois que a rodada resolveu: nunca antecipa a resposta certa. */
+  outcome?: {
+    correctOption: number;
+    options: readonly [string, string, string, string];
+    selectedOption: number | null;
+  };
   prompt: string;
   questionId: string;
   roundNumber: number;

@@ -1202,3 +1202,41 @@ describe('Milestone 8 no runtime Workers simulado', () => {
     ]);
   });
 });
+
+describe('recorde pessoal por tema', () => {
+  it('grava só a melhor pontuação concluída, por modo, sem aplicar duas vezes', async () => {
+    const fixture = await seedMatchFixture('record', 500, 'CASUAL');
+    const repository = new LiveMatchRepository(env.CORE_DB, env.QUESTIONS_DB);
+
+    const firstMatchId = crypto.randomUUID();
+    const firstInitial = await repository.initialize({
+      createdAtMs: Date.now(), firebaseUids: fixture.uids, kind: 'MATCHMAKING', matchId: firstMatchId, resource: fixture.resource,
+    });
+    const firstFinalizing = finishStoredMatch(firstInitial, 1);
+    await repository.markStarted(firstMatchId);
+    const first = await repository.finalize(firstFinalizing);
+    await repository.finalize(firstFinalizing);
+    const winnerScore = first.players[0].score;
+    expect(winnerScore).toBeGreaterThan(0);
+    expect(first.players[0].personalRecord).toBe(true);
+    // Placar zerado não vira recorde.
+    expect(first.players[1].personalRecord).toBe(false);
+
+    const secondMatchId = crypto.randomUUID();
+    const secondInitial = await repository.initialize({
+      createdAtMs: Date.now(), firebaseUids: fixture.uids, kind: 'MATCHMAKING', matchId: secondMatchId, resource: fixture.resource,
+    });
+    const secondFinalizing = finishStoredMatch(secondInitial, 1);
+    await repository.markStarted(secondMatchId);
+    const second = await repository.finalize(secondFinalizing);
+    // Igualar o recorde não é bater o recorde.
+    expect(second.players[0].personalRecord).toBe(false);
+
+    const records = await env.CORE_DB.prepare(
+      'SELECT user_id, mode, best_score, match_id FROM theme_personal_records WHERE theme_id = ?1',
+    ).bind(fixture.themeId).all<{ best_score: number; match_id: string; mode: string; user_id: string }>();
+    expect(records.results).toEqual([
+      { best_score: winnerScore, match_id: firstMatchId, mode: 'CASUAL', user_id: fixture.userIds[0] },
+    ]);
+  });
+});
