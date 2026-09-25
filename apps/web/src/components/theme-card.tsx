@@ -40,7 +40,7 @@ function resetTilt(event: PointerEvent<HTMLAnchorElement>): void {
   card.style.removeProperty('--shine-x');
 }
 
-export function ThemeCard({ index = 0, theme }: { index?: number; theme: ThemeSummary }) {
+export function ThemeCard({ index = 0, theme, waiting = 0 }: { index?: number; theme: ThemeSummary; waiting?: number }) {
   const status = availability(theme.activeQuestionCount);
   return (
     <Link
@@ -54,6 +54,11 @@ export function ThemeCard({ index = 0, theme }: { index?: number; theme: ThemeSu
         <ThemeArtwork artwork={theme.artwork} className="theme-card__art" name={theme.name} />
         <span aria-hidden="true" className="theme-card__shine" />
         <span className={`theme-card__status theme-card__status--${status.tone}`}>{status.label}</span>
+        {waiting > 0 && (
+          <span aria-label={`${waiting} ${waiting === 1 ? 'pessoa esperando' : 'pessoas esperando'} na fila agora`} className="theme-card__live">
+            <span aria-hidden="true" className="theme-card__live-dot" />{waiting} na fila
+          </span>
+        )}
       </span>
       <span className="theme-card__body">
         <small>{theme.categoryName}</small>

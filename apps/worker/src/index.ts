@@ -1638,14 +1638,19 @@ async function socialRoute(request: Request, env: Env, url: URL, context: Execut
       throw new ApiError(503, 'SOCIAL_PRESENCE_UNAVAILABLE', 'A presença dos seus amigos está indisponível.');
     }
     const snapshot = await response.json<{
-      friends: Array<{ presence: string; revision: number; userId: string }>;
+      friends: Array<{ presence: string; queueThemeId?: string; revision: number; userId: string }>;
       revision: number;
     }>();
     const identities = new Map(friends.map((friend) => [friend.userId, friend.publicId]));
     return json({
       friends: snapshot.friends.flatMap((friend) => {
         const publicId = identities.get(friend.userId);
-        return publicId === undefined ? [] : [{ presence: friend.presence, publicId, revision: friend.revision }];
+        return publicId === undefined ? [] : [{
+          presence: friend.presence,
+          publicId,
+          ...(friend.queueThemeId === undefined ? {} : { queueThemeId: friend.queueThemeId }),
+          revision: friend.revision,
+        }];
       }),
       revision: snapshot.revision,
     });

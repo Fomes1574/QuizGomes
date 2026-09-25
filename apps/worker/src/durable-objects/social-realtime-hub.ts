@@ -14,6 +14,25 @@ interface SocialInvalidation {
 
 type FriendPresence = 'ONLINE' | 'MATCHMAKING' | 'IN_MATCH' | 'RECONNECTING' | 'OFFLINE';
 
+interface QueueActivityEntry {
+  count: number;
+  expiresAt: number;
+}
+
+/** `themeId:mode`, exatamente o recurso que a rota de fila já valida. */
+const QUEUE_RESOURCE = /^([a-z0-9_-]{1,128}):(CASUAL|RANKED)$/i;
+/** Rede de segurança: ninguém espera mais de 60 s, então 70 s sem notícia é resíduo. */
+const QUEUE_ACTIVITY_TTL_MS = 70_000;
+/** Várias entradas/saídas seguidas viram um único aviso para todos os sockets. */
+const QUEUE_BROADCAST_INTERVAL_MS = 1_500;
+const QUEUE_ACTIVITY_KEY = 'queue-activity';
+
+/** Tema da fila de um amigo, só quando ele está de fato procurando partida. */
+function queueThemeOf(activity: PlayerActivity, resource: string | null | undefined): string | undefined {
+  if (activity !== 'matchmaking' || typeof resource !== 'string') return undefined;
+  return QUEUE_RESOURCE.exec(resource)?.[1];
+}
+
 const PLAYER_ACTIVITIES = new Set<PlayerActivity>([
   'idle', 'matchmaking', 'invite', 'preparing', 'playing', 'reconnecting', 'finished',
 ]);
@@ -31,6 +50,7 @@ function attachment(socket: WebSocket): SocialSocketAttachment | null {
 
 export class SocialRealtimeHub {
   private lastRevision = 0;
+  private lastQueueBroadcast = 0;
 
   constructor(
     private readonly ctx: DurableObjectState,
@@ -42,7 +62,7 @@ export class SocialRealtimeHub {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === '/activity' && request.method === 'POST') {
-      const input = await request.json<{ activity: PlayerActivity; presenceObjectId: string }>();
+      const input = await request.json<{ activity: PlayerActivity; presenceObjectId: string; resource?: string | null }>();
       if (!PLAYER_ACTIVITIES.has(input.activity) || typeof input.presenceObjectId !== 'string') {
         return Response.json({ error: 'INVALID_PRESENCE' }, { status: 400 });
       }
@@ -51,7 +71,22 @@ export class SocialRealtimeHub {
         const session = attachment(socket);
         if (session?.presenceObjectId === input.presenceObjectId) subjects.set(session.userId, session);
       }
-      await Promise.all([...subjects.values()].map((subject) => this.publishPresence(subject, input.activity)));
+      await Promise.all([...subjects.values()].map((subject) => this.publishPresence(
+        subject, { activity: input.activity, resource: input.resource ?? null },
+      )));
+      return Response.json({ ok: true });
+    }
+    if (url.pathname === '/queue-activity' && request.method === 'POST') {
+      const input = await request.json<{ count?: unknown; resource?: unknown }>();
+      if (typeof input.resource !== 'string' || !QUEUE_RESOURCE.test(input.resource) ||
+        typeof input.count !== 'number' || !Number.isSafeInteger(input.count) || input.count < 0 || input.count > 10_000) {
+        return Response.json({ error: 'INVALID_QUEUE_ACTIVITY' }, { status: 400 });
+      }
+      const queues = await this.queueActivity();
+      if (input.count === 0) delete queues[input.resource];
+      else queues[input.resource] = { count: input.count, expiresAt: Date.now() + QUEUE_ACTIVITY_TTL_MS };
+      await this.ctx.storage.put(QUEUE_ACTIVITY_KEY, queues);
+      await this.scheduleQueueBroadcast();
       return Response.json({ ok: true });
     }
     if (url.pathname === '/snapshot' && request.method === 'POST') {
@@ -71,7 +106,8 @@ export class SocialRealtimeHub {
           .get(this.env.PRESENCE_HUB.idFromString(session.presenceObjectId))
           .fetch('https://presence.internal/state');
         const state = await response.json<ActivityState>();
-        return { presence: publicPresence(state.activity), revision, userId };
+        const queueThemeId = queueThemeOf(state.activity, state.resource);
+        return { presence: publicPresence(state.activity), ...(queueThemeId === undefined ? {} : { queueThemeId }), revision, userId };
       }));
       return Response.json({ friends, revision });
     }
@@ -145,6 +181,9 @@ export class SocialRealtimeHub {
       if (session.presenceObjectId !== undefined) this.background(this.publishPresence(session));
     }
     else this.send(server, JSON.stringify({ count: nextCount, type: 'ONLINE_COUNT' }));
+    const queues = await this.queueActivity();
+    // Filas vazias são o padrão: o cliente já nasce com zero, sem mensagem extra.
+    if (Object.keys(queues).length > 0) this.send(server, this.queueActivityPayload(queues));
     return new Response(null, { status: 101, webSocket: client });
   }
 
@@ -185,7 +224,7 @@ export class SocialRealtimeHub {
 
   private async publishPresence(
     subject: SocialSocketAttachment,
-    activity?: PlayerActivity,
+    known?: { activity: PlayerActivity; resource: string | null },
     disconnected?: WebSocket,
   ): Promise<void> {
     if (subject.publicId === undefined || subject.presenceObjectId === undefined) return;
@@ -194,26 +233,73 @@ export class SocialRealtimeHub {
     if (disconnected !== undefined && connected) return;
     const revision = this.nextRevision();
     let presence: FriendPresence = 'OFFLINE';
+    let queueThemeId: string | undefined;
     if (connected) {
-      if (activity === undefined) {
+      let current = known;
+      if (current === undefined) {
         const response = await this.env.PRESENCE_HUB
           .get(this.env.PRESENCE_HUB.idFromString(subject.presenceObjectId))
           .fetch('https://presence.internal/state');
-        activity = (await response.json<ActivityState>()).activity;
+        current = await response.json<ActivityState>();
       }
-      presence = publicPresence(activity);
+      presence = publicPresence(current.activity);
+      queueThemeId = queueThemeOf(current.activity, current.resource);
     }
     const recipients = await new SocialRepository(this.env.CORE_DB).friendPresenceTargets(subject.userId);
     if (recipients.length === 0) return;
     const payload = JSON.stringify({
       presence,
       publicId: subject.publicId,
+      ...(queueThemeId === undefined ? {} : { queueThemeId }),
       revision,
       type: 'FRIEND_PRESENCE_CHANGED',
     });
     for (const friend of recipients) {
       for (const socket of this.ctx.getWebSockets(`user:${friend.userId}`)) this.send(socket, payload);
     }
+  }
+
+  async alarm(): Promise<void> {
+    await this.broadcastQueueActivity();
+  }
+
+  private async queueActivity(): Promise<Record<string, QueueActivityEntry>> {
+    const stored = await this.ctx.storage.get<Record<string, QueueActivityEntry>>(QUEUE_ACTIVITY_KEY) ?? {};
+    const now = Date.now();
+    for (const [resource, entry] of Object.entries(stored)) {
+      if (entry.expiresAt <= now) delete stored[resource];
+    }
+    return stored;
+  }
+
+  private queueActivityPayload(queues: Record<string, QueueActivityEntry>): string {
+    const entries = Object.entries(queues)
+      .flatMap(([resource, entry]) => {
+        const match = QUEUE_RESOURCE.exec(resource);
+        return match?.[1] === undefined || match[2] === undefined
+          ? []
+          : [{ count: entry.count, mode: match[2].toUpperCase(), themeId: match[1] }];
+      })
+      .sort((left, right) => right.count - left.count)
+      .slice(0, 200);
+    return JSON.stringify({ queues: entries, type: 'QUEUE_ACTIVITY' });
+  }
+
+  private async scheduleQueueBroadcast(): Promise<void> {
+    const now = Date.now();
+    if (now - this.lastQueueBroadcast >= QUEUE_BROADCAST_INTERVAL_MS) {
+      await this.broadcastQueueActivity();
+      return;
+    }
+    if (await this.ctx.storage.getAlarm() === null) {
+      await this.ctx.storage.setAlarm(this.lastQueueBroadcast + QUEUE_BROADCAST_INTERVAL_MS);
+    }
+  }
+
+  private async broadcastQueueActivity(): Promise<void> {
+    this.lastQueueBroadcast = Date.now();
+    const payload = this.queueActivityPayload(await this.queueActivity());
+    for (const socket of this.ctx.getWebSockets()) this.send(socket, payload);
   }
 
   private nextRevision(): number {

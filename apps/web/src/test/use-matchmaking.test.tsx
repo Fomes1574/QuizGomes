@@ -229,3 +229,65 @@ describe('orquestração do matchmaking', () => {
     );
   });
 });
+
+describe('busca com o celular em segundo plano', () => {
+  let visibility: DocumentVisibilityState = 'visible';
+
+  function setVisibility(next: DocumentVisibilityState) {
+    visibility = next;
+    document.dispatchEvent(new Event('visibilitychange'));
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    FakeWebSocket.instances = [];
+    visibility = 'visible';
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => visibility });
+    mocks.getToken.mockResolvedValue('firebase-token');
+    mocks.apiRequest.mockResolvedValue({ expiresAt: Date.now() + 30_000, ticket: 'ticket' });
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    vi.stubGlobal('matchMedia', (query: string) => ({ matches: query === '(pointer: coarse)' }));
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+    vi.useRealTimers();
+  });
+
+  it('pausa depois de 20 s fora e deixa voltar para a fila', async () => {
+    const { result } = renderHook(() => useMatchmaking());
+    const socket = await startSearch(result);
+    act(() => setVisibility('hidden'));
+    await act(async () => vi.advanceTimersByTimeAsync(19_000));
+    expect(result.current.status).toBe('searching');
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    expect(result.current.status).toBe('paused');
+    expect(socket.close).toHaveBeenCalledWith(1_000, 'Pausado em segundo plano');
+
+    act(() => setVisibility('visible'));
+    await act(async () => { result.current.resume(); await Promise.resolve(); });
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    expect(result.current.status).toBe('searching');
+  });
+
+  it('uma saída rápida não pausa nada', async () => {
+    const { result } = renderHook(() => useMatchmaking());
+    await startSearch(result);
+    act(() => setVisibility('hidden'));
+    await act(async () => vi.advanceTimersByTimeAsync(5_000));
+    act(() => setVisibility('visible'));
+    await act(async () => vi.advanceTimersByTimeAsync(30_000));
+    expect(result.current.status).toBe('searching');
+  });
+
+  it('socket derrubado pelo sistema em segundo plano vira pausa, não erro', async () => {
+    const { result } = renderHook(() => useMatchmaking());
+    const socket = await startSearch(result);
+    act(() => setVisibility('hidden'));
+    act(() => socket.emit('close', { code: 1_006 }));
+    expect(result.current.status).toBe('paused');
+    expect(result.current.error).toBeNull();
+  });
+});

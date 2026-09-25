@@ -168,3 +168,43 @@ describe('Milestone 9A.1 — SocialRealtimeHub hibernável', () => {
     returned.socket.close();
   });
 });
+
+describe('fila visível por tema', () => {
+  async function report(stub: DurableObjectStub, resource: string, queued: number): Promise<number> {
+    const response = await stub.fetch('https://social.internal/queue-activity', {
+      body: JSON.stringify({ count: queued, resource }),
+      method: 'POST',
+    });
+    return response.status;
+  }
+
+  it('entrega só a contagem por tema e modo, com retrato ao conectar e remoção no zero', async () => {
+    const stub = hub();
+    expect(await report(stub, 'tema-a:CASUAL', 2)).toBe(200);
+    const viewer = await open(stub, 'viewer-q');
+    expect(await viewer.waitFor('QUEUE_ACTIVITY')).toMatchObject({
+      queues: [{ count: 2, mode: 'CASUAL', themeId: 'tema-a' }],
+    });
+    expect(await report(stub, 'tema-a:CASUAL', 0)).toBe(200);
+    // O zero pode sair na hora ou pelo alarme de agrupamento (até 1,5 s).
+    const cleared = await new Promise<RealtimeEvent>((resolve, reject) => {
+      const deadline = setTimeout(() => reject(new Error('Fila não zerou.')), 3_000);
+      const poll = () => {
+        void viewer.waitFor('QUEUE_ACTIVITY').then((event) => {
+          const queues = (event as RealtimeEvent & { queues?: unknown[] }).queues ?? [];
+          if (queues.length === 0) { clearTimeout(deadline); resolve(event as RealtimeEvent); } else poll();
+        }).catch(poll);
+      };
+      poll();
+    });
+    expect(cleared).toMatchObject({ queues: [], type: 'QUEUE_ACTIVITY' });
+    viewer.socket.close(1_000, 'fim');
+  });
+
+  it('recusa recurso ou contagem inválidos', async () => {
+    const stub = hub();
+    expect(await report(stub, 'tema-a:HARD', 1)).toBe(400);
+    expect(await report(stub, '../x:CASUAL', 1)).toBe(400);
+    expect(await report(stub, 'tema-a:RANKED', -1)).toBe(400);
+  });
+});

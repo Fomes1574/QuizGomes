@@ -11,6 +11,7 @@ import {
 import type { PublicQuestion } from '@quiz-gomes/domain';
 import { apiRequest, websocketUrl } from '../lib/api.js';
 import type { MatchFoundOpponent } from '../lib/preloaded-match-room.js';
+import { parseQueueActivity, type QueueActivity } from '../lib/queue-activity.js';
 import type { FriendPresence, FriendPresenceEntry, FriendPresenceSnapshot } from '../lib/social.js';
 import { listenForForegroundFriendRequests } from '../lib/social-notifications.js';
 import { useAuth } from './auth-context.js';
@@ -45,6 +46,11 @@ const FRIEND_PRESENCES = new Set<FriendPresence>([
 
 const SocialContext = createContext<SocialContextValue | null>(null);
 const FriendPresenceContext = createContext<ReadonlyMap<string, FriendPresenceEntry>>(new Map());
+const QueueActivityContext = createContext<QueueActivity>(new Map());
+
+function queueThemeId(value: unknown): string | undefined {
+  return typeof value === 'string' && /^[a-z0-9_-]{1,128}$/i.test(value) ? value : undefined;
+}
 
 export function SocialProvider({ children }: { children: ReactNode }) {
   const { getToken, profile } = useAuth();
@@ -53,6 +59,7 @@ export function SocialProvider({ children }: { children: ReactNode }) {
   const [pushConfigured, setPushConfigured] = useState(false);
   const [revision, setRevision] = useState(0);
   const [friendPresence, setFriendPresence] = useState<ReadonlyMap<string, FriendPresenceEntry>>(new Map());
+  const [queueActivity, setQueueActivity] = useState<QueueActivity>(new Map());
   const [challengeRevision, setChallengeRevision] = useState(0);
   const [startedChallenge, setStartedChallenge] = useState<StartedChallenge | null>(null);
   const snapshotRequest = useRef(0);
@@ -65,8 +72,12 @@ export function SocialProvider({ children }: { children: ReactNode }) {
       if (generation !== snapshotRequest.current || !Array.isArray(snapshot.friends)) return;
       setFriendPresence((current) => {
         const next = new Map<string, FriendPresenceEntry>();
-        for (const entry of snapshot.friends) {
-          if (!FRIEND_PRESENCES.has(entry.presence) || !Number.isSafeInteger(entry.revision)) continue;
+        for (const raw of snapshot.friends) {
+          if (!FRIEND_PRESENCES.has(raw.presence) || !Number.isSafeInteger(raw.revision)) continue;
+          const themeId = raw.presence === 'MATCHMAKING' ? queueThemeId(raw.queueThemeId) : undefined;
+          const entry: FriendPresenceEntry = {
+            presence: raw.presence, publicId: raw.publicId, revision: raw.revision, ...(themeId === undefined ? {} : { queueThemeId: themeId }),
+          };
           const previous = current.get(entry.publicId);
           next.set(entry.publicId, previous !== undefined && previous.revision > entry.revision ? previous : entry);
         }
@@ -117,6 +128,8 @@ export function SocialProvider({ children }: { children: ReactNode }) {
     const scheduleReconnect = () => {
       if (disposed || retryTimer !== null) return;
       setOnlineCount(null);
+      // Sem canal não há contagem confiável: melhor zero que número velho.
+      setQueueActivity(new Map());
       retryTimer = window.setTimeout(() => {
         retryTimer = null;
         void connect();
@@ -169,12 +182,17 @@ export function SocialProvider({ children }: { children: ReactNode }) {
               preload?: { firstQuestion?: PublicQuestion };
               presence?: FriendPresence;
               publicId?: string;
+              queueThemeId?: unknown;
+              queues?: unknown;
               revision?: number;
               roomId?: string;
               type?: string;
             };
             if (message.type === 'ONLINE_COUNT' && typeof message.count === 'number') {
               setOnlineCount(message.count);
+            } else if (message.type === 'QUEUE_ACTIVITY') {
+              const parsed = parseQueueActivity(message.queues);
+              if (parsed !== null) setQueueActivity(parsed);
             } else if (message.type === 'SOCIAL_INVALIDATED') {
               void refresh();
             } else if (message.type === 'CHALLENGE_UPDATED') {
@@ -192,10 +210,12 @@ export function SocialProvider({ children }: { children: ReactNode }) {
             } else if (message.type === 'FRIEND_PRESENCE_CHANGED' &&
               typeof message.publicId === 'string' && message.presence !== undefined &&
               FRIEND_PRESENCES.has(message.presence) && Number.isSafeInteger(message.revision)) {
+              const themeId = message.presence === 'MATCHMAKING' ? queueThemeId(message.queueThemeId) : undefined;
               const entry: FriendPresenceEntry = {
                 presence: message.presence,
                 publicId: message.publicId,
                 revision: message.revision as number,
+                ...(themeId === undefined ? {} : { queueThemeId: themeId }),
               };
               setFriendPresence((current) => {
                 const previous = current.get(entry.publicId);
@@ -279,7 +299,9 @@ export function SocialProvider({ children }: { children: ReactNode }) {
 
   return (
     <SocialContext value={value}>
-      <FriendPresenceContext value={friendPresence}>{children}</FriendPresenceContext>
+      <FriendPresenceContext value={friendPresence}>
+        <QueueActivityContext value={profile === null ? EMPTY_ACTIVITY : queueActivity}>{children}</QueueActivityContext>
+      </FriendPresenceContext>
     </SocialContext>
   );
 }
@@ -288,6 +310,13 @@ export function useSocial(): SocialContextValue {
   const context = useContext(SocialContext);
   if (context === null) throw new Error('useSocial precisa de SocialProvider.');
   return context;
+}
+
+const EMPTY_ACTIVITY: QueueActivity = new Map();
+
+/** Contagem ao vivo das filas por tema, recebida pelo canal social (sem polling). */
+export function useQueueActivity(): QueueActivity {
+  return useContext(QueueActivityContext);
 }
 
 export function useFriendPresence(): ReadonlyMap<string, FriendPresenceEntry> {

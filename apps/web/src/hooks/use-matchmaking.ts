@@ -20,6 +20,17 @@ import {
 
 const SEARCH_DURATION_MS = 60_000;
 const SEARCH_EXIT_MS = 260;
+/**
+ * Celular em segundo plano por mais que isso (ex.: foi mandar o link no
+ * WhatsApp) pausa a busca. Se a partida fosse formada com o jogador fora, a
+ * sala anularia por falta de prontidão e o adversário perderia a viagem.
+ */
+export const BACKGROUND_PAUSE_MS = 20_000;
+const FOUND_TITLE = 'Partida encontrada! · QUIZ GOMES';
+
+function isTouchDevice(): boolean {
+  try { return window.matchMedia('(pointer: coarse)').matches; } catch { return false; }
+}
 
 const MATCH_FAILURE_MESSAGES: Record<string, string> = {
   PLAYER_BUSY: 'Um dos jogadores já está em outra partida.',
@@ -40,6 +51,7 @@ export type MatchmakingStatus =
   | 'cancelling'
   | 'idle'
   | 'leaving-opponent'
+  | 'paused'
   | 'presenting-opponent'
   | 'searching'
   | 'timed-out';
@@ -113,6 +125,8 @@ export function useMatchmaking() {
   const originRef = useRef<MatchOrigin | null>(null);
   const navigatingRef = useRef(false);
   const statusRef = useRef<MatchmakingStatus>('idle');
+  const lastStartRef = useRef<{ mode: MatchMode; themeId: string; themeSlug?: string | undefined } | null>(null);
+  const wentHiddenRef = useRef(false);
   const [status, setStatusState] = useState<MatchmakingStatus>('idle');
   const [error, setError] = useState<string | null>(null);
   const [timeoutAt, setTimeoutAt] = useState<number | null>(null);
@@ -151,6 +165,41 @@ export function useMatchmaking() {
     }
   }, []);
 
+  const pause = useCallback(() => {
+    const socket = socketRef.current;
+    socketRef.current = null;
+    socket?.close(1_000, 'Pausado em segundo plano');
+    setTimeoutAt(null);
+    setStatus('paused');
+  }, [setStatus]);
+
+  useEffect(() => {
+    if (status !== 'searching' || typeof document === 'undefined') return undefined;
+    const touch = isTouchDevice();
+    let hiddenAt: number | null = document.visibilityState === 'hidden' ? Date.now() : null;
+    let timer: number | null = null;
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        wentHiddenRef.current = true;
+        hiddenAt = Date.now();
+        // No Android o JS segue rodando: o timer pausa no prazo. No iOS ele
+        // congela, e a checagem ao voltar cobre o caso.
+        if (touch) timer = window.setTimeout(pause, BACKGROUND_PAUSE_MS);
+        return;
+      }
+      if (timer !== null) window.clearTimeout(timer);
+      timer = null;
+      const hiddenFor = hiddenAt === null ? 0 : Date.now() - hiddenAt;
+      hiddenAt = null;
+      if (touch && hiddenFor >= BACKGROUND_PAUSE_MS && statusRef.current === 'searching') pause();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, [pause, status]);
+
   const cancel = useCallback(() => {
     socketRef.current?.close(1_000, 'Cancelado pelo jogador');
     socketRef.current = null;
@@ -173,6 +222,17 @@ export function useMatchmaking() {
     setTimeoutAt(null);
     setStatus('presenting-opponent');
     preloadMatchPresentationAssets(message.opponent, message.preload);
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+      // Aba de desktop escondida: o título avisa sem som nem notificação.
+      const previousTitle = document.title;
+      document.title = FOUND_TITLE;
+      const restore = () => {
+        if (document.visibilityState !== 'visible') return;
+        if (document.title === FOUND_TITLE) document.title = previousTitle;
+        document.removeEventListener('visibilitychange', restore);
+      };
+      document.addEventListener('visibilitychange', restore);
+    }
 
     let essentialsReady = false;
     const essentials = Promise.all([
@@ -204,6 +264,8 @@ export function useMatchmaking() {
   }, [getToken, navigate, setStatus]);
 
   const start = useCallback(async (themeId: string, mode: MatchMode, themeSlug?: string) => {
+    lastStartRef.current = { mode, themeId, themeSlug };
+    wentHiddenRef.current = typeof document !== 'undefined' && document.visibilityState === 'hidden';
     originRef.current = themeSlug === undefined ? null : {
       mode,
       returnTo: `/temas/${encodeURIComponent(themeSlug)}`,
@@ -265,6 +327,13 @@ export function useMatchmaking() {
         if (socketRef.current !== socket) return;
         socketRef.current = null;
         if (statusRef.current === 'searching' && event.code !== 1_000) {
+          // O sistema derrubou o socket com o app em segundo plano: isso é
+          // uma pausa, não um erro. O jogador escolhe voltar para a fila.
+          if (wentHiddenRef.current && isTouchDevice()) {
+            setTimeoutAt(null);
+            setStatus('paused');
+            return;
+          }
           setError('A conexão com a fila foi interrompida.');
           setStatus('idle');
         }
@@ -279,5 +348,11 @@ export function useMatchmaking() {
     }
   }, [getToken, presentMatch, profile, setStatus]);
 
-  return { cancel, elapsedSeconds, error, opponent, preparing, start, status, timeoutAt };
+  const resume = useCallback(() => {
+    const last = lastStartRef.current;
+    if (last === null) return;
+    void start(last.themeId, last.mode, last.themeSlug);
+  }, [start]);
+
+  return { cancel, elapsedSeconds, error, opponent, paused: status === 'paused', preparing, resume, start, status, timeoutAt };
 }

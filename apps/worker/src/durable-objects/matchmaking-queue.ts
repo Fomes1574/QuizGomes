@@ -65,6 +65,7 @@ export class MatchmakingQueue {
     server.send(JSON.stringify({ type: 'SEARCHING', timeoutAt }));
     await this.tryPair(server);
     await this.scheduleNextAlarm();
+    this.reportActivity(resource);
     return new Response(null, { status: 101, webSocket: client });
   }
 
@@ -167,12 +168,16 @@ export class MatchmakingQueue {
       opponent.socket.send(JSON.stringify({ ...opponentPresentation, type: 'MATCH_FOUND', roomId }));
       server.close(1000, 'Pareado');
       opponent.socket.close(1000, 'Pareado');
+      this.reportActivity(current.resource);
       return true;
   }
 
   async webSocketClose(socket: WebSocket): Promise<void> {
     const value = attachment(socket);
-    if (value !== null) await this.transition(value.uid, ['matchmaking'], 'idle', null, value.resource);
+    if (value !== null) {
+      await this.transition(value.uid, ['matchmaking'], 'idle', null, value.resource);
+      this.reportActivity(value.resource, socket);
+    }
   }
 
   async webSocketError(socket: WebSocket): Promise<void> {
@@ -194,6 +199,37 @@ export class MatchmakingQueue {
       if (entry.value.joinedAt + QUEUE_TIMEOUT_MS > now && await this.tryPair(entry.socket)) break;
     }
     await this.scheduleNextAlarm();
+    const resource = waiting[0]?.value.resource;
+    if (resource !== undefined) this.reportActivity(resource);
+  }
+
+  /**
+   * Quantas pessoas distintas esperam nesta fila agora. Sockets que esta
+   * instância já mandou fechar (pareados, tempo esgotado) não contam.
+   */
+  private waitingCount(except?: WebSocket): number {
+    return new Set(this.waitingSockets()
+      .filter((entry) => entry.socket !== except && entry.socket.readyState === 1)
+      .map((entry) => entry.value.uid)).size;
+  }
+
+  /**
+   * Contagem pública da fila para a tela de temas. Só um número por
+   * tema+modo, nunca quem está esperando; melhor-esforço e fora do caminho
+   * crítico do pareamento.
+   */
+  private reportActivity(resource: string, except?: WebSocket): void {
+    const count = this.waitingCount(except);
+    this.ctx.waitUntil(this.env.SOCIAL_REALTIME_HUB
+      .get(this.env.SOCIAL_REALTIME_HUB.idFromName('global'))
+      .fetch('https://social.internal/queue-activity', {
+        body: JSON.stringify({ count, resource }),
+        method: 'POST',
+      })
+      .then(() => undefined)
+      .catch(() => {
+        console.error(JSON.stringify({ code: 'QUEUE_ACTIVITY_UNAVAILABLE', event: 'queue_activity_failed' }));
+      }));
   }
 
   private waitingSockets(): Array<{ socket: WebSocket; value: QueueAttachment }> {

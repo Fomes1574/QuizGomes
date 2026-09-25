@@ -1342,3 +1342,18 @@ input, select, textarea { font-size: max(16px, 1em); }
 .question-image-field__hint small { font-weight: 500; opacity: .8; }
 .question-image-field__status { position: absolute; inset: auto 8px 8px auto; padding: 4px 10px; border-radius: 999px; color: #fff; background: rgb(0 0 0 / .65); font-size: .8rem; font-weight: 700; }
 .question-image-field__meta { margin: 0; font-size: .85rem; opacity: .85; }
+
+/* Fila ao vivo: contagem por tema vinda do canal social. */
+.theme-card__live { position: absolute; z-index: 3; top: 7px; left: 7px; display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px; border-radius: 999px; color: #fff; background: rgb(12 14 24 / .78); font-size: .72rem; font-weight: 800; letter-spacing: .01em; backdrop-filter: blur(4px); }
+.theme-card__live-dot { width: 8px; height: 8px; flex: none; border-radius: 50%; background: var(--presence-online); box-shadow: 0 0 0 0 color-mix(in srgb, var(--presence-online) 60%, transparent); animation: live-pulse 1.6s ease-out infinite; }
+.themes-hero__live { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; background: var(--surface-soft); color: var(--text-primary); font-size: .85rem; font-weight: 700; }
+@keyframes live-pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--presence-online) 55%, transparent); } 100% { box-shadow: 0 0 0 8px transparent; } }
+@media (prefers-reduced-motion: reduce) { .theme-card__live-dot { animation: none; } }
+.matchmaking-live { display: inline-flex; align-items: center; gap: 8px; margin: 0; font-size: .88rem; font-weight: 700; color: var(--text-secondary); }
+.matchmaking-neighbor { display: grid; gap: 2px; width: min(100%, 320px); padding: 10px 14px; border: 1px solid var(--border); border-radius: 16px; color: var(--text-primary); background: var(--surface-soft); text-align: left; cursor: pointer; }
+.matchmaking-neighbor:hover { border-color: var(--brand); }
+.matchmaking-neighbor:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.matchmaking-neighbor span, .matchmaking-neighbor small { font-size: .8rem; color: var(--text-secondary); }
+.matchmaking-timeout__actions { display: grid; gap: 8px; width: min(100%, 320px); }
+.play-deck__live { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; }
+.friends-in-queue { display: flex; align-items: center; gap: 8px; margin: 0; padding: 8px 12px; border-radius: 12px; background: color-mix(in srgb, var(--presence-online) 12%, var(--surface-soft)); font-weight: 700; font-size: .9rem; }

@@ -1,5 +1,5 @@
 import { lazy, Suspense } from 'react';
-import { Navigate, Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes, useParams } from 'react-router-dom';
 import { AppShell } from './components/app-shell.js';
 import { LoadingState } from './components/async-state.js';
 import { DirectChallengeWaiting } from './components/direct-challenge-waiting.js';
@@ -14,6 +14,12 @@ const CreatePage = lazy(() => import('./pages/create-page.js').then((module) => 
 const LiveMatchPage = lazy(() => import('./pages/live-match-page.js').then((module) => ({ default: module.LiveMatchPage })));
 const SocialPage = lazy(() => import('./pages/social-page.js').then((module) => ({ default: module.SocialPage })));
 
+/** Trocar de tema (ex.: "ir para a fila vizinha") remonta a página do zero. */
+function ThemeDetailRoute() {
+  const { slug = '' } = useParams();
+  return <ThemeDetailPage key={slug} />;
+}
+
 export function App() {
   return (
     <ChallengeProvider>
@@ -25,7 +31,7 @@ export function App() {
           <Route path="admin" element={<Suspense fallback={<LoadingState label="Abrindo administração" />}><CreatePage adminOnly /></Suspense>} />
           <Route path="criar" element={<Navigate replace to="/" />} />
           <Route path="perfil" element={<ProfilePage />} />
-          <Route path="temas/:slug" element={<ThemeDetailPage />} />
+          <Route path="temas/:slug" element={<ThemeDetailRoute />} />
           <Route path="*" element={<NotFoundPage />} />
         </Route>
         <Route path="partida/:roomId" element={<Suspense fallback={<main className="match-lobby-screen"><LoadingState label="Preparando partida" /></main>}><LiveMatchPage /></Suspense>} />

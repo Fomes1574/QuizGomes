@@ -6,9 +6,11 @@ import { Button } from '../components/button.js';
 import { Icon } from '../components/icons.js';
 import { ThemeArtwork } from '../components/theme-artwork.js';
 import { ThemeCard } from '../components/theme-card.js';
+import { useQueueActivity } from '../features/social-context.js';
 import { apiRequest } from '../lib/api.js';
 import { feedback, prefersReducedMotion } from '../lib/feedback.js';
 import type { Category, ThemeSummary } from '../lib/models.js';
+import { pickSurpriseTheme, totalWaiting } from '../lib/queue-activity.js';
 
 const HEADLINE_INTERVAL_MS = 2_400;
 const SHUFFLE_MS = 520;
@@ -45,6 +47,7 @@ export function ThemesPage() {
   const [error, setError] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
   const [shuffling, setShuffling] = useState(false);
+  const queueActivity = useQueueActivity();
 
   useEffect(() => {
     const controller = new AbortController();
@@ -86,8 +89,11 @@ export function ThemesPage() {
     .sort((left, right) => Number(right.artwork.kind === 'CUSTOM') - Number(left.artwork.kind === 'CUSTOM'))
     .slice(0, 3), [playable]);
 
+  const liveThemes = useMemo(() => playable.filter((theme) => totalWaiting(queueActivity, theme.id) > 0), [playable, queueActivity]);
+  const liveWaiting = liveThemes.reduce((sum, theme) => sum + totalWaiting(queueActivity, theme.id), 0);
+
   function surprise() {
-    const pick = playable[Math.floor(Math.random() * playable.length)];
+    const pick = pickSurpriseTheme(playable, queueActivity);
     if (pick === undefined || shuffling) return;
     feedback('tap');
     if (prefersReducedMotion()) {
@@ -120,6 +126,13 @@ export function ThemesPage() {
             <Icon className="themes-hero__dice" name="dice" />
             Surpreenda-me
           </Button>
+          {liveWaiting > 0 && (
+            <span className="themes-hero__live" role="status">
+              <span aria-hidden="true" className="theme-card__live-dot" />
+              {liveWaiting === 1 ? '1 pessoa' : `${liveWaiting} pessoas`} na fila agora
+              {liveThemes.length === 1 && liveThemes[0] !== undefined ? ` em ${liveThemes[0].name}` : ''}
+            </span>
+          )}
         </div>
         {deck.length === 3 && (
           <div aria-label="Temas em destaque" className="themes-hero__deck">
@@ -166,7 +179,7 @@ export function ThemesPage() {
         <section className="theme-group" key={category.id}>
           <div className="section-heading"><h2>{category.name}</h2><span>{categoryThemes.length}</span></div>
           <div className="theme-grid">
-            {categoryThemes.map((theme, index) => <ThemeCard index={index} key={theme.id} theme={theme} />)}
+            {categoryThemes.map((theme, index) => <ThemeCard index={index} key={theme.id} theme={theme} waiting={totalWaiting(queueActivity, theme.id)} />)}
           </div>
         </section>
       ))}

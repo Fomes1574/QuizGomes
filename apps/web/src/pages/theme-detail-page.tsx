@@ -11,24 +11,33 @@ import { MatchmakingDialog } from '../components/matchmaking-dialog.js';
 import { RankBadge } from '../components/rank-badge.js';
 import { ThemeArtwork } from '../components/theme-artwork.js';
 import { useAuth } from '../features/auth-context.js';
+import { useFriendPresence, useQueueActivity } from '../features/social-context.js';
 import { useFriendChallenge } from '../hooks/use-friend-challenge.js';
 import { useMatchmaking } from '../hooks/use-matchmaking.js';
 import { apiRequest } from '../lib/api.js';
 import { feedback } from '../lib/feedback.js';
 import { consumePlayAuthIntent, savePlayAuthIntent } from '../lib/auth-intent.js';
-import type { ThemeDetailResponse } from '../lib/models.js';
+import type { ThemeDetailResponse, ThemeSummary } from '../lib/models.js';
+import { busiestOtherTheme, queueCounts, waitingLabel } from '../lib/queue-activity.js';
+import { queueInviteMode, queueInviteUrl, shareQueueInvite } from '../lib/queue-invite.js';
 import type { SocialFriend, SocialSnapshot } from '../lib/social.js';
 
 export function ThemeDetailPage() {
   const { slug = '' } = useParams();
   const location = useLocation();
   const restored = location.state as { autoPlay?: boolean; mode?: MatchMode } | null;
+  // Link "Me chama nessa fila": ?jogar=normal|rankeada.
+  const invitedMode = queueInviteMode(location.search);
   const navigate = useNavigate();
   const consumedAutoPlay = useRef(false);
   const { getToken, profile, signIn } = useAuth();
   const [data, setData] = useState<ThemeDetailResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [mode, setMode] = useState<MatchMode>(restored?.mode === 'RANKED' ? 'RANKED' : 'CASUAL');
+  const [mode, setMode] = useState<MatchMode>(invitedMode ?? (restored?.mode === 'RANKED' ? 'RANKED' : 'CASUAL'));
+  const [shareNotice, setShareNotice] = useState<string | null>(null);
+  const [otherThemes, setOtherThemes] = useState<ThemeSummary[]>([]);
+  const queueActivity = useQueueActivity();
+  const friendPresence = useFriendPresence();
   const [reload, setReload] = useState(0);
   const [friends, setFriends] = useState<SocialFriend[]>([]);
   const [challengePickerOpen, setChallengePickerOpen] = useState(false);
@@ -67,14 +76,29 @@ export function ThemeDetailPage() {
 
   // "Jogar de novo" chega aqui com autoPlay: entra na fila uma única vez e limpa o
   // estado do histórico para um recarregamento não abrir outra busca sozinho.
+  // O link "Me chama nessa fila" usa o mesmo caminho, uma vez só, e some da URL.
   useEffect(() => {
-    if (consumedAutoPlay.current || restored?.autoPlay !== true || profile === null || data === null) return;
+    const wantsAutoPlay = restored?.autoPlay === true || invitedMode !== null;
+    if (consumedAutoPlay.current || !wantsAutoPlay || profile === null || data === null) return;
     consumedAutoPlay.current = true;
-    const autoMode = restored.mode === 'RANKED' ? 'RANKED' : 'CASUAL';
+    const autoMode = invitedMode ?? (restored?.mode === 'RANKED' ? 'RANKED' : 'CASUAL');
     void navigate(location.pathname, { replace: true, state: { mode: autoMode } });
     if (data.theme.activeQuestionCount < questionsForMode(autoMode)) return;
     void startMatchmaking(data.theme.id, autoMode, slug);
-  }, [data, location.pathname, navigate, profile, restored, slug, startMatchmaking]);
+  }, [data, invitedMode, location.pathname, navigate, profile, restored, slug, startMatchmaking]);
+
+  // Nome do tema vizinho com gente esperando só é necessário durante a busca.
+  const searching = matchmaking.status === 'searching';
+  const someoneElsewhere = data !== null && [...queueActivity.entries()]
+    .some(([themeId, counts]) => themeId !== data.theme.id && counts[mode] > 0);
+  useEffect(() => {
+    if (!searching || !someoneElsewhere || otherThemes.length > 0) return undefined;
+    const controller = new AbortController();
+    void apiRequest<{ themes: ThemeSummary[] }>('/api/themes', { signal: controller.signal })
+      .then((result) => setOtherThemes(result.themes))
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [otherThemes.length, searching, someoneElsewhere]);
 
   if (data === null && error === null) return <LoadingState label="Abrindo o tema" />;
   if (error !== null || data === null) return <ErrorState message={error ?? 'Tema indisponível.'} onRetry={() => setReload((value) => value + 1)} />;
@@ -89,6 +113,24 @@ export function ThemeDetailPage() {
   const discovered = data.personal?.discoveredPercentage ?? 0;
   const records = data.personal?.records;
   const modeRecord = records?.[mode] ?? null;
+  const waitingHere = queueCounts(queueActivity, data.theme.id)[mode];
+  const friendsInQueue = friends.filter((friend) => friendPresence.get(friend.publicId)?.queueThemeId === data.theme.id);
+  const neighbor = busiestOtherTheme(
+    otherThemes.filter((theme) => theme.activeQuestionCount >= required),
+    queueActivity,
+    data.theme.id,
+    mode,
+  );
+
+  async function callSomeone() {
+    if (data === null) return;
+    const outcome = await shareQueueInvite(data.theme.name, queueInviteUrl(window.location.origin, slug, mode), mode);
+    setShareNotice(outcome === 'copied'
+      ? 'Link copiado! Mande para alguém e puxe a partida quando a pessoa topar.'
+      : outcome === 'shared'
+        ? 'Convite enviado. Puxe a partida quando a pessoa topar: vocês se encontram na fila.'
+        : outcome === 'failed' ? 'Não foi possível compartilhar daqui. Copie o endereço da página.' : null);
+  }
 
   return (
     <section className="page page--theme-detail">
@@ -132,6 +174,7 @@ export function ThemeDetailPage() {
                 : 'Vitória rende 20 XP. Seu Conhecimento fica intacto.'}</p>
               <ul className="play-deck__facts">
                 {modeRecord !== null && <li className="play-deck__record"><Icon name="crown" />Seu recorde: {modeRecord.toLocaleString('pt-BR')}</li>}
+                {waitingHere > 0 && <li className="play-deck__live"><span aria-hidden="true" className="theme-card__live-dot" />{waitingLabel(waitingHere)} agora</li>}
                 <li><Icon name="bolt" />10 s por pergunta</li>
                 <li>{available.toLocaleString('pt-BR')} {available === 1 ? 'disponível' : 'disponíveis'}</li>
               </ul>
@@ -139,6 +182,17 @@ export function ThemeDetailPage() {
           </div>
           {!canPlay && <p className="inline-notice">Este tema ainda precisa de {required} perguntas ativas para uma {mode === 'RANKED' ? 'partida rankeada' : 'partida normal'}.</p>}
           {!realtimeEnabled && canPlay && <p className="inline-notice">O catálogo está pronto; partidas online serão liberadas após a validação do servidor de rodadas.</p>}
+          {friendsInQueue.length > 0 && (
+            <p className="friends-in-queue" role="status">
+              <span aria-hidden="true" className="theme-card__live-dot" />
+              {friendsInQueue.length === 1
+                ? `${friendsInQueue[0]?.displayName ?? 'Um amigo'} está na fila deste tema agora.`
+                : `${friendsInQueue.length} amigos estão na fila deste tema agora.`}
+            </p>
+          )}
+          {invitedMode !== null && profile === null && (
+            <p className="inline-notice">Chamaram você para {invitedMode === 'RANKED' ? 'uma rankeada' : 'uma partida'} neste tema. Entre para cair direto na fila.</p>
+          )}
           {matchmaking.error && <p className="form-error">{matchmaking.error}</p>}
           {friendChallenge.error && <p className="form-error">{friendChallenge.error}</p>}
           {profile === null
@@ -160,8 +214,12 @@ export function ThemeDetailPage() {
                     variant="secondary"
                   >Desafiar amigo</Button>
                 )}
+                {canPlay && realtimeEnabled && (
+                  <Button onClick={() => void callSomeone()} variant="ghost"><Icon name="share" />Chamar alguém</Button>
+                )}
               </div>
             )}
+          {shareNotice !== null && <p className="inline-notice" role="status">{shareNotice}</p>}
         </div>
 
         <aside className="leaderboard-card">
@@ -222,8 +280,25 @@ export function ThemeDetailPage() {
       {matchmaking.status !== 'idle' && <MatchmakingDialog
         elapsedSeconds={matchmaking.elapsedSeconds}
         mode={mode}
+        neighbor={neighbor === null ? undefined : {
+          count: neighbor.count,
+          name: neighbor.theme.name,
+          onSwitch: () => {
+            matchmaking.cancel();
+            void navigate(`/temas/${encodeURIComponent(neighbor.theme.slug)}`, { state: { autoPlay: true, mode } });
+          },
+        }}
         onCancel={matchmaking.cancel}
         onClose={matchmaking.cancel}
+        onResume={matchmaking.resume}
+        timeoutActions={{
+          onCallSomeone: () => { matchmaking.cancel(); void callSomeone(); },
+          onChallengeFriend: mode === 'CASUAL' && friends.length > 0
+            ? () => { matchmaking.cancel(); setChallengePickerOpen(true); }
+            : undefined,
+          onRetry: () => { void matchmaking.start(data.theme.id, mode, slug); },
+        }}
+        waitingOthers={Math.max(0, waitingHere - 1)}
         opponent={matchmaking.opponent}
         preparing={matchmaking.preparing}
         status={matchmaking.status}

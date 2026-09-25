@@ -24,18 +24,33 @@ function searchTimer(seconds: number): string {
 export function MatchmakingDialog({
   elapsedSeconds,
   mode,
+  neighbor,
   onCancel,
   onClose,
+  onResume,
   opponent,
   preparing,
   status,
   theme,
+  timeoutActions,
   viewer,
+  waitingOthers,
 }: {
   elapsedSeconds: number;
   mode?: MatchMode | undefined;
+  /** Outro tema com gente esperando no mesmo modo, para trocar de fila com um toque. */
+  neighbor?: { count: number; name: string; onSwitch: () => void } | undefined;
   onCancel: () => void;
   onClose: () => void;
+  onResume?: (() => void) | undefined;
+  /** Saídas quando ninguém apareceu em 60 s. */
+  timeoutActions?: {
+    onCallSomeone: () => void;
+    onChallengeFriend?: (() => void) | undefined;
+    onRetry: () => void;
+  } | undefined;
+  /** Outras pessoas nesta mesma fila agora (sem contar você). */
+  waitingOthers?: number | undefined;
   opponent: MatchFoundOpponent | null;
   preparing: boolean;
   status: Exclude<MatchmakingStatus, 'idle'>;
@@ -45,7 +60,7 @@ export function MatchmakingDialog({
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const presenting = status === 'presenting-opponent' || status === 'leaving-opponent';
-  const searchLeaving = presenting || status === 'cancelling' || status === 'timed-out';
+  const searchLeaving = presenting || status === 'cancelling' || status === 'timed-out' || status === 'paused';
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -105,7 +120,7 @@ export function MatchmakingDialog({
     if (dialog === null) return;
     const focusTarget = status === 'searching'
       ? dialog.querySelector<HTMLElement>('[data-matchmaking-focus="cancel"]')
-      : status === 'timed-out'
+      : status === 'timed-out' || status === 'paused'
         ? dialog.querySelector<HTMLElement>('[data-matchmaking-focus="close"]')
         : dialog;
     focusTarget?.focus();
@@ -114,7 +129,7 @@ export function MatchmakingDialog({
   const handleEscape = (event: SyntheticEvent<HTMLDialogElement>) => {
     event.preventDefault();
     if (status === 'searching') onCancel();
-    else if (status === 'timed-out') onClose();
+    else if (status === 'timed-out' || status === 'paused') onClose();
   };
 
   const keepTabInside = (event: ReactKeyboardEvent<HTMLDialogElement>) => {
@@ -141,7 +156,9 @@ export function MatchmakingDialog({
     ? 'matchmaking-found-title'
     : status === 'timed-out'
       ? 'matchmaking-timeout-title'
-      : 'matchmaking-search-title';
+      : status === 'paused'
+        ? 'matchmaking-paused-title'
+        : 'matchmaking-search-title';
 
   return createPortal(
     <dialog
@@ -160,6 +177,21 @@ export function MatchmakingDialog({
           <span className="eyebrow">{theme.name}</span>
           <h2 id="matchmaking-search-title">PROCURANDO ADVERSÁRIO</h2>
           <strong aria-label={`${elapsedSeconds} segundos de 60`} className="matchmaking-clock" role="timer">{searchTimer(elapsedSeconds)}</strong>
+          {waitingOthers !== undefined && (
+            <p className="matchmaking-live">
+              <span aria-hidden="true" className="theme-card__live-dot" />
+              {waitingOthers === 0
+                ? 'Só você nesta fila por enquanto'
+                : waitingOthers === 1 ? 'Mais 1 pessoa nesta fila — pareando…' : `Mais ${waitingOthers} pessoas nesta fila — pareando…`}
+            </p>
+          )}
+          {neighbor !== undefined && (waitingOthers ?? 0) === 0 && status === 'searching' && (
+            <button className="matchmaking-neighbor" onClick={neighbor.onSwitch} type="button">
+              <span>{neighbor.count === 1 ? '1 pessoa esperando' : `${neighbor.count} pessoas esperando`} em</span>
+              <strong>{neighbor.name}</strong>
+              <small>Trocar de fila →</small>
+            </button>
+          )}
           <Button data-matchmaking-focus="cancel" disabled={status !== 'searching'} onClick={onCancel}>Cancelar</Button>
         </div>
 
@@ -221,8 +253,31 @@ export function MatchmakingDialog({
           <div className="matchmaking-timeout">
             <span className="state-card__orb">…</span>
             <h2 id="matchmaking-timeout-title">Nenhum jogador neste tema no momento</h2>
-            <p>A busca terminou após 60 segundos. Você pode tentar novamente quando quiser.</p>
-            <Button data-matchmaking-focus="close" onClick={onClose}>Voltar ao tema</Button>
+            <p>A busca terminou após 60 segundos. Chame alguém para cair na fila com você, ou tente de novo.</p>
+            {timeoutActions === undefined ? (
+              <Button data-matchmaking-focus="close" onClick={onClose}>Voltar ao tema</Button>
+            ) : (
+              <div className="matchmaking-timeout__actions">
+                <Button onClick={timeoutActions.onCallSomeone}>Chamar alguém</Button>
+                {timeoutActions.onChallengeFriend !== undefined && (
+                  <Button onClick={timeoutActions.onChallengeFriend} variant="secondary">Desafiar um amigo</Button>
+                )}
+                <Button onClick={timeoutActions.onRetry} variant="secondary">Tentar de novo</Button>
+                <Button data-matchmaking-focus="close" onClick={onClose} variant="ghost">Voltar ao tema</Button>
+              </div>
+            )}
+          </div>
+        ) : null}
+
+        {status === 'paused' ? (
+          <div className="matchmaking-timeout">
+            <span className="state-card__orb">❚❚</span>
+            <h2 id="matchmaking-paused-title">Busca pausada</h2>
+            <p>Você saiu do app por um tempo, então tiramos você da fila para ninguém cair numa partida sem você.</p>
+            <div className="matchmaking-timeout__actions">
+              {onResume !== undefined && <Button onClick={onResume}>Voltar para a fila</Button>}
+              <Button data-matchmaking-focus="close" onClick={onClose} variant="ghost">Agora não</Button>
+            </div>
           </div>
         ) : null}
       </section>

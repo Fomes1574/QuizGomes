@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({
   apiRequest: vi.fn(),
   challenge: vi.fn(() => Promise.resolve()),
   getToken: vi.fn(() => Promise.resolve('synthetic-auth')),
-  presence: new Map<string, { presence: string; publicId: string; revision: number }>(),
+  presence: new Map<string, { presence: string; publicId: string; queueThemeId?: string; revision: number }>(),
   profile: { displayName: 'Dono', publicId: '#QGOWNER1' },
   start: vi.fn(() => Promise.resolve()),
 }));
@@ -19,6 +19,7 @@ vi.mock('../features/auth-context.js', () => ({
 }));
 vi.mock('../features/social-context.js', () => ({
   useFriendPresence: () => mocks.presence,
+  useQueueActivity: () => new Map(),
 }));
 vi.mock('../hooks/use-matchmaking.js', () => ({
   useMatchmaking: () => ({ error: null, start: mocks.start, status: 'idle' }),
@@ -46,9 +47,9 @@ const theme = {
   topFive: [],
 };
 
-function page() {
+function page(entry = '/tema/elden-ring') {
   return (
-    <MemoryRouter initialEntries={['/tema/elden-ring']}>
+    <MemoryRouter initialEntries={[entry]}>
       <Routes><Route element={<ThemeDetailPage />} path="/tema/:slug" /></Routes>
     </MemoryRouter>
   );
@@ -69,6 +70,15 @@ describe('desafiar amigo a partir do tema', () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllEnvs();
+  });
+
+  it('o link "Me chama nessa fila" entra na fila do modo pedido uma única vez', async () => {
+    mocks.start.mockClear();
+    mocks.presence = new Map([['#QGANA1', { presence: 'MATCHMAKING', publicId: '#QGANA1', queueThemeId: 'theme-1', revision: 2 }]]);
+    render(page('/tema/elden-ring?jogar=rankeada'));
+    await waitFor(() => expect(mocks.start).toHaveBeenCalledWith('theme-1', 'RANKED', 'elden-ring'));
+    expect(mocks.start).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText('Ana está na fila deste tema agora.')).toBeInTheDocument();
   });
 
   it('só oferece "Desafiar amigo" na Partida normal', async () => {

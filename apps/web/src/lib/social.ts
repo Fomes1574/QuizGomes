@@ -37,6 +37,8 @@ export type FriendPresence = 'ONLINE' | 'MATCHMAKING' | 'IN_MATCH' | 'RECONNECTI
 export interface FriendPresenceEntry {
   presence: FriendPresence;
   publicId: string;
+  /** Tema da fila, só enquanto o amigo procura partida. */
+  queueThemeId?: string;
   revision: number;
 }
 
