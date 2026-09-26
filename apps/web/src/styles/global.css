@@ -179,7 +179,8 @@ input, select, textarea { font-size: max(16px, 1em); }
 .header-online { padding: 5px 9px; border-radius: 999px; background: color-mix(in srgb, var(--presence-online) 10%, transparent); color: var(--presence-online); }
 .header-online__dot { position: relative; width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50%; background: var(--presence-online); }
 .header-online__dot::after { position: absolute; inset: 0; border-radius: 50%; background: var(--presence-online); content: ''; animation: online-ping 2.4s ease-out infinite; }
-@media (width <= 420px) { .header-online__label { display: none; } .header-brand { gap: 8px; } }
+@media (width <= 420px) { .header-brand { gap: 8px; } }
+@media (width <= 340px) { .header-online__label { display: none; } }
 
 .header-profile { display: flex; align-items: center; gap: 10px; border-radius: 18px; }
 .header-profile__copy { display: none; text-align: right; }

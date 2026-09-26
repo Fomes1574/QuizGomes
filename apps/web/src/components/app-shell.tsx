@@ -37,7 +37,7 @@ export function AppShell() {
         <div className="header-brand">
           <Logo />
           {typeof onlineCount === 'number' && (
-            <span aria-label={`${onlineCount} usuários online`} className="header-online" role="status">
+            <span aria-label={`${onlineCount} usuários online`} className="header-online" role="status" title="Pessoas com o QUIZ GOMES aberto agora">
               <span aria-hidden="true" className="header-online__dot" />
               <span>{onlineCount}</span>
               <span className="header-online__label">online</span>

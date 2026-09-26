@@ -22,7 +22,7 @@ import { apiRequest, websocketUrl } from '../lib/api.js';
 import { clearDuelHandoff } from '../lib/match-handoff.js';
 import { takePreparedMatchRoom } from '../lib/preloaded-match-room.js';
 import { QUESTION_IMAGE_READY_CAP_MS, waitForQuestionImage } from '../lib/question-image-ready.js';
-import type { SeenQuestion } from '../lib/reports.js';
+import { loadSeenQuestions, storeSeenQuestions, type SeenQuestion } from '../lib/reports.js';
 
 interface TerminalResult {
   opponent: { result: MatchResult; score: number };
@@ -91,7 +91,12 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
   const [cancelling, setCancelling] = useState(false);
   // Denúncia de pergunta: só o cliente lembra o que já viu nesta sessão. O
   // servidor nunca confia nesta lista — revalida contra o snapshot selado.
-  const [seenQuestions, setSeenQuestions] = useState<SeenQuestion[]>([]);
+  const [seenQuestions, setSeenQuestions] = useState<SeenQuestion[]>(() => (
+    sessionId === '' ? [] : loadSeenQuestions(sessionId)
+  ));
+  useEffect(() => {
+    if (sessionId !== '') storeSeenQuestions(sessionId, seenQuestions);
+  }, [seenQuestions, sessionId]);
   const [reportTarget, setReportTarget] = useState<SeenQuestion | null>(null);
 
   useEffect(() => {

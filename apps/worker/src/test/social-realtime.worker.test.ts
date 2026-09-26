@@ -208,3 +208,24 @@ describe('fila visível por tema', () => {
     expect(await report(stub, 'tema-a:RANKED', -1)).toBe(400);
   });
 });
+
+describe('online sem fantasmas', () => {
+  it('conexão que parou de pingar sai da contagem', async () => {
+    const stub = hub();
+    const alive = await open(stub, 'vivo-1');
+    expect(await alive.waitFor('ONLINE_COUNT')).toMatchObject({ count: 1 });
+    const ghost = await open(stub, 'fantasma-1');
+    expect(await alive.waitFor('ONLINE_COUNT')).toMatchObject({ count: 2 });
+    // Simula 2 min+ de silêncio envelhecendo o horário de conexão do fantasma.
+    const { SOCIAL_SILENCE_LIMIT_MS } = await import('../durable-objects/social-realtime-hub.js');
+    await runInDurableObject(stub, (_instance, state) => {
+      for (const socket of state.getWebSockets('user:fantasma-1')) {
+        const session = socket.deserializeAttachment() as { connectedAt: number };
+        socket.serializeAttachment({ ...session, connectedAt: Date.now() - SOCIAL_SILENCE_LIMIT_MS - 5_000 });
+      }
+    });
+    expect(await count(stub)).toBe(1);
+    ghost.socket.close();
+    alive.socket.close();
+  });
+});

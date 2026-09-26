@@ -3,6 +3,7 @@ import { SocialRepository } from '../repositories/social-repository.js';
 import type { ActivityState, PlayerActivity } from './presence-hub.js';
 
 interface SocialSocketAttachment {
+  connectedAt?: number;
   presenceObjectId?: string;
   publicId?: string;
   userId: string;
@@ -26,6 +27,8 @@ const QUEUE_ACTIVITY_TTL_MS = 70_000;
 /** Várias entradas/saídas seguidas viram um único aviso para todos os sockets. */
 const QUEUE_BROADCAST_INTERVAL_MS = 1_500;
 const QUEUE_ACTIVITY_KEY = 'queue-activity';
+/** O cliente pinga a cada 45 s; 2 min de silêncio é conexão morta (rede caída sem close). */
+export const SOCIAL_SILENCE_LIMIT_MS = 120_000;
 
 /** Tema da fila de um amigo, só quando ele está de fato procurando partida. */
 function queueThemeOf(activity: PlayerActivity, resource: string | null | undefined): string | undefined {
@@ -42,6 +45,11 @@ function publicPresence(activity: PlayerActivity): FriendPresence {
   if (activity === 'reconnecting') return 'RECONNECTING';
   if (activity === 'preparing' || activity === 'playing' || activity === 'finished') return 'IN_MATCH';
   return 'ONLINE';
+}
+
+/** Socket que já recebeu close (inclusive por silêncio) não conta como online. */
+function isOpen(socket: WebSocket): boolean {
+  return socket.readyState === 1;
 }
 
 function attachment(socket: WebSocket): SocialSocketAttachment | null {
@@ -136,6 +144,7 @@ export class SocialRealtimeHub {
       return Response.json({ ok: true });
     }
     if (url.pathname === '/count' && request.method === 'GET') {
+      this.sweepSilent();
       return Response.json({ onlineCount: this.users().size });
     }
     if (url.pathname === '/online' && request.method === 'POST') {
@@ -146,7 +155,8 @@ export class SocialRealtimeHub {
         input.userIds.some((userId) => typeof userId !== 'string')) {
         return Response.json({ error: 'INVALID_PRESENCE' }, { status: 400 });
       }
-      const online = input.userIds.filter((userId) => this.ctx.getWebSockets(`user:${userId}`).length > 0);
+      this.sweepSilent();
+      const online = input.userIds.filter((userId) => this.ctx.getWebSockets(`user:${userId}`).some(isOpen));
       return Response.json({ online });
     }
     if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
@@ -168,7 +178,9 @@ export class SocialRealtimeHub {
     if (client === undefined || server === undefined) {
       return new Response('WebSocket indisponível', { status: 500 });
     }
+    this.sweepSilent();
     const session: SocialSocketAttachment = {
+      connectedAt: Date.now(),
       ...(presenceObjectId === null ? {} : { presenceObjectId }),
       ...(publicId === null ? {} : { publicId }),
       userId,
@@ -207,7 +219,7 @@ export class SocialRealtimeHub {
 
   private users(except?: WebSocket): Set<string> {
     return new Set(this.ctx.getWebSockets()
-      .filter((socket) => socket !== except)
+      .filter((socket) => socket !== except && isOpen(socket))
       .map((socket) => attachment(socket)?.userId)
       .filter((userId): userId is string => userId !== undefined));
   }
@@ -260,7 +272,23 @@ export class SocialRealtimeHub {
   }
 
   async alarm(): Promise<void> {
+    this.sweepSilent();
     await this.broadcastQueueActivity();
+  }
+
+  /**
+   * Fecha sockets que pararam de pingar (celular sem rede, aba morta sem
+   * close). Sem isso a pessoa continuaria "online" até o TCP expirar.
+   */
+  private sweepSilent(now = Date.now()): void {
+    for (const socket of this.ctx.getWebSockets()) {
+      const session = attachment(socket);
+      if (session?.connectedAt === undefined) continue;
+      const lastPing = this.ctx.getWebSocketAutoResponseTimestamp(socket)?.getTime() ?? session.connectedAt;
+      if (now - Math.max(lastPing, session.connectedAt) <= SOCIAL_SILENCE_LIMIT_MS) continue;
+      this.remove(socket);
+      try { socket.close(4_104, 'Sem sinal'); } catch { /* Já encerrado. */ }
+    }
   }
 
   private async queueActivity(): Promise<Record<string, QueueActivityEntry>> {
