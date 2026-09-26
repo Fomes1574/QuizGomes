@@ -1528,6 +1528,29 @@ limita o Firebase a Google) — decisão pendente registrada.
 
 Custo: nenhum produto novo; DO, D1 e R2 continuam no free tier.
 
+### 2026-09-26 — Auditoria de sincronização e redesign de busca/Social
+
+Aprovado pelo proprietário após auditoria:
+
+- **Carência de reconexão 7 → 10 s** (`RECONNECT_GRACE_MS`); vale para partida
+  ao vivo, metade assíncrona e graça inicial do DIRECT.
+- **Fila**: token por busca na presença (socket antigo nunca libera/promove a
+  busca nova), busca nova do mesmo jogador substitui a antiga (4103),
+  batimento PING a cada 10 s com expulsão de sockets silenciosos há 25 s na hora
+  de parear, e reserva que falha de um lado não derruba o outro (volta à fila).
+- **Login**: estado explícito do perfil; falha de rede mostra "tentar de novo"
+  em vez do primeiro acesso; conta desativada → `ACCOUNT_DISABLED`; nome com
+  NFC, sem invisíveis/bidi, ao menos uma letra/número; troca de nome invalida o
+  Social dos amigos.
+- **F5**: revisão da partida persiste no `sessionStorage` da aba.
+- **Online**: hub social fecha sockets sem PING há 2 min e não conta sockets
+  fechando; cabeçalho mostra "N online".
+- **Busca de partida** em radar com a carta do tema; **Social** com "Desafiar"
+  (leva ao tema com o amigo pré-selecionado), menu "⋯" para ações destrutivas,
+  anel de presença e enviados compactos.
+- Desempenho: CSS morto do globo removido; refresh social por foco limitado a
+  15 s (push de pedido continua imediato).
+
 ## Critério de saída desta execução
 
 - Milestones 8 e 8.5 aprovados fisicamente e congelados;

@@ -264,10 +264,18 @@ export function SocialProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (profile === null) return;
     queueMicrotask(() => { void refresh(); });
-    const onFocus = () => void refresh();
+    // Alternar de aba dispara vários "focus" seguidos: um refresh a cada 15 s
+    // basta, porque o canal em tempo real já cobre as mudanças no meio.
+    let lastFocusRefresh = 0;
+    const onFocus = () => {
+      const now = Date.now();
+      if (now - lastFocusRefresh < 15_000) return;
+      lastFocusRefresh = now;
+      void refresh();
+    };
     window.addEventListener('focus', onFocus);
     let unsubscribe: (() => void) | undefined;
-    void listenForForegroundFriendRequests(onFocus, getToken)
+    void listenForForegroundFriendRequests(() => void refresh(), getToken)
       .then((listener) => { unsubscribe = listener; })
       .catch(() => undefined);
     return () => {
