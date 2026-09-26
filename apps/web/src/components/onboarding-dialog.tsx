@@ -5,9 +5,41 @@ import { Button } from './button.js';
 import { Logo } from './logo.js';
 
 export function OnboardingDialog() {
-  const { error, firebaseUser, loading, profile } = useAuth();
+  const { error, firebaseUser, loading, profile, profileStatus } = useAuth();
   if (loading || firebaseUser === null || profile !== null) return null;
+  if (profileStatus === 'error' || profileStatus === 'disabled') {
+    return <ProfileProblem disabled={profileStatus === 'disabled'} message={error} />;
+  }
+  if (profileStatus !== 'missing') return null;
   return <OnboardingForm authError={error} key={firebaseUser.uid} user={firebaseUser} />;
+}
+
+/** Perfil existente que não carregou (rede, servidor) ou conta desativada: nunca o "primeiro acesso". */
+function ProfileProblem({ disabled, message }: { disabled: boolean; message: string | null }) {
+  const { retryProfile, signOut } = useAuth();
+  const [busy, setBusy] = useState(false);
+  return (
+    <div className="dialog-backdrop" role="presentation">
+      <section aria-labelledby="profile-problem-title" aria-modal="true" className="dialog" role="dialog">
+        <Logo />
+        <div className="dialog__intro">
+          <span className="eyebrow">{disabled ? 'Conta' : 'Conexão'}</span>
+          <h1 id="profile-problem-title">{disabled ? 'Conta desativada' : 'Não conseguimos carregar seu perfil'}</h1>
+          <p>{disabled
+            ? (message ?? 'Esta conta está desativada.')
+            : 'Sua conta está segura. Verifique a internet e tente de novo.'}</p>
+        </div>
+        <div className="dialog__actions">
+          {!disabled && (
+            <Button disabled={busy} onClick={() => { setBusy(true); void retryProfile().finally(() => setBusy(false)); }}>
+              {busy ? 'Tentando…' : 'Tentar de novo'}
+            </Button>
+          )}
+          <Button disabled={busy} onClick={() => void signOut()} variant="ghost">Sair / trocar conta</Button>
+        </div>
+      </section>
+    </div>
+  );
 }
 
 function OnboardingForm({ authError, user }: { authError: string | null; user: User }) {

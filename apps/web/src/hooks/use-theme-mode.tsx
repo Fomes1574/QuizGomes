@@ -13,7 +13,9 @@ const STORAGE_KEY = 'quiz-gomes:theme-mode';
 const ThemeModeContext = createContext<ThemeModeValue | null>(null);
 
 function storedMode(): ThemeMode {
-  const value = localStorage.getItem(STORAGE_KEY);
+  // Aba anônima ou armazenamento bloqueado lançam aqui: cai no tema do sistema.
+  let value: string | null = null;
+  try { value = localStorage.getItem(STORAGE_KEY); } catch { /* Sem storage. */ }
   return value === 'light' || value === 'dark' || value === 'system' ? value : 'system';
 }
 
@@ -42,7 +44,7 @@ export function ThemeModeProvider({ children }: { children: ReactNode }) {
     mode,
     resolved,
     setMode: (nextMode) => {
-      localStorage.setItem(STORAGE_KEY, nextMode);
+      try { localStorage.setItem(STORAGE_KEY, nextMode); } catch { /* Vale só nesta sessão. */ }
       setModeState(nextMode);
     },
   }), [mode, resolved]);

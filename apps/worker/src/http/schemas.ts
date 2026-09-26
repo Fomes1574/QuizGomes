@@ -1,8 +1,22 @@
 import { z } from 'zod';
 import { isStandardThemeIconKey, REPORT_REASONS, REPORT_STATUSES } from '@quiz-gomes/domain';
 
+/**
+ * Controle, formatação invisível (zero-width, BOM) e overrides de direção
+ * permitem nomes em branco ou que imitam outros ("‮" inverte o texto).
+ */
+const INVISIBLE_OR_BIDI = /[\p{Cc}\u00AD\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u206F\uFEFF]/u;
+
+export const displayNameSchema = z.string()
+  .transform((value) => value.normalize('NFC').replace(/\s+/gu, ' ').trim())
+  .pipe(z.string()
+    .min(2, 'Use pelo menos 2 caracteres.')
+    .max(32, 'Use no máximo 32 caracteres.')
+    .refine((value) => !INVISIBLE_OR_BIDI.test(value), 'O nome tem caracteres invisíveis ou de controle.')
+    .refine((value) => /[\p{L}\p{N}]/u.test(value), 'Use pelo menos uma letra ou número.'));
+
 export const profileInputSchema = z.object({
-  displayName: z.string().trim().min(2, 'Use pelo menos 2 caracteres.').max(32, 'Use no máximo 32 caracteres.'),
+  displayName: displayNameSchema,
 }).strict();
 
 export const categoryCreationSchema = z.object({

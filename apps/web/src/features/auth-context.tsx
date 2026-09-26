@@ -31,8 +31,17 @@ export interface QuizProfile {
   userId: string;
 }
 
+/**
+ * Estado do perfil separado do erro: só 'missing' (o servidor confirmou que
+ * não existe perfil) abre o primeiro acesso. Falha de rede vira 'error' com
+ * "tentar de novo", nunca uma conta nova aparente.
+ */
+export type ProfileStatus = 'disabled' | 'error' | 'idle' | 'loading' | 'missing' | 'ready';
+
 interface AuthValue {
   createProfile: (displayName: string) => Promise<void>;
+  profileStatus: ProfileStatus;
+  retryProfile: () => Promise<void>;
   error: string | null;
   firebaseUser: User | null;
   getToken: (forceRefresh?: boolean) => Promise<string | null>;
@@ -58,6 +67,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<QuizProfile | null>(null);
   const [role, setRole] = useState<'ADMIN' | 'PLAYER' | null>(null);
   const [loading, setLoading] = useState(true);
+  const [profileStatus, setProfileStatus] = useState<ProfileStatus>('loading');
   const signingInRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -71,16 +81,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setProfile(result.profile);
       setRole(result.role);
       setError(null);
+      setProfileStatus('ready');
     } catch (profileError) {
       if (profileError instanceof ClientApiError && profileError.code === 'PROFILE_NOT_FOUND') {
         setProfile(null);
         setRole(null);
         setError(null);
+        setProfileStatus('missing');
+        return;
+      }
+      if (profileError instanceof ClientApiError && profileError.code === 'ACCOUNT_DISABLED') {
+        setProfile(null);
+        setRole(null);
+        setError(profileError.message);
+        setProfileStatus('disabled');
         return;
       }
       // Falha transitória de rede não é logout: a sessão do Firebase continua válida
       // e o perfil já carregado permanece na tela.
       setError(profileError instanceof Error ? profileError.message : 'Não foi possível carregar seu perfil.');
+      setProfileStatus((current) => (current === 'ready' ? 'ready' : 'error'));
     }
   }, []);
 
@@ -91,9 +111,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setProfile(null);
       setRole(null);
       setLoading(false);
+      setProfileStatus('idle');
       return;
     }
     setLoading(true);
+    setProfileStatus('loading');
     void loadProfile(user).finally(() => setLoading(false));
   }), [loadProfile]);
 
@@ -113,7 +135,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setProfile(result.profile);
     setRole(result.role);
     setError(null);
+    setProfileStatus('ready');
   }, [getToken]);
+
+  const retryProfile = useCallback(async () => {
+    const user = firebaseAuth.currentUser;
+    if (user === null) return;
+    setLoading(true);
+    setProfileStatus('loading');
+    await loadProfile(user).finally(() => setLoading(false));
+  }, [loadProfile]);
 
   const saveAvatar = useCallback(async (avatar?: Blob) => {
     const token = await getToken();
@@ -133,6 +164,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     getToken,
     loading,
     profile,
+    profileStatus,
+    retryProfile,
     removeCustomAvatar: () => saveAvatar(),
     role,
     signIn: async () => {
@@ -162,7 +195,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     },
     updateDisplayName: (displayName) => saveProfile(displayName, 'PATCH'),
     uploadCustomAvatar: (avatar) => saveAvatar(avatar),
-  }), [error, firebaseUser, getToken, loading, profile, role, saveAvatar, saveProfile]);
+  }), [error, firebaseUser, getToken, loading, profile, profileStatus, retryProfile, role, saveAvatar, saveProfile]);
 
   return <AuthContext value={value}>{children}</AuthContext>;
 }

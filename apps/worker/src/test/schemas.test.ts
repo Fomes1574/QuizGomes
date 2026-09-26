@@ -48,3 +48,13 @@ describe('schemas de entrada', () => {
     expect(themeArtworkChoiceSchema.safeParse({ expectedVersion: -1, kind: 'NONE' }).success).toBe(false);
   });
 });
+
+describe('nome de exibição', () => {
+  it('normaliza espaços e recusa nomes invisíveis, de controle ou sem letra/número', () => {
+    expect(profileInputSchema.parse({ displayName: '  Ana   Luiza  ' })).toEqual({ displayName: 'Ana Luiza' });
+    expect(profileInputSchema.parse({ displayName: 'Zé 🔥' })).toEqual({ displayName: 'Zé 🔥' });
+    for (const displayName of ['​​', 'Ana‮ziuL', 'a\u0007b', '🔥🔥', '--', 'x']) {
+      expect(profileInputSchema.safeParse({ displayName }).success).toBe(false);
+    }
+  });
+});

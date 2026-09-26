@@ -400,21 +400,38 @@ async function realtimeRoute(request: Request, env: Env, url: URL, context?: Exe
   throw new ApiError(404, 'NOT_FOUND', 'Rota em tempo real não encontrada.');
 }
 
-async function profileRoute(request: Request, env: Env): Promise<Response> {
+async function profileRoute(request: Request, env: Env, context?: ExecutionContext): Promise<Response> {
   const identity = await requireUser(request, env);
   const repository = new UserRepository(env.CORE_DB);
+  // Conta desativada nunca cai no "primeiro acesso": a tela diz o que houve.
+  const assertNotDisabled = async () => {
+    const row = await env.CORE_DB.prepare('SELECT disabled_at FROM users WHERE firebase_uid = ?1')
+      .bind(identity.uid).first<{ disabled_at: string | null }>();
+    if (row !== null && row.disabled_at !== null) {
+      throw new ApiError(403, 'ACCOUNT_DISABLED', 'Esta conta está desativada. Fale com a administração.');
+    }
+  };
   if (request.method === 'GET') {
     const profile = await repository.findByFirebaseUid(identity.uid);
-    if (profile === null) throw new ApiError(404, 'PROFILE_NOT_FOUND', 'Perfil ainda não criado.');
+    if (profile === null) {
+      await assertNotDisabled();
+      throw new ApiError(404, 'PROFILE_NOT_FOUND', 'Perfil ainda não criado.');
+    }
     return json({ profile, role: await hasAdminAccess(identity, env) ? 'ADMIN' : 'PLAYER' });
   }
   if (request.method === 'POST' || request.method === 'PATCH') {
     const parsed = profileInputSchema.safeParse(await readJson(request));
     if (!parsed.success) throw validationError(parsed.error);
+    if (request.method === 'POST') await assertNotDisabled();
     const profile = request.method === 'POST'
       ? await repository.ensureProfile(identity, parsed.data.displayName, bootstrapAdminUids(env).has(identity.uid))
       : await repository.updateDisplayName(identity.uid, parsed.data.displayName);
     if (profile === null) throw new ApiError(404, 'PROFILE_NOT_FOUND', 'Crie o perfil antes de editá-lo.');
+    if (request.method === 'PATCH' && context !== undefined) {
+      // Amigos com o app aberto recarregam a lista e já veem o nome novo.
+      const friends = await new SocialRepository(env.CORE_DB).friendPresenceTargets(profile.userId);
+      if (friends.length > 0) invalidateSocial(env, context, friends.map((friend) => friend.userId));
+    }
     return json({ profile, role: await hasAdminAccess(identity, env) ? 'ADMIN' : 'PLAYER' }, { status: request.method === 'POST' ? 201 : 200 });
   }
   throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Método não permitido.');
@@ -1917,7 +1934,7 @@ async function apiRoute(request: Request, env: Env, url: URL, context: Execution
   if (url.pathname === '/api/health' && request.method === 'GET') {
     return json({ name: 'QUIZ GOMES', status: 'ok', version: '0.1.0' });
   }
-  if (url.pathname === '/api/profile/me') return profileRoute(request, env);
+  if (url.pathname === '/api/profile/me') return profileRoute(request, env, context);
   if (url.pathname === '/api/profile/summary') return profileSummaryRoute(request, env);
   if (url.pathname === '/api/profile/avatar') return profileAvatarRoute(request, env);
   if (url.pathname === '/api/social' || url.pathname.startsWith('/api/social/')) {
