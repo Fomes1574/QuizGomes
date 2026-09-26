@@ -44,14 +44,13 @@ describe('fechamento visual do matchmaking', () => {
     />);
 
     expect(screen.getByText('Games em Geral')).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'PROCURANDO ADVERSÁRIO' })).toBeInTheDocument();
-    expect(screen.getByRole('timer', { name: '0 segundos de 60' })).toHaveTextContent('00:00 / 01:00');
+    expect(screen.getByRole('heading', { name: 'Procurando adversário' })).toBeInTheDocument();
+    expect(screen.getByRole('timer', { name: '0 segundos de 60' })).toHaveTextContent('0:00');
     expect(screen.queryByText(/mesma dificuldade e modo/i)).not.toBeInTheDocument();
-    expect(document.querySelector('.matchmaking-globe__sphere')).toBeInTheDocument();
-    expect(document.querySelectorAll('.globe-character')).toHaveLength(4);
-    expect(document.querySelector('.matchmaking-magnifier')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Cancelar' })).toHaveClass('button--primary');
-    expect(screen.getByRole('button', { name: 'Cancelar' })).not.toHaveClass('button--secondary');
+    expect(document.querySelector('.matchmaking-radar__card')).toBeInTheDocument();
+    expect(document.querySelectorAll('.matchmaking-radar__seat')).toHaveLength(5);
+    // Cancelar é ação secundária: o destaque da tela é a busca, não a desistência.
+    expect(screen.getByRole('button', { name: 'Cancelar busca' })).not.toHaveClass('button--primary');
   });
 
   it('apresenta somente identidade e elo temático autoritativos do adversário', () => {
@@ -157,8 +156,8 @@ describe('fechamento visual do matchmaking', () => {
     );
 
     const shell = document.querySelector('.app-shell');
-    const dialog = screen.getByRole('dialog', { name: 'PROCURANDO ADVERSÁRIO' });
-    const cancel = screen.getByRole('button', { name: 'Cancelar' });
+    const dialog = screen.getByRole('dialog', { name: 'Procurando adversário' });
+    const cancel = screen.getByRole('button', { name: 'Cancelar busca' });
     expect(dialog).toBeInstanceOf(HTMLDialogElement);
     expect(dialog).toHaveAttribute('open');
     expect(shell).toHaveAttribute('inert');
@@ -218,7 +217,7 @@ describe('fechamento visual do matchmaking', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Temas', hidden: true }));
     expect(navigate).not.toHaveBeenCalled();
     expect(screen.getByRole('dialog')).toHaveFocus();
-    expect(screen.getByRole('button', { name: 'Cancelar', hidden: true })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Cancelar busca', hidden: true })).toBeDisabled();
   });
 
   it('mantém timeout modal até Voltar ao tema e então restaura interação e foco', () => {

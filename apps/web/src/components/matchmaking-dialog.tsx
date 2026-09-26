@@ -2,6 +2,7 @@ import { questionsForMode, type MatchMode } from '@quiz-gomes/domain';
 import {
   useEffect,
   useRef,
+  useState,
   type KeyboardEvent as ReactKeyboardEvent,
   type SyntheticEvent,
 } from 'react';
@@ -13,12 +14,33 @@ import { Avatar } from './avatar.js';
 import { AvatarFrame } from './avatar-frame.js';
 import { Button } from './button.js';
 import { DuelSide, type DuelParticipantView } from './duel-side.js';
-import { MatchmakingGlobe } from './matchmaking-globe.js';
+import { MatchmakingRadar } from './matchmaking-globe.js';
 import { RankBadge } from './rank-badge.js';
 import { ThemeArtwork } from './theme-artwork.js';
 
 function searchTimer(seconds: number): string {
-  return `00:${Math.max(0, Math.min(60, seconds)).toString().padStart(2, '0')} / 01:00`;
+  const clamped = Math.max(0, Math.min(60, seconds));
+  return `${Math.floor(clamped / 60)}:${(clamped % 60).toString().padStart(2, '0')}`;
+}
+
+/** Frases de espera: dão ritmo à busca sem prometer nada que o servidor não garante. */
+export const SEARCH_PHRASES = [
+  'Embaralhando as cartas…',
+  'Procurando alguém à sua altura…',
+  'Aquecendo os neurônios…',
+  'Afiando as respostas…',
+  'Quase lá, segura aí…',
+] as const;
+const PHRASE_INTERVAL_MS = 3_200;
+
+function useSearchPhrase(active: boolean): number {
+  const [index, setIndex] = useState(0);
+  useEffect(() => {
+    if (!active) return undefined;
+    const timer = window.setInterval(() => setIndex((current) => (current + 1) % SEARCH_PHRASES.length), PHRASE_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [active]);
+  return index;
 }
 
 export function MatchmakingDialog({
@@ -59,6 +81,7 @@ export function MatchmakingDialog({
   viewer?: DuelParticipantView | undefined;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const phraseIndex = useSearchPhrase(status === 'searching');
   const presenting = status === 'presenting-opponent' || status === 'leaving-opponent';
   const searchLeaving = presenting || status === 'cancelling' || status === 'timed-out' || status === 'paused';
 
@@ -170,29 +193,44 @@ export function MatchmakingDialog({
       ref={dialogRef}
       tabIndex={-1}
     >
-      <section aria-live="polite" className="dialog dialog--matchmaking">
+      <section aria-live="polite" className={`dialog dialog--matchmaking${presenting || status === 'timed-out' || status === 'paused' ? '' : ' dialog--searching'}`}>
         <ThemeArtwork artwork={theme.artwork} className="matchmaking-theme-artwork" eager name={theme.name} />
         <div aria-hidden={searchLeaving || undefined} className={`matchmaking-search${searchLeaving ? ' matchmaking-search--leaving' : ''}`} inert={searchLeaving}>
-          <MatchmakingGlobe />
-          <span className="eyebrow">{theme.name}</span>
-          <h2 id="matchmaking-search-title">PROCURANDO ADVERSÁRIO</h2>
-          <strong aria-label={`${elapsedSeconds} segundos de 60`} className="matchmaking-clock" role="timer">{searchTimer(elapsedSeconds)}</strong>
+          <MatchmakingRadar others={waitingOthers ?? 0} theme={theme} />
+          <div className="matchmaking-search__heading">
+            <span className="eyebrow">{theme.name}</span>
+            <h2 id="matchmaking-search-title">
+              Procurando adversário
+              <span aria-hidden="true" className="matchmaking-dots"><i /><i /><i /></span>
+            </h2>
+            <p aria-live="off" className="matchmaking-tagline" key={phraseIndex}>{SEARCH_PHRASES[phraseIndex]}</p>
+          </div>
+          <div className="matchmaking-meta">
+            {mode !== undefined && (
+              <span className="matchmaking-chip">{mode === 'RANKED' ? 'Rankeada' : 'Normal'} · {questionsForMode(mode)} perguntas</span>
+            )}
+            <strong aria-label={`${elapsedSeconds} segundos de 60`} className="matchmaking-clock" role="timer">
+              <span aria-hidden="true" className="matchmaking-clock__dot" />{searchTimer(elapsedSeconds)}
+            </strong>
+          </div>
           {waitingOthers !== undefined && (
-            <p className="matchmaking-live">
+            <p className={`matchmaking-live${waitingOthers > 0 ? ' matchmaking-live--warm' : ''}`}>
               <span aria-hidden="true" className="theme-card__live-dot" />
-              {waitingOthers === 0
+              <span>{waitingOthers === 0
                 ? 'Só você nesta fila por enquanto'
-                : waitingOthers === 1 ? 'Mais 1 pessoa nesta fila — pareando…' : `Mais ${waitingOthers} pessoas nesta fila — pareando…`}
+                : waitingOthers === 1 ? 'Mais 1 pessoa nesta fila, pareando…' : `Mais ${waitingOthers} pessoas nesta fila, pareando…`}</span>
             </p>
           )}
           {neighbor !== undefined && (waitingOthers ?? 0) === 0 && status === 'searching' && (
             <button className="matchmaking-neighbor" onClick={neighbor.onSwitch} type="button">
-              <span>{neighbor.count === 1 ? '1 pessoa esperando' : `${neighbor.count} pessoas esperando`} em</span>
-              <strong>{neighbor.name}</strong>
-              <small>Trocar de fila →</small>
+              <span className="matchmaking-neighbor__copy">
+                <small>{neighbor.count === 1 ? '1 pessoa esperando' : `${neighbor.count} pessoas esperando`} em</small>
+                <strong>{neighbor.name}</strong>
+              </span>
+              <span aria-hidden="true" className="matchmaking-neighbor__go">Trocar →</span>
             </button>
           )}
-          <Button data-matchmaking-focus="cancel" disabled={status !== 'searching'} onClick={onCancel}>Cancelar</Button>
+          <Button className="matchmaking-cancel" data-matchmaking-focus="cancel" disabled={status !== 'searching'} onClick={onCancel} variant="ghost">Cancelar busca</Button>
         </div>
 
         {presenting && opponent !== null ? (
