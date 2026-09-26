@@ -22,7 +22,7 @@ import { notifyChallengeReadyForSecond, notifyChallengeUpdated } from '../servic
  *
  * Por que um Durable Object próprio: a metade assíncrona é um jogador só contra o
  * relógio, e a regra do M8 exige detecção AUTORITATIVA de desconexão com graça
- * exata de 7 s. Isso não cabe em HTTP puro, porque não há conexão para observar, e
+ * exata de 10 s. Isso não cabe em HTTP puro, porque não há conexão para observar, e
  * não cabe no `MatchRoom`, que é uma máquina de dois assentos simultâneos e está
  * FROZEN — encaixar uma metade solo ali exigiria forjar o segundo assento dentro de
  * um motor congelado. O DO aqui não recria nada: scoring, timer, graça e resolução

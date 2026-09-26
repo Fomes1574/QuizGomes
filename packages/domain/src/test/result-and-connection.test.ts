@@ -16,26 +16,26 @@ describe('resultado idempotente', () => {
 });
 
 describe('desconexão', () => {
-  it('pausa por exatamente 7 segundos', () => {
+  it('pausa por exatamente 10 segundos', () => {
     expect(resolveConnectionLoss({ disconnectedKnowledge: 0, disconnectedPlayers: 1, elapsedMs: 0, infrastructureFailure: false, mode: 'RANKED' }))
-      .toEqual({ kind: 'WAITING', remainingGraceMs: 7_000 });
-    expect(resolveConnectionLoss({ disconnectedKnowledge: 0, disconnectedPlayers: 1, elapsedMs: 6_999, infrastructureFailure: false, mode: 'RANKED' }))
+      .toEqual({ kind: 'WAITING', remainingGraceMs: 10_000 });
+    expect(resolveConnectionLoss({ disconnectedKnowledge: 0, disconnectedPlayers: 1, elapsedMs: 9_999, infrastructureFailure: false, mode: 'RANKED' }))
       .toEqual({ kind: 'WAITING', remainingGraceMs: 1 });
   });
 
   it('aplica ao desconectado ranqueado a derrota que antes era de HARD', () => {
-    expect(resolveConnectionLoss({ disconnectedKnowledge: 0, disconnectedPlayers: 1, elapsedMs: 7_000, infrastructureFailure: false, mode: 'RANKED' }))
+    expect(resolveConnectionLoss({ disconnectedKnowledge: 0, disconnectedPlayers: 1, elapsedMs: 10_000, infrastructureFailure: false, mode: 'RANKED' }))
       .toEqual({ disconnectedKnowledgeDelta: 0, kind: 'VOID_INDIVIDUAL' });
-    expect(resolveConnectionLoss({ disconnectedKnowledge: 2_500, disconnectedPlayers: 1, elapsedMs: 7_000, infrastructureFailure: false, mode: 'RANKED' }))
+    expect(resolveConnectionLoss({ disconnectedKnowledge: 2_500, disconnectedPlayers: 1, elapsedMs: 10_000, infrastructureFailure: false, mode: 'RANKED' }))
       .toEqual({ disconnectedKnowledgeDelta: -33, kind: 'VOID_INDIVIDUAL' });
   });
 
   it('Casual, queda dupla e falha sistêmica não punem', () => {
-    expect(resolveConnectionLoss({ disconnectedKnowledge: 5_000, disconnectedPlayers: 1, elapsedMs: 7_000, infrastructureFailure: false, mode: 'CASUAL' }))
+    expect(resolveConnectionLoss({ disconnectedKnowledge: 5_000, disconnectedPlayers: 1, elapsedMs: 10_000, infrastructureFailure: false, mode: 'CASUAL' }))
       .toEqual({ disconnectedKnowledgeDelta: 0, kind: 'VOID_INDIVIDUAL' });
-    expect(resolveConnectionLoss({ disconnectedKnowledge: 5_000, disconnectedPlayers: 2, elapsedMs: 7_000, infrastructureFailure: false, mode: 'RANKED' }))
+    expect(resolveConnectionLoss({ disconnectedKnowledge: 5_000, disconnectedPlayers: 2, elapsedMs: 10_000, infrastructureFailure: false, mode: 'RANKED' }))
       .toEqual({ disconnectedKnowledgeDelta: 0, kind: 'VOID_SYSTEM' });
-    expect(resolveConnectionLoss({ disconnectedKnowledge: 5_000, disconnectedPlayers: 1, elapsedMs: 7_000, infrastructureFailure: true, mode: 'RANKED' }))
+    expect(resolveConnectionLoss({ disconnectedKnowledge: 5_000, disconnectedPlayers: 1, elapsedMs: 10_000, infrastructureFailure: true, mode: 'RANKED' }))
       .toEqual({ disconnectedKnowledgeDelta: 0, kind: 'VOID_SYSTEM' });
   });
 });

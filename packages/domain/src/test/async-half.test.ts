@@ -133,7 +133,7 @@ describe('metade selada do desafio assíncrono', () => {
     expect(markAsyncHalfFinalized(state).phase).toBe('FINISHED');
   });
 
-  it('aplica a graça exata do M8: 6999 retoma, 7000 e 7001 anulam', () => {
+  it('aplica a graça exata: 9999 retoma, 10000 e 10001 anulam', () => {
     const base = (() => {
       let state = run(halfState('FIRST'), { type: 'CONNECT' }, NOW);
       state = run(state, { roundNumber: 1, type: 'ROUND_READY' }, NOW);

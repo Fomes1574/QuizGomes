@@ -291,3 +291,30 @@ describe('busca com o celular em segundo plano', () => {
     expect(result.current.error).toBeNull();
   });
 });
+
+describe('batimento da fila', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    FakeWebSocket.instances = [];
+    mocks.getToken.mockResolvedValue('firebase-token');
+    mocks.apiRequest.mockResolvedValue({ expiresAt: Date.now() + 30_000, ticket: 'ticket' });
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+  });
+  afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.clearAllMocks(); vi.useRealTimers(); });
+
+  it('pede batimento ao servidor e manda PING a cada 10 s', async () => {
+    const { result } = renderHook(() => useMatchmaking());
+    const socket = await startSearch(result);
+    expect(socket.url).toContain('hb=1');
+    await act(async () => vi.advanceTimersByTimeAsync(10_000));
+    expect(socket.send).toHaveBeenCalledWith('PING');
+  });
+
+  it('busca substituída em outra aba avisa em vez de parecer queda', async () => {
+    const { result } = renderHook(() => useMatchmaking());
+    const socket = await startSearch(result);
+    act(() => socket.emit('close', { code: 4_103 }));
+    expect(result.current.status).toBe('idle');
+    expect(result.current.error).toMatch(/outra aba/);
+  });
+});

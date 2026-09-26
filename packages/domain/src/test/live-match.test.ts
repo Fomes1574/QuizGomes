@@ -258,9 +258,9 @@ describe('partida simultânea autoritativa', () => {
   );
 
   it.each([
-    [6_999, 'RESUMED', 'ANSWERING'],
-    [7_000, 'FINALIZE', 'FINALIZING'],
-    [7_001, 'FINALIZE', 'FINALIZING'],
+    [9_999, 'RESUMED', 'ANSWERING'],
+    [10_000, 'FINALIZE', 'FINALIZING'],
+    [10_001, 'FINALIZE', 'FINALIZING'],
   ] as const)('decide reconnect em %i ms pela fronteira persistida', (elapsedMs, event, phase) => {
     const started = startFirstRound();
     const disconnectedAt = started.now + 100;
@@ -321,7 +321,7 @@ describe('partida simultânea autoritativa', () => {
     expect(projection).not.toHaveProperty('resolution');
   });
 
-  it('aguarda 7 segundos exatos, pune somente queda individual e não pune queda dupla', () => {
+  it('aguarda 10 segundos exatos, pune somente queda individual e não pune queda dupla', () => {
     const started = startFirstRound();
     const disconnectedAt = started.now + 100;
     let state = command(started.state, { seat: 1, type: 'DISCONNECT' }, disconnectedAt);

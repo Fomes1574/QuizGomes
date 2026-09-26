@@ -6,9 +6,13 @@ import {
 } from '@quiz-gomes/domain';
 
 interface QueueAttachment {
+  /** O cliente manda PING periódico; só esses sockets podem ser tidos como mortos por silêncio. */
+  heartbeat?: boolean;
   joinedAt: number;
   knowledge: number;
   resource: string;
+  /** Token da reserva de presença desta busca. Ausente em sockets de antes do deploy. */
+  token?: string;
   uid: string;
 }
 
@@ -28,7 +32,23 @@ const SAFE_MATCH_FAILURE_CODES = new Set([
   'QUESTION_POOL_INSUFFICIENT',
 ]);
 const QUEUE_TIMEOUT_MS = 60_000;
+/** O cliente pinga a cada 10 s; 25 s sem PING é conexão morta (celular sem rede, aba morta). */
+export const QUEUE_SILENCE_LIMIT_MS = 25_000;
+const SUPERSEDED_CODE = 4_103;
+const SILENT_CODE = 4_104;
 const RANKED_RECHECK_MS = [15_000, 30_000, 45_000] as const;
+
+/**
+ * Socket com batimento que ficou em silêncio além do limite: conexão morta
+ * (rede caída, aba encerrada sem close). Sockets sem batimento (cliente
+ * antigo) nunca são julgados por silêncio.
+ */
+export function isSilentQueueSocket(input: {
+  heartbeat: boolean; joinedAt: number; lastPingAt: number | null; now: number;
+}): boolean {
+  if (!input.heartbeat) return false;
+  return input.now - Math.max(input.lastPingAt ?? input.joinedAt, input.joinedAt) > QUEUE_SILENCE_LIMIT_MS;
+}
 
 function safeMatchFailureCode(value: unknown): string {
   return typeof value === 'string' && SAFE_MATCH_FAILURE_CODES.has(value)
@@ -44,7 +64,11 @@ export class MatchmakingQueue {
   constructor(
     private readonly ctx: DurableObjectState,
     private readonly env: Env,
-  ) {}
+  ) {
+    // Responder PING sem acordar o DO: o batimento sai de graça e o horário
+    // da última resposta serve para detectar sockets fantasmas.
+    this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('PING', 'PONG'));
+  }
 
   async fetch(request: Request): Promise<Response> {
     if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') return new Response('Upgrade necessário', { status: 426 });
@@ -58,7 +82,20 @@ export class MatchmakingQueue {
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
     if (client === undefined || server === undefined) return new Response('WebSocket indisponível', { status: 500 });
-    const current: QueueAttachment = { joinedAt: Date.now(), knowledge, resource, uid };
+    const token = request.headers.get('X-QG-Search-Token');
+    const current: QueueAttachment = {
+      ...(request.headers.get('X-QG-Heartbeat') === '1' ? { heartbeat: true } : {}),
+      joinedAt: Date.now(),
+      knowledge,
+      resource,
+      ...(token === null ? {} : { token }),
+      uid,
+    };
+    // Uma busca nova do mesmo jogador substitui qualquer socket antigo dele
+    // nesta fila (F5, aba duplicada): o antigo nunca vira adversário fantasma.
+    for (const entry of this.waitingSockets()) {
+      if (entry.value.uid === uid) this.closeQuietly(entry.socket, SUPERSEDED_CODE, 'Busca substituída');
+    }
     server.serializeAttachment(current);
     this.ctx.acceptWebSocket(server);
     const timeoutAt = current.joinedAt + QUEUE_TIMEOUT_MS;
@@ -83,8 +120,12 @@ export class MatchmakingQueue {
     const isRanked = current.resource.split(':')[1] === 'RANKED';
     const currentDivision = divisionIndexForKnowledge(current.knowledge);
     const now = Date.now();
+    for (const entry of this.waitingSockets()) {
+      if (entry.socket !== server && this.isSilent(entry, now)) await this.evictSilent(entry);
+    }
     const candidates = this.waitingSockets()
       .filter((entry) => entry.socket !== server && entry.value.uid !== current.uid)
+      .filter((entry) => entry.socket.readyState === 1)
       .filter((entry) => (
         // Partida normal nunca usa Conhecimento: qualquer candidato do mesmo tema serve.
         !isRanked || Math.abs(divisionIndexForKnowledge(entry.value.knowledge) - currentDivision)
@@ -136,33 +177,44 @@ export class MatchmakingQueue {
         server.send(payload);
         opponent.socket.send(payload);
         await Promise.all([
-          this.transition(opponent.value.uid, ['matchmaking'], 'idle', null, opponent.value.resource),
-          this.transition(current.uid, ['matchmaking'], 'idle', null, current.resource),
+          this.transition(opponent.value.uid, ['matchmaking'], 'idle', null, opponent.value.resource, opponent.value.token),
+          this.transition(current.uid, ['matchmaking'], 'idle', null, current.resource, current.token),
         ]);
         server.close(4_101, 'Partida indisponível');
         opponent.socket.close(4_101, 'Partida indisponível');
         return true;
       }
       const reservations = await Promise.all([
-        this.transition(opponent.value.uid, ['matchmaking'], 'preparing', roomId, opponent.value.resource),
-        this.transition(current.uid, ['matchmaking'], 'preparing', roomId, current.resource),
+        this.transition(opponent.value.uid, ['matchmaking'], 'preparing', roomId, opponent.value.resource, opponent.value.token),
+        this.transition(current.uid, ['matchmaking'], 'preparing', roomId, current.resource, current.token),
       ]);
       if (!reservations.every(Boolean)) {
+        // Só quem não conseguiu reservar sai da fila. Quem reservou volta a
+        // esperar com a mesma busca: um adversário fantasma não custa a
+        // partida de quem está de fato ali.
+        const sides = [
+          { entry: opponent, reserved: reservations[0] === true },
+          { entry: { socket: server, value: current }, reserved: reservations[1] === true },
+        ];
+        for (const side of sides) {
+          if (side.reserved) {
+            const restored = await this.transition(
+              side.entry.value.uid, ['preparing'], 'matchmaking', side.entry.value.resource, roomId, undefined, side.entry.value.token,
+            );
+            if (restored) continue;
+          }
+          this.safeSend(side.entry.socket, JSON.stringify({ code: 'PLAYER_BUSY', type: 'MATCH_FAILED' }));
+          this.closeQuietly(side.entry.socket, 4_101, 'Reserva inválida');
+          if (side.reserved) await this.release(side.entry.value.uid, side.entry.value.resource, roomId, side.entry.value.token);
+        }
+        // A sala é anulada só depois: a limpeza dela nunca alcança quem já
+        // voltou para a fila (a presença não aponta mais para esta sala).
         try {
           await room.fetch('https://room.internal/system-failure', { method: 'POST' });
         } catch {
           // O alarme autoritativo da sala mantém a limpeza como fallback sistêmico.
         }
-        const payload = JSON.stringify({ code: 'PLAYER_BUSY', type: 'MATCH_FAILED' });
-        server.send(payload);
-        opponent.socket.send(payload);
-        await Promise.all([
-          this.release(opponent.value.uid, opponent.value.resource, roomId),
-          this.release(current.uid, current.resource, roomId),
-        ]);
-        server.close(4_101, 'Reserva inválida');
-        opponent.socket.close(4_101, 'Reserva inválida');
-        return true;
+        return false;
       }
       server.send(JSON.stringify({ ...currentPresentation, type: 'MATCH_FOUND', roomId }));
       opponent.socket.send(JSON.stringify({ ...opponentPresentation, type: 'MATCH_FOUND', roomId }));
@@ -175,7 +227,7 @@ export class MatchmakingQueue {
   async webSocketClose(socket: WebSocket): Promise<void> {
     const value = attachment(socket);
     if (value !== null) {
-      await this.transition(value.uid, ['matchmaking'], 'idle', null, value.resource);
+      await this.transition(value.uid, ['matchmaking'], 'idle', null, value.resource, value.token);
       this.reportActivity(value.resource, socket);
     }
   }
@@ -258,13 +310,44 @@ export class MatchmakingQueue {
     to: string,
     resource: string | null,
     fromResource?: string,
+    fromToken?: string,
+    token?: string,
   ): Promise<boolean> {
     const id = this.env.PRESENCE_HUB.idFromName(uid);
     const response = await this.env.PRESENCE_HUB.get(id).fetch('https://presence.internal/transition', {
-      body: JSON.stringify({ from, fromResource, resource, to }),
+      body: JSON.stringify({
+        from,
+        fromResource,
+        ...(fromToken === undefined ? {} : { fromToken }),
+        resource,
+        to,
+        ...(token === undefined ? {} : { token }),
+      }),
       method: 'POST',
     });
     return response.ok;
+  }
+
+  private isSilent(entry: { socket: WebSocket; value: QueueAttachment }, now: number): boolean {
+    return isSilentQueueSocket({
+      heartbeat: entry.value.heartbeat === true,
+      joinedAt: entry.value.joinedAt,
+      lastPingAt: this.ctx.getWebSocketAutoResponseTimestamp(entry.socket)?.getTime() ?? null,
+      now,
+    });
+  }
+
+  private async evictSilent(entry: { socket: WebSocket; value: QueueAttachment }): Promise<void> {
+    this.closeQuietly(entry.socket, SILENT_CODE, 'Sem sinal');
+    await this.transition(entry.value.uid, ['matchmaking'], 'idle', null, entry.value.resource, entry.value.token);
+  }
+
+  private closeQuietly(socket: WebSocket, code: number, reason: string): void {
+    try { socket.close(code, reason); } catch { /* Já encerrado. */ }
+  }
+
+  private safeSend(socket: WebSocket, payload: string): void {
+    try { socket.send(payload); } catch { /* A limpeza vem pelo close. */ }
   }
 
   private async sociallyCompatible(firstUid: string, secondUid: string): Promise<boolean> {
@@ -280,8 +363,8 @@ export class MatchmakingQueue {
     return blocked === null;
   }
 
-  private async release(uid: string, queueResource: string, roomId: string): Promise<void> {
-    if (await this.transition(uid, ['matchmaking'], 'idle', null, queueResource)) return;
+  private async release(uid: string, queueResource: string, roomId: string, token?: string): Promise<void> {
+    if (await this.transition(uid, ['matchmaking'], 'idle', null, queueResource, token)) return;
     await this.transition(uid, ['preparing'], 'idle', null, roomId);
   }
 }

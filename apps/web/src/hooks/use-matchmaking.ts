@@ -27,6 +27,10 @@ const SEARCH_EXIT_MS = 260;
  */
 export const BACKGROUND_PAUSE_MS = 20_000;
 const FOUND_TITLE = 'Partida encontrada! · QUIZ GOMES';
+/** Batimento da fila: o servidor considera morto quem fica 25 s sem PING. */
+export const QUEUE_HEARTBEAT_MS = 10_000;
+/** Outra aba (ou um F5) começou uma busca nova e esta foi substituída. */
+const SUPERSEDED_CLOSE_CODE = 4_103;
 
 function isTouchDevice(): boolean {
   try { return window.matchMedia('(pointer: coarse)').matches; } catch { return false; }
@@ -292,11 +296,16 @@ export function useMatchmaking() {
       const ticket = await apiRequest<{ expiresAt: number; ticket: string }>('/api/realtime/tickets', {
         body: { resource, scope: 'matchmaking' }, getToken, method: 'POST', token,
       });
-      const params = new URLSearchParams({ resource, ticket: ticket.ticket });
+      const params = new URLSearchParams({ hb: '1', resource, ticket: ticket.ticket });
       const socket = new WebSocket(websocketUrl(`/api/realtime/matchmaking?${params}`));
       socketRef.current = socket;
       setStatus('searching');
+      const heartbeat = window.setInterval(() => {
+        if (socket.readyState === WebSocket.OPEN) socket.send('PING');
+      }, QUEUE_HEARTBEAT_MS);
+      socket.addEventListener('close', () => window.clearInterval(heartbeat));
       socket.addEventListener('message', (event) => {
+        if (event.data === 'PONG') return;
         let message: RealtimeMessage;
         try {
           message = JSON.parse(String(event.data)) as RealtimeMessage;
@@ -329,6 +338,11 @@ export function useMatchmaking() {
       socket.addEventListener('close', (event) => {
         if (socketRef.current !== socket) return;
         socketRef.current = null;
+        if (statusRef.current === 'searching' && event.code === SUPERSEDED_CLOSE_CODE) {
+          setError('Você começou uma busca em outra aba; esta foi encerrada.');
+          setStatus('idle');
+          return;
+        }
         if (statusRef.current === 'searching' && event.code !== 1_000) {
           // O sistema derrubou o socket com o app em segundo plano: isso é
           // uma pausa, não um erro. O jogador escolhe voltar para a fila.

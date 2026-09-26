@@ -806,7 +806,7 @@ describe('Milestone 8 no runtime Workers simulado', () => {
       .bind(fixture.userIds[0], fixture.themeId).first<{ knowledge: number }>()).toEqual({ knowledge: 575 });
   });
 
-  it('aplica ao desconectado, depois dos 7 segundos, a derrota que antes era de HARD', async () => {
+  it('aplica ao desconectado, depois dos 10 segundos, a derrota que antes era de HARD', async () => {
     const fixture = await seedMatchFixture('abandon');
     const { roomId, stub } = await initializeRoom(fixture);
     const first = await openRoom(stub, fixture.uids[0]);

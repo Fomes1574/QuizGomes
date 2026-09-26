@@ -2,7 +2,7 @@
  * Justiça com foto: o ROUND_READY só sai depois que a foto da pergunta
  * carregou (ou falhou, ou estourou o teto). Assim ninguém começa a rodada
  * olhando uma moldura vazia enquanto o adversário já vê a imagem. O teto
- * mantém a soma apresentação + espera bem abaixo da carência de 7 s da sala.
+ * mantém a soma apresentação + espera bem abaixo da carência de reconexão da sala (10 s).
  */
 export const QUESTION_IMAGE_READY_CAP_MS = 4_000;
 

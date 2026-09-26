@@ -1,7 +1,7 @@
 import { rankedAbandonmentLoss } from '../progression/ranking.js';
 import type { MatchMode } from '../types.js';
 
-export const RECONNECT_GRACE_MS = 7_000;
+export const RECONNECT_GRACE_MS = 10_000;
 
 export type ConnectionResolution =
   | { kind: 'WAITING'; remainingGraceMs: number }

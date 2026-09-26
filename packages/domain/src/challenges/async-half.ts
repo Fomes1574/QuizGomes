@@ -163,7 +163,7 @@ function alarm(state: AsyncHalfState, nowMs: number): AsyncHalfTransition {
   if (state.phase === 'PAUSED') {
     const pause = state.pause;
     if (pause === null) throw new Error('Pausa sem estado preservado.');
-    // Limites exatos do M8: 6999 ainda retoma, 7000 e 7001 anulam.
+    // Limites exatos: RECONNECT_GRACE_MS - 1 ainda retoma; o próprio limite e depois anulam.
     return nowMs < pause.graceDeadlineMs
       ? { event: { type: 'NOOP' }, state }
       : finalize(state, 'VOID');

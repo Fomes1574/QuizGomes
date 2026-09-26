@@ -38,7 +38,7 @@ export interface DirectChallengeStart {
  * EXISTENTE e entrega as apresentações individuais.
  *
  * Nenhum motor novo é criado. A partir daqui valem M8 e M8.5 sem alteração: mesmo
- * scoring, mesmo timer, mesma reconexão de 7 s e mesmo resultado transacional. O
+ * scoring, mesmo timer, mesma reconexão de 10 s e mesmo resultado transacional. O
  * lock `active_match_players` continua sendo a barreira final contra duas partidas.
  *
  * `roomId` é decidido por quem chama, ANTES de qualquer escrita — normalmente já

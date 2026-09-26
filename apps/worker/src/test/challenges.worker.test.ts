@@ -746,7 +746,7 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
     })).resolves.toMatchObject({ created: true });
   });
 
-  it('reconciliação não anula uma sala DIRECT recém-reservada ainda dentro da graça de 7 s', async () => {
+  it('reconciliação não anula uma sala DIRECT recém-reservada ainda dentro da graça de 10 s', async () => {
     const { themeSlug, users } = await fixture(2);
     const first = userAt(users, 0);
     const second = userAt(users, 1);
@@ -766,7 +766,7 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
 
     await reconcileChallengeLifecycle(env, fakeContext(), challenges, first.id);
 
-    // Dentro dos 7 s, mesmo com o MatchRoom "MISSING", a reserva sobrevive.
+    // Dentro dos 10 s, mesmo com o MatchRoom "MISSING", a reserva sobrevive.
     expect(await challenges.byId(created.challengeId)).toMatchObject({ matchId: roomId, status: 'PREPARING' });
     expect(await env.CORE_DB.prepare('SELECT COUNT(*) AS total FROM matches WHERE id = ?1')
       .bind(roomId).first()).toEqual({ total: 0 });
@@ -784,7 +784,7 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
       targetPresence: 'ONLINE', targetUserId: second.id, themeId,
     });
     const roomId = crypto.randomUUID();
-    // Mesma reserva, agora "parada" há mais de 7 s: a inicialização do MatchRoom
+    // Mesma reserva, agora "parada" há mais de 10 s: a inicialização do MatchRoom
     // nunca chegou a completar (falha pós-criação da tentativa).
     await env.CORE_DB.prepare(
       `UPDATE challenges SET status = 'PREPARING', match_id = ?1, updated_at = '2000-01-01T00:00:00.000Z' WHERE id = ?2`,
@@ -851,7 +851,7 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
   });
 
   it('convite DIRECT pendente nunca é anulado pela reconciliação antes dos 30 s, em nenhum instante', async () => {
-    // matchId ainda é null (PENDING_DIRECT): a graça de 7 s nunca se aplica aqui,
+    // matchId ainda é null (PENDING_DIRECT): a graça de 10 s nunca se aplica aqui,
     // só a expiração de 30 s de `expireStaleDirect`. Cobre 7 s, logo após 7 s e o
     // limiar de 29.999 s, sempre sobrevivendo e aceitando normalmente.
     for (const elapsedMs of [7_000, 7_001, 29_999]) {
@@ -881,7 +881,7 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
     }
   });
 
-  it('convite cruzado DIRECT aceito depois dos 7 s continua abrindo a sala normalmente', async () => {
+  it('convite cruzado DIRECT aceito depois dos 10 s continua abrindo a sala normalmente', async () => {
     const { themeSlug, users } = await fixture(2);
     const first = userAt(users, 0);
     const second = userAt(users, 1);
@@ -893,7 +893,7 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
       actorUserId: first.id, kind: 'DIRECT',
       targetPresence: 'ONLINE', targetUserId: second.id, themeId,
     });
-    // Convite parado há mais de 7 s, ainda bem dentro dos 30 s.
+    // Convite parado há mais de 10 s, ainda bem dentro dos 30 s.
     await env.CORE_DB.prepare('UPDATE challenges SET updated_at = ?1 WHERE id = ?2')
       .bind(new Date(Date.now() - 10_000).toISOString(), created.challengeId).run();
 
@@ -917,7 +917,7 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
       .bind(roomId).first()).toEqual({ total: 1 });
   });
 
-  it('ASYNC nunca vira VOID por estar MISSING, em nenhum dos dois lados, por mais que passe dos 7 s', async () => {
+  it('ASYNC nunca vira VOID por estar MISSING, em nenhum dos dois lados, por mais que passe dos 10 s', async () => {
     const { themeSlug, users } = await fixture(2);
     const first = userAt(users, 0);
     const second = userAt(users, 1);

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { discoveredCount, utcDayKey, type ChallengeRecord, type FriendPresence } from '@quiz-gomes/domain';
+import { discoveredCount, RECONNECT_GRACE_MS, utcDayKey, type ChallengeRecord, type FriendPresence } from '@quiz-gomes/domain';
 import { bootstrapAdminUids, hasAdminAccess, requireAdmin, requireUser } from './auth/authorize.js';
 import { ChallengeRoom } from './durable-objects/challenge-room.js';
 import { MatchRoom } from './durable-objects/match-room.js';
@@ -83,7 +83,7 @@ const challengeCreateSchema = z.object({
 
 // A mesma graça M8 usada pela sala: uma reserva que não conseguiu sequer abrir
 // uma metade não pode ocupar a dupla indefinidamente.
-const CHALLENGE_INITIAL_GRACE_MS = 7_000;
+const CHALLENGE_INITIAL_GRACE_MS = RECONNECT_GRACE_MS;
 
 function validationError(error: z.ZodError): ApiError {
   return new ApiError(400, 'VALIDATION_ERROR', 'Revise os campos enviados.', error.issues.map((issue) => ({
@@ -327,8 +327,16 @@ async function realtimeRoute(request: Request, env: Env, url: URL, context?: Exe
         });
       }
     }
+    // Cada busca tem seu próprio token: o socket de uma busca anterior
+    // (F5, cancelar e buscar de novo, rede caída) nunca libera nem promove
+    // a reserva desta.
+    const searchToken = crypto.randomUUID();
+    const releaseThisSearch = () => presence.fetch('https://presence.internal/transition', {
+      body: JSON.stringify({ from: 'matchmaking', fromToken: searchToken, resource: null, to: 'idle' }),
+      method: 'POST',
+    });
     const reserved = await presence.fetch('https://presence.internal/transition', {
-      body: JSON.stringify({ from: 'idle', resource, to: 'matchmaking' }),
+      body: JSON.stringify({ from: 'idle', resource, to: 'matchmaking', token: searchToken }),
       method: 'POST',
     });
     if (!reserved.ok) throw new ApiError(409, 'PLAYER_BUSY', 'Você já está em outra atividade.');
@@ -339,7 +347,9 @@ async function realtimeRoute(request: Request, env: Env, url: URL, context?: Exe
         headers: {
           Upgrade: 'websocket',
           'X-QG-Authenticated-Uid': uid,
+          ...(url.searchParams.get('hb') === '1' ? { 'X-QG-Heartbeat': '1' } : {}),
           'X-QG-Match-Resource': resource,
+          'X-QG-Search-Token': searchToken,
           'X-QG-Theme-Knowledge': String(ranking?.knowledge ?? 0),
         },
       }));
@@ -347,17 +357,11 @@ async function realtimeRoute(request: Request, env: Env, url: URL, context?: Exe
       // Sem isso, uma falha ao contatar a fila (DO indisponível, erro de
       // rede interno) deixaria a presença travada em 'matchmaking' para
       // sempre: nenhum outro caminho do sistema libera esse estado.
-      await presence.fetch('https://presence.internal/transition', {
-        body: JSON.stringify({ from: 'matchmaking', resource: null, to: 'idle' }),
-        method: 'POST',
-      });
+      await releaseThisSearch();
       throw queueError;
     }
     if (response.status !== 101) {
-      await presence.fetch('https://presence.internal/transition', {
-        body: JSON.stringify({ from: 'matchmaking', resource: null, to: 'idle' }),
-        method: 'POST',
-      });
+      await releaseThisSearch();
     } else if (context !== undefined && new SocialPushService(env, new SocialRepository(env.CORE_DB)).configured) {
       context.waitUntil(alertFriendsInQueue(env, {
         origin: url.origin, resource, themeId, uid, userId: userRow.id,
@@ -1392,7 +1396,7 @@ export async function reconcileChallengeLifecycle(
     let changed = false;
     if (challenge.kind === 'DIRECT') {
       // matchId === null é sempre PENDING_DIRECT — o convite ainda não foi
-      // aceito. A graça de 7 s é só para reconexão de sala já iniciada; um
+      // aceito. A graça de reconexão é só para reconexão de sala já iniciada; um
       // convite pendente só expira pelos 30 s de `expireStaleDirect` acima,
       // nunca aqui. Sem chamada ao DO nesse caso.
       if (challenge.matchId !== null) {
@@ -1429,7 +1433,7 @@ export async function reconcileChallengeLifecycle(
     } else if (challenge.status === 'FIRST_PLAYER_ACTIVE' || challenge.status === 'SECOND_PLAYER_ACTIVE') {
       // ASYNC nunca expira. `MISSING` só significa que este jogador ainda não
       // abriu a própria metade — normal e pode durar indefinidamente; nunca é
-      // um sinal de abandono. A graça de 7 s é exclusiva de reconexão de uma
+      // um sinal de abandono. A graça de reconexão é exclusiva de reconexão de uma
       // metade JÁ aberta (o próprio ChallengeRoom aplica isso via seu deadline
       // interno quando o socket cai); ela nunca serve de TTL de criação/aceite.
       // Chamar o DO aqui só recupera uma metade travada em FINALIZING/VOID —

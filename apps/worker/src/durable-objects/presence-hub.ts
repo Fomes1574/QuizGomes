@@ -5,10 +5,23 @@ export type PlayerActivity = 'idle' | 'matchmaking' | 'invite' | 'preparing' | '
 export interface ActivityState {
   activity: PlayerActivity;
   resource: string | null;
+  /**
+   * Identifica a busca que reservou 'matchmaking'. Um socket antigo da fila
+   * (F5, cancelar e buscar de novo, rede caída) só consegue liberar ou
+   * promover a própria reserva, nunca a de uma busca mais nova.
+   */
+  token?: string | null;
   updatedAt: number;
 }
 
-const IDLE: ActivityState = { activity: 'idle', resource: null, updatedAt: 0 };
+const IDLE: ActivityState = { activity: 'idle', resource: null, token: null, updatedAt: 0 };
+
+/** O token só circula dentro do Worker; nunca vai para um socket de cliente. */
+function publicState(state: ActivityState): ActivityState {
+  const copy = { ...state };
+  delete copy.token;
+  return copy;
+}
 
 export class PresenceHub {
   constructor(
@@ -25,18 +38,23 @@ export class PresenceHub {
       const input = await request.json<{
         from: PlayerActivity | PlayerActivity[];
         fromResource?: string | null;
+        fromToken?: string | null;
         resource: string | null;
         to: PlayerActivity;
+        token?: string | null;
       }>();
       const state = await this.state();
       const allowedFrom = Array.isArray(input.from) ? input.from : [input.from];
       if (!allowedFrom.includes(state.activity) ||
-        (input.fromResource !== undefined && input.fromResource !== state.resource)) {
-        return Response.json({ error: 'PLAYER_BUSY', state }, { status: 409 });
+        (input.fromResource !== undefined && input.fromResource !== state.resource) ||
+        (input.fromToken !== undefined && input.fromToken !== (state.token ?? null))) {
+        return Response.json({ error: 'PLAYER_BUSY', state: publicState(state) }, { status: 409 });
       }
-      const next: ActivityState = { activity: input.to, resource: input.resource, updatedAt: Date.now() };
+      const next: ActivityState = {
+        activity: input.to, resource: input.resource, token: input.token ?? null, updatedAt: Date.now(),
+      };
       await this.ctx.storage.put('activity', next);
-      for (const socket of this.ctx.getWebSockets()) socket.send(JSON.stringify({ type: 'PRESENCE', ...next }));
+      for (const socket of this.ctx.getWebSockets()) socket.send(JSON.stringify({ type: 'PRESENCE', ...publicState(next) }));
       if (state.activity !== next.activity || (next.activity === 'matchmaking' && state.resource !== next.resource)) {
         this.ctx.waitUntil(this.env.SOCIAL_REALTIME_HUB
           .get(this.env.SOCIAL_REALTIME_HUB.idFromName('global'))
@@ -47,22 +65,22 @@ export class PresenceHub {
             console.error(JSON.stringify({ code: 'SOCIAL_PRESENCE_UNAVAILABLE', event: 'friend_presence_failed' }));
           }));
       }
-      return Response.json(next);
+      return Response.json(publicState(next));
     }
     if (request.method === 'POST' && url.pathname === '/claim') {
       const input = await request.json<{ activities: PlayerActivity[]; resource: string }>();
       const state = await this.state();
       if (!input.activities.includes(state.activity) || state.resource !== input.resource) {
-        return Response.json({ error: 'PLAYER_BUSY', state }, { status: 409 });
+        return Response.json({ error: 'PLAYER_BUSY', state: publicState(state) }, { status: 409 });
       }
-      return Response.json(state);
+      return Response.json(publicState(state));
     }
     if (request.headers.get('Upgrade')?.toLowerCase() === 'websocket') {
       const pair = new WebSocketPair();
       const [client, server] = Object.values(pair);
       if (client === undefined || server === undefined) return new Response('WebSocket indisponível', { status: 500 });
       this.ctx.acceptWebSocket(server);
-      server.send(JSON.stringify({ type: 'PRESENCE', ...await this.state() }));
+      server.send(JSON.stringify({ type: 'PRESENCE', ...publicState(await this.state()) }));
       return new Response(null, { status: 101, webSocket: client });
     }
     return Response.json({ error: 'not_found' }, { status: 404 });
