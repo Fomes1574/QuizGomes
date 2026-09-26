@@ -81,6 +81,14 @@ describe('desafiar amigo a partir do tema', () => {
     expect(await screen.findByText('Ana está na fila deste tema agora.')).toBeInTheDocument();
   });
 
+  it('vindo de "Desafiar" na Social, abre o desafio já com o amigo escolhido e consome a intenção', async () => {
+    sessionStorage.setItem('quiz-gomes:challenge-target', JSON.stringify({ displayName: 'Ana', publicId: '#QGANA1', savedAt: Date.now() }));
+    render(page());
+    expect(await screen.findByRole('heading', { name: 'Desafiar amigo' })).toBeInTheDocument();
+    expect(screen.getByText('Ana')).toBeInTheDocument();
+    expect(sessionStorage.getItem('quiz-gomes:challenge-target')).toBeNull();
+  });
+
   it('só oferece "Desafiar amigo" na Partida normal', async () => {
     render(page());
     expect(await screen.findByRole('button', { name: 'Desafiar amigo' })).toBeInTheDocument();

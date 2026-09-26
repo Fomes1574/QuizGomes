@@ -1529,3 +1529,72 @@ input, select, textarea { font-size: max(16px, 1em); }
 /* As cartas orbitam além do círculo: reserva o espaço delas acima e abaixo. */
 .matchmaking-radar { margin: 18px auto 20px; }
 .matchmaking-radar__seat { transform: rotate(var(--seat-angle)) translateX(calc(var(--radar) * .43)) rotate(calc(var(--seat-angle) * -1)); }
+
+/* ==========================================================================
+   Social v2: amigo com ação principal (Desafiar) e menu para o resto,
+   anel de presença no avatar, pedidos em destaque, enviados compactos.
+   ========================================================================== */
+.social-friend { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; min-height: 0; padding: 13px 14px; animation: social-card-in 380ms var(--ease-out) calc(var(--card-index, 0) * 45ms) both; }
+.social-friend .social-friend__actions { display: flex; align-items: center; gap: 6px; padding: 0; }
+.social-friend__challenge.button { min-height: 40px; gap: 6px; padding: 0 14px; border-radius: 13px; font-size: .84rem; }
+.social-friend__challenge svg { width: 16px; height: 16px; }
+.social-friend[data-presence='ONLINE'] { border-color: color-mix(in srgb, var(--presence-online) 40%, var(--border)); }
+.social-friend[data-presence='OFFLINE'] .social-person__portrait { filter: saturate(.55); opacity: .82; }
+/* Anel de presença em volta do avatar, além da bolinha. */
+.social-friend .social-person__portrait::before { position: absolute; z-index: 0; inset: -4px; border: 2.5px solid transparent; border-radius: 50%; content: ''; }
+.social-friend[data-presence='ONLINE'] .social-person__portrait::before { border-color: var(--presence-online); animation: presence-ring 2.4s ease-out infinite; }
+.social-friend[data-presence='MATCHMAKING'] .social-person__portrait::before { border-color: var(--presence-online); border-style: dashed; animation: presence-spin 6s linear infinite; }
+.social-friend[data-presence='IN_MATCH'] .social-person__portrait::before, .social-friend[data-presence='RECONNECTING'] .social-person__portrait::before { border-color: var(--presence-busy); }
+@keyframes presence-ring { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--presence-online) 45%, transparent); } 70%, 100% { box-shadow: 0 0 0 8px transparent; } }
+@keyframes presence-spin { to { transform: rotate(360deg); } }
+@keyframes social-card-in { from { opacity: 0; transform: translateY(10px) scale(.985); } }
+
+.friend-menu { position: relative; }
+.friend-menu__trigger { display: grid; width: 40px; height: 40px; place-items: center; border: 1px solid var(--border); border-radius: 12px; color: var(--text-secondary); cursor: pointer; background: var(--surface-soft); font: 800 1.2rem/1 var(--font-display); transition: color 150ms ease, background 150ms ease, transform 90ms ease; }
+.friend-menu__trigger:hover:not(:disabled), .friend-menu__trigger[aria-expanded='true'] { color: var(--text-primary); background: var(--surface-raised); }
+.friend-menu__trigger:active:not(:disabled) { transform: scale(.94); }
+.friend-menu__trigger:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.friend-menu__list { position: absolute; z-index: 20; top: calc(100% + 6px); right: 0; display: grid; min-width: 190px; padding: 6px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface-raised); box-shadow: var(--shadow-lg); transform-origin: top right; animation: menu-pop 180ms var(--ease-out) both; }
+.friend-menu__list button { display: flex; min-height: 42px; align-items: center; gap: 10px; padding: 0 12px; border-radius: 11px; color: var(--text-primary); cursor: pointer; background: transparent; font-size: .86rem; font-weight: 650; text-align: left; }
+.friend-menu__list button:hover, .friend-menu__list button:focus-visible { background: var(--surface-soft); outline: none; }
+.friend-menu__list button svg { width: 16px; height: 16px; color: var(--text-secondary); }
+.friend-menu__list .friend-menu__danger { color: var(--incorrect); }
+.friend-menu__list .friend-menu__danger svg { color: currentColor; }
+@keyframes menu-pop { from { opacity: 0; transform: scale(.92) translateY(-4px); } }
+
+.social-friends__summary { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.social-chip { display: inline-flex; height: 26px; align-items: center; gap: 6px; padding: 0 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface-soft); color: var(--text-secondary); font-size: .72rem; font-weight: 700; }
+.social-section--quiet .section-heading { margin-bottom: 0; }
+.social-section--quiet .social-section__empty { margin: 0; font-size: .82rem; }
+.social-section--incoming .social-person { border-color: color-mix(in srgb, var(--brand) 35%, var(--border)); background: color-mix(in srgb, var(--brand) 5%, var(--surface)); }
+
+.social-outgoing__list { display: grid; gap: 6px; }
+.social-outgoing__item { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 8px 8px 8px 10px; border: 1px dashed var(--border-strong); border-radius: 14px; background: var(--surface); animation: social-card-in 320ms var(--ease-out) both; }
+.social-outgoing__copy { display: grid; gap: 2px; min-width: 0; }
+.social-outgoing__copy strong { overflow: hidden; font-size: .86rem; text-overflow: ellipsis; white-space: nowrap; }
+.social-outgoing__copy small { display: inline-flex; align-items: center; gap: 6px; color: var(--text-secondary); font-size: .72rem; }
+.social-outgoing__pending { width: 6px; height: 6px; border-radius: 50%; background: var(--warning); animation: live-pulse 1.8s ease-out infinite; }
+.social-outgoing__cancel.button { min-height: 34px; padding: 0 12px; font-size: .78rem; }
+
+.challenge-target-banner { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; padding: 12px 14px; border: 1.5px solid color-mix(in srgb, var(--brand) 45%, var(--border)); border-radius: 16px; background: color-mix(in srgb, var(--brand) 8%, var(--surface)); font-size: .9rem; animation: social-card-in 320ms var(--ease-out) both; }
+.challenge-target-banner svg { width: 18px; height: 18px; flex: none; color: var(--brand); }
+.challenge-target-banner span { flex: 1; min-width: 0; }
+.challenge-target-banner button { min-height: 34px; padding: 0 10px; border-radius: 10px; color: var(--text-secondary); cursor: pointer; background: transparent; font-weight: 700; }
+.challenge-target-banner button:hover { background: var(--surface-soft); }
+
+@media (max-width: 480px) {
+  .social-friend { padding: 12px; }
+  .social-friend .social-friend__actions { padding-left: 0; }
+  .social-friend__challenge.button { padding: 0 11px; }
+}
+@media (max-width: 330px) {
+  .social-friend { grid-template-columns: 1fr; }
+  .social-friend .social-friend__actions { justify-content: flex-end; }
+}
+/* Card com o menu aberto fica acima dos vizinhos (a animação de entrada cria contexto de empilhamento). */
+.social-friend:has(.friend-menu__list) { z-index: 6; }
+.social-friends__total { white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) {
+  .social-friend, .social-outgoing__item, .friend-menu__list, .challenge-target-banner, .social-outgoing__pending,
+  .social-friend .social-person__portrait::before { animation: none !important; }
+}

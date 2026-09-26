@@ -12,6 +12,7 @@ import { apiRequest } from '../lib/api.js';
 import { feedback, prefersReducedMotion } from '../lib/feedback.js';
 import type { Category, ThemeSummary } from '../lib/models.js';
 import { pickSurpriseTheme, totalWaiting } from '../lib/queue-activity.js';
+import { clearChallengeTarget, readChallengeTarget, type ChallengeTarget } from '../lib/challenge-target.js';
 
 const HEADLINE_INTERVAL_MS = 2_400;
 const SHUFFLE_MS = 520;
@@ -49,6 +50,7 @@ export function ThemesPage() {
   const [reload, setReload] = useState(0);
   const [shuffling, setShuffling] = useState(false);
   const queueActivity = useQueueActivity();
+  const [challengeTarget, setChallengeTarget] = useState<ChallengeTarget | null>(readChallengeTarget);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -146,6 +148,14 @@ export function ThemesPage() {
           </div>
         )}
       </div>
+
+      {challengeTarget !== null && (
+        <div className="challenge-target-banner" role="status">
+          <Icon name="bolt" />
+          <span>Escolha o tema do desafio contra <strong>{challengeTarget.displayName}</strong></span>
+          <button onClick={() => { clearChallengeTarget(); setChallengeTarget(null); }} type="button">Cancelar</button>
+        </div>
+      )}
 
       <div className="themes-toolbar">
         <label className="search-field">

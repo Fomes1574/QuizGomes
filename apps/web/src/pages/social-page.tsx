@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Avatar } from '../components/avatar.js';
 import { AvatarFrame } from '../components/avatar-frame.js';
@@ -10,6 +10,7 @@ import { useAuth } from '../features/auth-context.js';
 import { useChallenges } from '../features/challenge-context.js';
 import { useFriendPresence, useSocial } from '../features/social-context.js';
 import { apiRequest } from '../lib/api.js';
+import { saveChallengeTarget } from '../lib/challenge-target.js';
 import { challengeCardCopy, type ChallengeView } from '../lib/challenges.js';
 import type { FriendPresence, SocialCandidate, SocialFriend, SocialSnapshot, SocialUser } from '../lib/social.js';
 
@@ -136,16 +137,83 @@ function SocialIdentity({ presence, user }: { presence?: FriendPresence; user: S
   );
 }
 
-const FriendCard = memo(function FriendCard({
+/**
+ * Ações raras e destrutivas ficam num menu: o card mostra só o que a pessoa
+ * quer fazer quase sempre (desafiar).
+ */
+function FriendMenu({
   disabled,
   onBlock,
+  onRemove,
+  onToggleMute,
+  user,
+}: {
+  disabled: boolean;
+  onBlock: (user: SocialUser) => void;
+  onRemove: (user: SocialUser) => void;
+  onToggleMute: (user: SocialFriend) => void;
+  user: SocialFriend;
+}) {
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const onPointer = (event: PointerEvent) => {
+      if (event.target instanceof Node && root.current?.contains(event.target) !== true) setOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setOpen(false); };
+    document.addEventListener('pointerdown', onPointer);
+    document.addEventListener('keydown', onKey);
+    root.current?.querySelector<HTMLButtonElement>('.friend-menu__list button')?.focus();
+    return () => {
+      document.removeEventListener('pointerdown', onPointer);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+  const run = (action: () => void) => { setOpen(false); action(); };
+  return (
+    <div className="friend-menu" ref={root}>
+      <button
+        aria-expanded={open}
+        aria-haspopup="true"
+        aria-label={`Mais opções para ${user.displayName}`}
+        className="friend-menu__trigger"
+        disabled={disabled}
+        onClick={() => setOpen((current) => !current)}
+        type="button"
+      ><span aria-hidden="true">⋯</span></button>
+      {open && (
+        <div className="friend-menu__list">
+          <button aria-pressed={user.muted} onClick={() => run(() => onToggleMute(user))} type="button">
+            <Icon name="sound" />{user.muted ? 'Reativar avisos' : 'Silenciar'}
+          </button>
+          <button onClick={() => run(() => onRemove(user))} type="button"><Icon name="close" />Remover amigo</button>
+          <button
+            aria-label={`Bloquear ${user.displayName}`}
+            className="friend-menu__danger"
+            onClick={() => run(() => onBlock(user))}
+            type="button"
+          ><Icon name="flag" />Bloquear</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const FriendCard = memo(function FriendCard({
+  disabled,
+  index,
+  onBlock,
+  onChallenge,
   onRemove,
   onToggleMute,
   presence,
   user,
 }: {
   disabled: boolean;
+  index: number;
   onBlock: (user: SocialUser) => void;
+  onChallenge: (user: SocialFriend) => void;
   onRemove: (user: SocialUser) => void;
   onToggleMute: (user: SocialFriend) => void;
   presence: FriendPresence;
@@ -156,29 +224,17 @@ const FriendCard = memo(function FriendCard({
       className="social-person social-friend"
       data-friend-id={user.publicId}
       data-presence={presence}
+      style={{ '--card-index': Math.min(index, 12) } as CSSProperties}
     >
       <SocialIdentity presence={presence} user={user} />
-      <div className="social-person__actions social-friend__actions">
-        <button
-          aria-pressed={user.muted}
-          className="social-person__quiet-action"
+      <div className="social-friend__actions">
+        <Button
+          className="social-friend__challenge"
           disabled={disabled}
-          onClick={() => onToggleMute(user)}
-          type="button"
-        >{user.muted ? 'Reativar avisos' : 'Silenciar'}</button>
-        <button
-          className="social-person__quiet-action"
-          disabled={disabled}
-          onClick={() => onRemove(user)}
-          type="button"
-        >Remover amigo</button>
-        <button
-          aria-label={`Bloquear ${user.displayName}`}
-          className="social-person__quiet-action"
-          disabled={disabled}
-          onClick={() => onBlock(user)}
-          type="button"
-        >Bloquear</button>
+          onClick={() => onChallenge(user)}
+          variant={presence === 'ONLINE' ? 'primary' : 'secondary'}
+        ><Icon name="bolt" />Desafiar</Button>
+        <FriendMenu disabled={disabled} onBlock={onBlock} onRemove={onRemove} onToggleMute={onToggleMute} user={user} />
       </div>
     </article>
   );
@@ -225,6 +281,7 @@ function FriendsSection({
   friendLimit,
   friends,
   onBlock,
+  onChallenge,
   onRemove,
   onToggleMute,
 }: {
@@ -232,6 +289,7 @@ function FriendsSection({
   friendLimit: number;
   friends: SocialFriend[];
   onBlock: (user: SocialUser) => void;
+  onChallenge: (user: SocialFriend) => void;
   onRemove: (user: SocialUser) => void;
   onToggleMute: (user: SocialFriend) => void;
 }) {
@@ -286,8 +344,8 @@ function FriendsSection({
         <div><h2>Amigos</h2><span className="social-friends__total">{friends.length} / {friendLimit}</span></div>
         {friends.length > 0 ? (
           <div className="social-friends__summary">
-            <span><i aria-hidden="true" data-presence="ONLINE" />{organizedFriends.available} disponíveis</span>
-            <span><i aria-hidden="true" data-presence="IN_MATCH" />{organizedFriends.busy} em partida</span>
+            <span className="social-chip"><i aria-hidden="true" data-presence="ONLINE" />{organizedFriends.available} {organizedFriends.available === 1 ? 'disponível' : 'disponíveis'}</span>
+            <span className="social-chip"><i aria-hidden="true" data-presence="IN_MATCH" />{organizedFriends.busy} em partida</span>
           </div>
         ) : null}
       </div>
@@ -296,15 +354,17 @@ function FriendsSection({
       ) : null}
       {organizedFriends.rows.length > 0 ? (
         <div className="social-friends__list" ref={friendList}>
-          {organizedFriends.rows.map((row) => row.kind === 'heading' ? (
+          {organizedFriends.rows.map((row, index) => row.kind === 'heading' ? (
             <h3 className="social-friends__group" key={row.key}>
               {row.label}<span>{row.total}</span>
             </h3>
           ) : (
             <FriendCard
               disabled={disabled}
+              index={index}
               key={row.key}
               onBlock={onBlock}
+              onChallenge={onChallenge}
               onRemove={onRemove}
               onToggleMute={onToggleMute}
               presence={row.presence}
@@ -599,7 +659,7 @@ export function SocialPage() {
 
           {loading ? <LoadingState label="Carregando amizades" /> : (
             <>
-              <section aria-label="Pedidos recebidos" className="social-section" id="pedidos">
+              <section aria-label="Pedidos recebidos" className={`social-section${snapshot.incoming.length === 0 ? ' social-section--quiet' : ' social-section--incoming'}`} id="pedidos">
                 <div className="section-heading"><h2>Pedidos</h2><span>{snapshot.incoming.length}</span></div>
                 {snapshot.incoming.length === 0 ? <p className="social-section__empty">Nenhuma solicitação recebida.</p> : null}
                 {snapshot.incoming.map((item) => (
@@ -623,26 +683,6 @@ export function SocialPage() {
                 ) : null}
               </section>
 
-              {snapshot.outgoing.length > 0 ? (
-                <section aria-label="Pedidos enviados" className="social-section">
-                  <div className="section-heading"><h2>Enviados</h2><span>{snapshot.outgoing.length}</span></div>
-                  {snapshot.outgoing.map((item) => (
-                    <article className="social-person" key={item.id}>
-                      <SocialIdentity user={item.user} />
-                      <small className="social-person__message">Aguardando resposta</small>
-                      <button className="social-person__quiet-action" disabled={busy !== null} onClick={() => void mutate(
-                        item.id, `/api/social/requests/${item.id}/cancel`,
-                      )} type="button">Cancelar solicitação</button>
-                    </article>
-                  ))}
-                  {snapshot.outgoingNextCursor !== null ? (
-                    <Button disabled={loadingMoreRequests !== null} onClick={() => void loadMoreRequests('outgoing')} type="button" variant="ghost">
-                      {loadingMoreRequests === 'outgoing' ? 'Carregando…' : 'Carregar mais'}
-                    </Button>
-                  ) : null}
-                </section>
-              ) : null}
-
               <ChallengesSection
                 busy={busy !== null}
                 challenges={challenges}
@@ -654,12 +694,47 @@ export function SocialPage() {
 
               <FriendsSection
                 disabled={busy !== null}
+                onChallenge={(friend) => {
+                  saveChallengeTarget({ displayName: friend.displayName, publicId: friend.publicId });
+                  void navigate('/');
+                }}
                 friendLimit={snapshot.friendLimit}
                 friends={snapshot.friends}
                 onBlock={setBlocking}
                 onRemove={removeFriend}
                 onToggleMute={toggleMute}
               />
+              {snapshot.outgoing.length > 0 ? (
+                <section aria-label="Pedidos enviados" className="social-section social-outgoing">
+                  <div className="section-heading"><h2>Enviados</h2><span>{snapshot.outgoing.length}</span></div>
+                  <div className="social-outgoing__list">
+                    {snapshot.outgoing.map((item) => (
+                      <article className="social-outgoing__item" key={item.id}>
+                        <AvatarFrame frameId={item.user.frameId}>
+                          <Avatar customUrl={item.user.customAvatarUrl} googleUrl={item.user.photoUrl} name={item.user.displayName} size="small" />
+                        </AvatarFrame>
+                        <span className="social-outgoing__copy">
+                          <strong>{item.user.displayName}</strong>
+                          <small><span aria-hidden="true" className="social-outgoing__pending" />Aguardando resposta</small>
+                        </span>
+                        <Button
+                          aria-label={`Cancelar solicitação para ${item.user.displayName}`}
+                          className="social-outgoing__cancel"
+                          disabled={busy !== null}
+                          onClick={() => void mutate(item.id, `/api/social/requests/${item.id}/cancel`)}
+                          type="button"
+                          variant="ghost"
+                        >Cancelar</Button>
+                      </article>
+                    ))}
+                  </div>
+                  {snapshot.outgoingNextCursor !== null ? (
+                    <Button disabled={loadingMoreRequests !== null} onClick={() => void loadMoreRequests('outgoing')} type="button" variant="ghost">
+                      {loadingMoreRequests === 'outgoing' ? 'Carregando…' : 'Carregar mais'}
+                    </Button>
+                  ) : null}
+                </section>
+              ) : null}
             </>
           )}
         </>

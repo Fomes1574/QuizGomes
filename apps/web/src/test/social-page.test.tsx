@@ -106,7 +106,11 @@ describe('Social Foundation — interface web', () => {
     expect(incoming.querySelector('[data-frame-id="frame-social-real"]')).toBeInTheDocument();
     expect(screen.getByRole('region', { name: 'Amigos' })).toHaveTextContent('Bia Amiga');
     expect(screen.getByLabelText('Bia Amiga está offline')).toBeInTheDocument();
-    expect(screen.queryByText(/assíncronas|desafiar/i)).not.toBeInTheDocument();
+    // Desafiar é a ação principal do card; nada de "assíncronas" como jargão.
+    expect(within(screen.getByRole('region', { name: 'Amigos' })).getByRole('button', { name: 'Desafiar' })).toBeInTheDocument();
+    expect(screen.queryByText(/assíncronas/i)).not.toBeInTheDocument();
+    // Ações destrutivas ficam no menu, fora da vista até ser aberto.
+    expect(screen.queryByRole('button', { name: 'Remover amigo' })).not.toBeInTheDocument();
   });
 
   it('busca no backend com nome/ID público sem baixar toda a lista de usuários', async () => {
@@ -139,9 +143,25 @@ describe('Social Foundation — interface web', () => {
     ));
   });
 
+  it('Desafiar guarda o amigo escolhido para o tema abrir o desafio já com ele; o menu fecha com Esc', async () => {
+    sessionStorage.clear();
+    render(socialPage());
+    await screen.findByText('Bia Amiga');
+    const friends = screen.getByRole('region', { name: 'Amigos' });
+    fireEvent.click(within(friends).getByRole('button', { name: 'Mais opções para Bia Amiga' }));
+    expect(within(friends).getByRole('button', { name: 'Silenciar' })).toBeInTheDocument();
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(within(friends).queryByRole('button', { name: 'Silenciar' })).not.toBeInTheDocument();
+    fireEvent.click(within(friends).getByRole('button', { name: 'Desafiar' }));
+    expect(JSON.parse(sessionStorage.getItem('quiz-gomes:challenge-target') ?? '{}')).toMatchObject({
+      displayName: 'Bia Amiga', publicId: '#QGBIA333',
+    });
+  });
+
   it('confirma bloqueio com dialog acessível e envia apenas o ID público do alvo', async () => {
     render(socialPage());
     await screen.findByText('Bia Amiga');
+    fireEvent.click(screen.getByRole('button', { name: 'Mais opções para Bia Amiga' }));
     fireEvent.click(screen.getByRole('button', { name: 'Bloquear Bia Amiga' }));
     const dialog = screen.getByRole('dialog', { name: 'Bloquear Bia Amiga?' });
     expect(dialog).toHaveTextContent('futuras partidas');
@@ -316,6 +336,7 @@ describe('Social Foundation — interface web', () => {
         expect(status).toBeInTheDocument();
         expect(friends.querySelector('img')).toHaveAttribute('src', '/api/avatars/social-presence/v3.webp');
         expect(friends.querySelector('[data-frame-id="frame-presence-premium"]')).toBeInTheDocument();
+        fireEvent.click(within(friends).getByRole('button', { name: 'Mais opções para Bia Amiga' }));
         expect(within(friends).getByRole('button', { name: 'Remover amigo' })).toBeEnabled();
         expect(within(friends).getByRole('button', { name: 'Bloquear Bia Amiga' })).toBeEnabled();
         expect(friends.querySelector('.friend-presence-dot')).toHaveAttribute('data-presence', 'IN_MATCH');

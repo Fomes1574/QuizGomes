@@ -20,6 +20,7 @@ import { consumePlayAuthIntent, savePlayAuthIntent } from '../lib/auth-intent.js
 import type { ThemeDetailResponse, ThemeSummary } from '../lib/models.js';
 import { busiestOtherTheme, queueCounts, waitingLabel } from '../lib/queue-activity.js';
 import { queueInviteMode, queueInviteUrl, shareQueueInvite } from '../lib/queue-invite.js';
+import { clearChallengeTarget, readChallengeTarget, type ChallengeTarget } from '../lib/challenge-target.js';
 import type { SocialFriend, SocialSnapshot } from '../lib/social.js';
 
 export function ThemeDetailPage() {
@@ -41,6 +42,8 @@ export function ThemeDetailPage() {
   const [reload, setReload] = useState(0);
   const [friends, setFriends] = useState<SocialFriend[]>([]);
   const [challengePickerOpen, setChallengePickerOpen] = useState(false);
+  // Veio de "Desafiar" na Social: o seletor abre já com esse amigo.
+  const [challengeTarget, setChallengeTarget] = useState<ChallengeTarget | null>(null);
   const consumedIntent = useRef(false);
   const matchmaking = useMatchmaking();
   const startMatchmaking = matchmaking.start;
@@ -62,6 +65,19 @@ export function ThemeDetailPage() {
       .then((snapshot) => setFriends(snapshot.friends))
       .catch(() => setFriends([]));
   }, [getToken, profile]);
+
+  useEffect(() => {
+    if (data === null || friends.length === 0 || challengeTarget !== null) return;
+    const target = readChallengeTarget();
+    if (target === null || !friends.some((friend) => friend.publicId === target.publicId)) return;
+    clearChallengeTarget();
+    if (data.theme.activeQuestionCount < questionsForMode('CASUAL')) return;
+    queueMicrotask(() => {
+      setChallengeTarget(target);
+      setMode('CASUAL');
+      setChallengePickerOpen(true);
+    });
+  }, [challengeTarget, data, friends]);
 
   // A intenção só pode ser retomada na mesma aba, uma vez, e é revalidada pelo
   // ticket/servidor dentro de `start`. Não há callback do Firebase que abra uma
@@ -210,7 +226,7 @@ export function ThemeDetailPage() {
                 {mode === 'CASUAL' && (
                   <Button
                     disabled={!canPlay || !realtimeEnabled || friendChallenge.status !== 'idle'}
-                    onClick={() => setChallengePickerOpen(true)}
+                    onClick={() => { setChallengeTarget(null); setChallengePickerOpen(true); }}
                     variant="secondary"
                   >Desafiar amigo</Button>
                 )}
@@ -256,7 +272,7 @@ export function ThemeDetailPage() {
       {challengePickerOpen && mode === 'CASUAL' && (
         <FriendChallengeDialog
           busy={friendChallenge.status !== 'idle'}
-          friends={friends}
+          friends={challengeTarget === null ? friends : friends.filter((friend) => friend.publicId === challengeTarget.publicId)}
           onAsync={(friend) => {
             setChallengePickerOpen(false);
             void friendChallenge.challenge({
