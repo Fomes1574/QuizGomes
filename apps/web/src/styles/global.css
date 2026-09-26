@@ -1378,3 +1378,89 @@ input, select, textarea { font-size: max(16px, 1em); }
 .theme-suggestions__vote:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
 .theme-suggestions__vote svg { width: 16px; height: 16px; }
 @media (prefers-reduced-motion: reduce) { .theme-suggestions__bar { transition: none; } }
+
+/* ==========================================================================
+   Partida v2: nada cortado, um único relógio no topo, respostas no alcance
+   do polegar. Vem por último de propósito para valer sobre as regras antigas.
+   ========================================================================== */
+.match-screen { grid-template-rows: auto auto minmax(0, 1fr); }
+.match-scoreboard { gap: 10px; padding-bottom: 8px; }
+.match-scoreboard__copy small { max-width: 100%; }
+.match-scoreboard__center { display: grid; justify-items: center; gap: 5px; }
+.match-scoreboard__center .timer-ring { width: 58px; height: 58px; margin: 0; }
+.match-scoreboard__center .timer-ring strong { font-size: 1.3rem; }
+.timer-ring--idle { border-radius: 50%; background: var(--surface); box-shadow: inset 0 0 0 5px var(--border); }
+.round-counter { gap: 4px; font-size: .66rem; letter-spacing: .02em; }
+.round-counter__label { font-variant-numeric: tabular-nums; }
+.round-steps { gap: 3px; }
+.round-steps i { width: 8px; height: 4px; }
+.round-steps i[data-step='current'] { width: 16px; }
+
+/* O relógio embaixo virou um trilho fino sob o placar: mesma deadline, sem número duplicado. */
+.match-timer { height: 5px; margin: 0 max(16px, env(safe-area-inset-right)) 0 max(16px, env(safe-area-inset-left)); border: 0; border-radius: 999px; background: color-mix(in srgb, var(--border) 80%, transparent); }
+.match-timer > strong { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.match-timer__bar { border-radius: inherit; }
+.match-timer--urgent { background: var(--incorrect-soft); }
+
+.question-stage {
+  width: min(100%, 980px);
+  align-content: stretch;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 14px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 14px 16px calc(58px + env(safe-area-inset-bottom));
+  scrollbar-width: none;
+}
+.question-stage::-webkit-scrollbar { display: none; }
+.question-stage--media { grid-template-rows: auto minmax(0, 1fr) auto; }
+.question-stage h1 { align-self: center; line-height: 1.22; text-wrap: balance; }
+.question-stage h1[data-length='short'] { font-size: clamp(1.45rem, 6.4vw, 2.7rem); }
+.question-stage h1[data-length='medium'] { font-size: clamp(1.22rem, 5.2vw, 2.3rem); }
+.question-stage h1[data-length='long'] { font-size: clamp(1.04rem, 4.4vw, 1.9rem); letter-spacing: -.02em; }
+.question-media { height: clamp(96px, 22vh, 220px); }
+
+.answer-grid { align-self: end; }
+.answer-option > strong { display: block; overflow: visible; font-size: clamp(.9rem, 3.8vw, 1.05rem); line-height: 1.28; -webkit-line-clamp: unset; hyphens: auto; }
+.answer-grid--grid .answer-option { min-height: 76px; }
+.answer-grid--list { grid-template-columns: 1fr; gap: 8px; }
+.answer-grid--list .answer-option { min-height: 56px; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 12px; padding: 10px 12px; border-radius: 16px; box-shadow: 0 4px 0 color-mix(in srgb, var(--option-color) 26%, var(--border)); }
+.answer-grid--list .answer-option__marker { width: 34px; height: 34px; border-radius: 11px; }
+.answer-grid--list .answer-option--with-avatars, .answer-grid--list .answer-option--dual-avatar { padding-right: 12px; }
+.answer-grid--list .answer-option__avatars { position: static; }
+.answer-grid--list .answer-option { animation-name: option-in-row; }
+@keyframes option-in-row { from { opacity: 0; transform: translateX(-14px); } to { opacity: 1; transform: none; } }
+
+/* Denunciar sai de cima do avatar: vira uma pílula discreta no rodapé. */
+.report-trigger { top: auto; bottom: max(12px, env(safe-area-inset-bottom)); left: 50%; width: auto; height: 34px; grid-auto-flow: column; gap: 6px; padding: 0 14px; border-color: var(--border); border-radius: 999px; color: var(--text-secondary); background: color-mix(in srgb, var(--surface) 88%, transparent); font-size: .76rem; font-weight: 700; transform: translateX(-50%); }
+.report-trigger:hover, .report-trigger:focus-visible { color: var(--text-primary); background: var(--surface); }
+.report-trigger svg { width: 14px; height: 14px; }
+
+@media (min-width: 1024px) {
+  .match-scoreboard__center .timer-ring { width: 68px; height: 68px; }
+  .match-scoreboard__center .timer-ring strong { font-size: 1.5rem; }
+  .match-timer { height: 6px; }
+  .question-stage { width: min(100%, 1180px); gap: 22px; padding: 22px clamp(34px, 5vw, 72px) 76px; }
+  .question-stage h1[data-length='short'] { font-size: clamp(2.2rem, 3.4vw, 3.6rem); }
+  .question-stage h1[data-length='medium'] { font-size: clamp(1.9rem, 2.8vw, 3rem); }
+  .question-stage h1[data-length='long'] { font-size: clamp(1.6rem, 2.3vw, 2.5rem); }
+  .answer-grid--list { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+  .answer-grid--list .answer-option { min-height: 84px; padding: 16px 18px; }
+  .question-media { height: clamp(160px, 26vh, 300px); }
+}
+
+@media (max-height: 620px) and (orientation: landscape) {
+  .question-stage { grid-template-columns: minmax(180px, .9fr) minmax(360px, 1.3fr); grid-template-rows: auto minmax(0, 1fr); padding-bottom: 52px; }
+  .question-stage h1 { grid-column: 1; }
+  .question-media { grid-column: 1; height: clamp(80px, 24vh, 160px); }
+  .answer-grid { grid-column: 2; grid-row: 1 / span 2; align-self: center; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .answer-grid--list .answer-option { animation: none !important; }
+}
+/* Nome longo do adversário encolhe com reticências em vez de invadir o relógio. */
+.opponent-chip, .player-chip { max-width: 100%; justify-self: stretch; }
+.player-chip { justify-content: flex-end; }
+.match-scoreboard__copy { flex: 0 1 auto; }

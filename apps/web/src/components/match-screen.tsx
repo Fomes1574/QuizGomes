@@ -42,6 +42,21 @@ function QuestionMedia({ url }: { url: string }) {
   );
 }
 
+/**
+ * Nada é cortado: alternativas longas trocam a grade 2×2 por uma lista de
+ * linhas inteiras, e enunciados longos (ou com foto) usam uma fonte menor.
+ */
+export function questionLayout(question: { imageUrl?: string | null; options: readonly string[]; prompt: string }): {
+  answerLayout: 'grid' | 'list';
+  promptLength: 'long' | 'medium' | 'short';
+} {
+  const longest = Math.max(...question.options.map((option) => option.trim().length));
+  const hasImage = typeof question.imageUrl === 'string' && question.imageUrl !== '';
+  const answerLayout = longest > (hasImage ? 16 : 22) ? 'list' : 'grid';
+  const size = question.prompt.trim().length + (hasImage ? 40 : 0) + (answerLayout === 'list' ? 20 : 0);
+  return { answerLayout, promptLength: size > 120 ? 'long' : size > 70 ? 'medium' : 'short' };
+}
+
 interface MatchParticipantView {
   customAvatarUrl?: string | null;
   frameId?: string | null;
@@ -308,6 +323,8 @@ export function MatchScreen({
     return () => window.clearTimeout(timer);
   }, [opponentScore, playerScore, resolved]);
 
+  const { answerLayout, promptLength } = questionLayout(question);
+
   return (
     <main
       aria-hidden={preparing || undefined}
@@ -335,16 +352,30 @@ export function MatchScreen({
             >{opponentPending ? '—' : displayedScores.opponent}</strong>
           </span>
         </div>
-        {round !== undefined && (
-          <span className="round-counter">
-            <span>Pergunta {round.number} de {round.total}</span>
-            <span aria-hidden="true" className="round-steps">
-              {Array.from({ length: round.total }, (_, index) => (
-                <i data-step={index + 1 < round.number ? 'done' : index + 1 === round.number ? 'current' : 'next'} key={index} />
-              ))}
+        <div className="match-scoreboard__center">
+          {preparing
+            ? <span aria-hidden="true" className="timer-ring timer-ring--idle" />
+            : (
+              <MatchTimerRing
+                deadlineMs={deadlineMs}
+                initialRemainingMs={remainingMs}
+                key={`${deadlineMs}:${resolved ? 'resolved' : 'active'}`}
+                resolved={resolved}
+                verdict={!viewerAnsweredThisRound ? 'none' : viewerCorrect === true ? 'correct' : 'wrong'}
+              />
+            )}
+          {round !== undefined && (
+            <span className="round-counter">
+              <span className="sr-only">Pergunta {round.number} de {round.total}</span>
+              <span aria-hidden="true" className="round-counter__label">{round.number}/{round.total}</span>
+              <span aria-hidden="true" className="round-steps">
+                {Array.from({ length: round.total }, (_, index) => (
+                  <i data-step={index + 1 < round.number ? 'done' : index + 1 === round.number ? 'current' : 'next'} key={index} />
+                ))}
+              </span>
             </span>
-          </span>
-        )}
+          )}
+        </div>
         <div className="player-chip">
           <span className="match-scoreboard__copy">
             <small>Você</small>
@@ -366,19 +397,21 @@ export function MatchScreen({
           </AvatarFrame>
         </div>
       </header>
-      <section className="question-stage">
-        {!preparing && (
-          <MatchTimerRing
+      {preparing
+        ? <div aria-hidden="true" className="match-timer match-timer--preparing" />
+        : (
+          <MatchTimer
             deadlineMs={deadlineMs}
             initialRemainingMs={remainingMs}
             key={`${deadlineMs}:${resolved ? 'resolved' : 'active'}`}
+            onExpire={handleExpire}
             resolved={resolved}
-            verdict={!viewerAnsweredThisRound ? 'none' : viewerCorrect === true ? 'correct' : 'wrong'}
           />
         )}
+      <section className={`question-stage${question.imageUrl ? ' question-stage--media' : ''}`}>
         {question.imageUrl && <QuestionMedia key={question.imageUrl} url={question.imageUrl} />}
-        <h1>{question.prompt}</h1>
-        <div className="answer-grid">
+        <h1 data-length={promptLength}>{question.prompt}</h1>
+        <div className={`answer-grid answer-grid--${answerLayout}`}>
           {question.options.map((option, index) => {
             const correct = resolution?.correctOption === index;
             const viewerRevealedHere = resolved && selected === index;
@@ -428,17 +461,6 @@ export function MatchScreen({
           })}
         </div>
       </section>
-      {preparing
-        ? <div aria-hidden="true" className="match-timer match-timer--preparing" />
-        : (
-          <MatchTimer
-            deadlineMs={deadlineMs}
-            initialRemainingMs={remainingMs}
-            key={`${deadlineMs}:${resolved ? 'resolved' : 'active'}`}
-            onExpire={handleExpire}
-            resolved={resolved}
-          />
-        )}
     </main>
   );
 }

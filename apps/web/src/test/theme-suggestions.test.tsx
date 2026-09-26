@@ -3,12 +3,15 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mocks = vi.hoisted(() => ({
-  apiRequest: vi.fn(),
-  getToken: () => Promise.resolve('token'),
-  profile: { displayName: 'Gomes' } as { displayName: string } | null,
-  signIn: vi.fn(),
-}));
+const mocks = vi.hoisted(() => {
+  function signedInProfile(): { displayName: string } | null { return { displayName: 'Gomes' }; }
+  return {
+    apiRequest: vi.fn(),
+    getToken: () => Promise.resolve('token'),
+    profile: signedInProfile(),
+    signIn: vi.fn(),
+  };
+});
 vi.mock('../lib/api.js', () => ({ apiRequest: mocks.apiRequest }));
 vi.mock('../features/auth-context.js', () => ({
   useAuth: () => ({ getToken: mocks.getToken, profile: mocks.profile, signIn: mocks.signIn }),

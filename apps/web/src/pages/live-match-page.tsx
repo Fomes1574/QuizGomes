@@ -738,7 +738,7 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
               roundNumber: activeRound.number,
             })}
             type="button"
-          ><Icon name="flag" /></button>
+          ><Icon name="flag" /><span>Reportar</span></button>
         )}
         {reportTarget !== null && (
           <ReportQuestionDialog

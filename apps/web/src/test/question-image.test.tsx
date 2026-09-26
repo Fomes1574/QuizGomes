@@ -63,3 +63,35 @@ describe('moldura da foto na partida', () => {
     expect(screen.getByText('Que lugar é este?')).toBeInTheDocument();
   });
 });
+
+describe('layout da pergunta sem cortar texto', () => {
+  it('alternativas longas viram lista; curtas ficam na grade 2×2', async () => {
+    const { questionLayout } = await import('../components/match-screen.js');
+    expect(questionLayout({ options: ['Tanjiro', 'Zenitsu', 'Giyu', 'Rengoku'], prompt: 'Quem?' }))
+      .toEqual({ answerLayout: 'grid', promptLength: 'short' });
+    expect(questionLayout({
+      options: ['Transmitir diretamente a sarna humana', 'B', 'C', 'D'],
+      prompt: 'Qual é a principal importância médica do ácaro-do-pó-doméstico, apesar de não ser um parasita externo?',
+    })).toEqual({ answerLayout: 'list', promptLength: 'long' });
+    // Com foto o limite é menor: sobra menos altura na tela.
+    expect(questionLayout({ imageUrl: '/x.webp', options: ['Monte Everest', 'B', 'C', 'Kilimanjaro, Tanzânia'], prompt: 'Onde fica?' }).answerLayout).toBe('list');
+  });
+
+  it('renderiza o texto inteiro da alternativa e o contador da rodada acessível', () => {
+    render(<MatchScreen
+      deadlineMs={Date.now() + 10_000}
+      onAnswer={() => {}}
+      opponent={{ name: 'humberto José da Silva' }}
+      opponentScore={0}
+      player={{ name: 'Gomes' }}
+      playerScore={0}
+      question={{ options: ['Ser um aeroalérgeno importante, ligado a asma e rinite', 'B', 'C', 'D'], prompt: 'Pergunta longa?' }}
+      remainingMs={10_000}
+      round={{ number: 3, total: 7 }}
+    />);
+    expect(screen.getByText('Ser um aeroalérgeno importante, ligado a asma e rinite')).toBeInTheDocument();
+    expect(document.querySelector('.answer-grid--list')).not.toBeNull();
+    expect(screen.getByText('Pergunta 3 de 7')).toBeInTheDocument();
+    cleanup();
+  });
+});
