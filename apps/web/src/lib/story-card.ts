@@ -244,10 +244,20 @@ function drawHeadline(context: Ctx, text: string, centerX: number, y: number, ma
   context.restore();
 }
 
-/** Painel de convite no rodapé: o chamado para jogar. */
+/**
+ * Faixa segura: tudo que importa fica entre y=285 e y=1635. Nos Stories e no
+ * Status, o topo (~250 px: progresso e perfil) e a base (~270 px: campo de
+ * resposta) ficam cobertos pelo app; e o recorte 4:5 (1080 × 1350) dessa
+ * mesma faixa vira o formato de conversa e feed, sem desenhar duas vezes.
+ */
+export const SAFE_TOP = 285;
+export const POST_HEIGHT = 1_350;
+const CTA_TOP = 1_440;
+
+/** Painel de convite no rodapé da faixa segura: o chamado para jogar. */
 function drawCallToAction(context: Ctx, width: number, top: number, headline: string, subline: string, accent: string): void {
   const margin = 70;
-  const height = 250;
+  const height = 190;
   context.save();
   roundRect(context, margin, top, width - margin * 2, height, 44);
   // Base escura por baixo do vidro: nada do fundo atravessa o chamado.
@@ -269,11 +279,11 @@ function drawCallToAction(context: Ctx, width: number, top: number, headline: st
   context.textAlign = 'center';
   context.textBaseline = 'alphabetic';
   context.fillStyle = '#ffffff';
-  fitFont(context, headline, width - margin * 2 - 80, 800, 60, DISPLAY);
-  context.fillText(headline, width / 2, top + 110);
+  fitFont(context, headline, width - margin * 2 - 80, 800, 56, DISPLAY);
+  context.fillText(headline, width / 2, top + 84);
   context.fillStyle = 'rgba(255,255,255,0.72)';
-  fitFont(context, subline, width - margin * 2 - 80, 600, 38, BODY);
-  context.fillText(subline, width / 2, top + 180);
+  fitFont(context, subline, width - margin * 2 - 80, 600, 36, BODY);
+  context.fillText(subline, width / 2, top + 148);
   context.restore();
 }
 
@@ -318,27 +328,27 @@ export function storyCardFileName(input: Pick<StoryCardInput, 'result'>): string
 export function drawStoryCard(context: Ctx, input: StoryCardInput, images: CardImages = {}): void {
   const palette = PALETTES[input.result];
   const center = STORY_WIDTH / 2;
-  drawBackdrop(context, STORY_WIDTH, STORY_HEIGHT, palette, 1_000);
-  drawBrand(context, center, 140, 46, images.brand);
+  drawBackdrop(context, STORY_WIDTH, STORY_HEIGHT, palette, 975);
+  drawBrand(context, center, 340, 44, images.brand);
 
-  drawPill(context, center, 250, input.ranked ? 'PARTIDA RANKEADA' : 'PARTIDA NORMAL', {
+  drawPill(context, center, 428, input.ranked ? 'PARTIDA RANKEADA' : 'PARTIDA NORMAL', {
     fill: 'rgba(255,255,255,0.08)', font: `700 30px ${BODY}`, ink: 'rgba(255,255,255,0.86)', stroke: 'rgba(255,255,255,0.24)',
   });
   if (input.themeName !== null) {
     context.save();
     context.textAlign = 'center';
     context.fillStyle = '#ffffff';
-    fitFont(context, input.themeName, STORY_WIDTH - 160, 800, 84, DISPLAY);
-    context.fillText(input.themeName, center, 390);
+    fitFont(context, input.themeName, STORY_WIDTH - 160, 800, 76, DISPLAY);
+    context.fillText(input.themeName, center, 535);
     context.restore();
   }
 
-  drawHeadline(context, HEADLINE[input.result], center, 610, STORY_WIDTH - 120, 200, palette.headline, palette.glow);
+  drawHeadline(context, HEADLINE[input.result], center, 720, STORY_WIDTH - 140, 180, palette.headline, palette.glow);
   context.save();
   context.textAlign = 'center';
   context.fillStyle = 'rgba(255,255,255,0.8)';
   context.font = `600 44px ${BODY}`;
-  context.fillText(resultHook(input), center, 690);
+  context.fillText(resultHook(input), center, 792);
   context.restore();
 
   // Duelo: medalhões, nomes e placar.
@@ -349,28 +359,28 @@ export function drawStoryCard(context: Ctx, input: StoryCardInput, images: CardI
     { image: images.opponent, label: 'ADVERSÁRIO', name: input.opponent.name, score: input.opponent.score, winner: opponentWon, x: 790, dim: viewerWon },
   ];
   for (const seat of seats) {
-    drawMedallion(context, seat.x, 930, 140, seat.name, seat.winner || input.result === 'DRAW' ? palette.ring : ['#5b5b6b', '#2b2b36'], seat.image, seat.dim);
+    drawMedallion(context, seat.x, 975, 118, seat.name, seat.winner || input.result === 'DRAW' ? palette.ring : ['#5b5b6b', '#2b2b36'], seat.image, seat.dim);
     context.save();
     context.textAlign = 'center';
     context.fillStyle = '#ffffff';
     context.font = `700 46px ${BODY}`;
-    context.fillText(shortName(seat.name), seat.x, 1_140);
+    context.fillText(shortName(seat.name), seat.x, 1_162);
     context.fillStyle = 'rgba(255,255,255,0.6)';
     context.font = `700 26px ${BODY}`;
-    context.fillText(seat.label, seat.x, 1_184);
+    context.fillText(seat.label, seat.x, 1_200);
     context.fillStyle = seat.dim ? 'rgba(255,255,255,0.55)' : '#ffffff';
-    context.font = `900 170px ${DISPLAY}`;
+    context.font = `900 140px ${DISPLAY}`;
     if (!seat.dim) {
       context.shadowColor = palette.glow;
       context.shadowBlur = 40;
     }
-    context.fillText(String(seat.score), seat.x, 1_370);
+    context.fillText(String(seat.score), seat.x, 1_336);
     context.restore();
   }
   // Selo "×" entre os dois.
   context.save();
   context.beginPath();
-  context.arc(center, 930, 58, 0, Math.PI * 2);
+  context.arc(center, 975, 50, 0, Math.PI * 2);
   context.fillStyle = BRAND_RED;
   context.shadowColor = 'rgba(224,53,61,0.8)';
   context.shadowBlur = 40;
@@ -380,15 +390,15 @@ export function drawStoryCard(context: Ctx, input: StoryCardInput, images: CardI
   context.font = `900 56px ${DISPLAY}`;
   context.textAlign = 'center';
   context.textBaseline = 'middle';
-  context.fillText('×', center, 928);
+  context.fillText('×', center, 973);
   context.restore();
 
   if (input.personalRecord) {
-    drawPill(context, center, 1_470, '★ Novo recorde pessoal', { fill: '#ffd35c', font: `800 40px ${BODY}`, ink: '#3a2600' });
+    drawPill(context, center, 1_394, '★ Novo recorde pessoal', { fill: '#ffd35c', font: `800 40px ${BODY}`, ink: '#3a2600' });
   }
 
   const challenge = input.themeName === null ? 'Duvido você me ganhar.' : `Duvido você me ganhar em ${input.themeName}.`;
-  drawCallToAction(context, STORY_WIDTH, 1_570, challenge, `Quiz 1×1 grátis · ${input.host ?? shareHost()}`, palette.accent);
+  drawCallToAction(context, STORY_WIDTH, CTA_TOP, challenge, `Quiz 1×1 grátis · ${input.host ?? shareHost()}`, palette.accent);
 }
 
 // ---------- perfil ----------
@@ -408,17 +418,17 @@ export interface ProfileCardInput {
 export function drawProfileCard(context: Ctx, input: ProfileCardInput, images: CardImages = {}): void {
   const palette = PALETTES.WIN;
   const center = STORY_WIDTH / 2;
-  drawBackdrop(context, STORY_WIDTH, STORY_HEIGHT, palette, 620);
-  drawBrand(context, center, 140, 46, images.brand);
-  drawMedallion(context, center, 560, 210, input.name, input.frameColors ?? palette.ring, images.viewer);
+  drawBackdrop(context, STORY_WIDTH, STORY_HEIGHT, palette, 590);
+  drawBrand(context, center, 340, 44, images.brand);
+  drawMedallion(context, center, 585, 160, input.name, input.frameColors ?? palette.ring, images.viewer);
 
   context.save();
   context.textAlign = 'center';
   context.fillStyle = '#ffffff';
-  fitFont(context, input.name, STORY_WIDTH - 160, 900, 104, DISPLAY);
-  context.fillText(input.name, center, 900);
+  fitFont(context, input.name, STORY_WIDTH - 160, 900, 92, DISPLAY);
+  context.fillText(input.name, center, 850);
   context.restore();
-  drawPill(context, center, 980, input.publicId, { fill: 'rgba(255,255,255,0.1)', font: `700 34px ${BODY}`, ink: '#ffffff', stroke: 'rgba(255,255,255,0.28)' });
+  drawPill(context, center, 922, input.publicId, { fill: 'rgba(255,255,255,0.1)', font: `700 34px ${BODY}`, ink: '#ffffff', stroke: 'rgba(255,255,255,0.28)' });
 
   // Quatro números que dizem quem é o jogador.
   const tiles = [
@@ -431,9 +441,9 @@ export function drawProfileCard(context: Ctx, input: ProfileCardInput, images: C
     const column = index % 2;
     const row = Math.floor(index / 2);
     const x = 90 + column * 460;
-    const y = 1_080 + row * 220;
+    const y = 995 + row * 205;
     context.save();
-    roundRect(context, x, y, 440, 190, 36);
+    roundRect(context, x, y, 440, 180, 36);
     context.fillStyle = 'rgba(255,255,255,0.08)';
     context.fill();
     context.strokeStyle = 'rgba(255,255,255,0.16)';
@@ -445,16 +455,16 @@ export function drawProfileCard(context: Ctx, input: ProfileCardInput, images: C
     context.fillText(tile.label, x + 34, y + 54);
     context.fillStyle = '#ffffff';
     fitFont(context, tile.value, 372, 900, 64, DISPLAY);
-    context.fillText(tile.value, x + 34, y + 128);
+    context.fillText(tile.value, x + 34, y + 122);
     if (tile.caption !== undefined) {
       context.fillStyle = 'rgba(255,255,255,0.7)';
       fitFont(context, tile.caption, 372, 600, 26, BODY);
-      context.fillText(tile.caption, x + 34, y + 166);
+      context.fillText(tile.caption, x + 34, y + 160);
     }
     context.restore();
   });
 
-  drawCallToAction(context, STORY_WIDTH, 1_560, 'Me desafia no QUIZ GOMES', `Me adiciona: ${input.publicId} · ${input.host ?? shareHost()}`, palette.accent);
+  drawCallToAction(context, STORY_WIDTH, CTA_TOP, 'Me desafia no QUIZ GOMES', `Me adiciona: ${input.publicId} · ${input.host ?? shareHost()}`, palette.accent);
 }
 
 // ---------- marco de ofensiva e conquistas ----------
@@ -507,39 +517,39 @@ export function drawMilestoneCard(context: Ctx, input: MilestoneCardInput, image
   const palette = TIER_PALETTES[input.tier];
   const center = STORY_WIDTH / 2;
   drawBackdrop(context, STORY_WIDTH, STORY_HEIGHT, palette, 760);
-  drawBrand(context, center, 140, 46, images.brand);
-  drawPill(context, center, 260, 'CONQUISTA DESBLOQUEADA', { fill: 'rgba(255,255,255,0.1)', font: `800 30px ${BODY}`, ink: '#ffffff', stroke: palette.accent });
+  drawBrand(context, center, 340, 44, images.brand);
+  drawPill(context, center, 408, 'CONQUISTA DESBLOQUEADA', { fill: 'rgba(255,255,255,0.1)', font: `800 30px ${BODY}`, ink: '#ffffff', stroke: palette.accent });
 
   // Quanto mais raro, mais ornamento: louros a partir de 100 dias, anel duplo em 1 e 2 anos.
-  if (input.tier !== 'ember') drawLaurel(context, center, 740, 300, `${palette.accent}cc`);
+  if (input.tier !== 'ember') drawLaurel(context, center, 720, 280, `${palette.accent}cc`);
   if (input.tier === 'year' || input.tier === 'legend') {
     context.save();
     context.strokeStyle = palette.accent;
     context.lineWidth = 6;
     context.globalAlpha = 0.6;
     context.beginPath();
-    context.arc(center, 740, 350, 0, Math.PI * 2);
+    context.arc(center, 720, 262, 0, Math.PI * 2);
     context.stroke();
     context.restore();
   }
-  drawHeadline(context, input.big, center, 860, STORY_WIDTH - 360, 400, palette.headline, palette.glow);
+  drawHeadline(context, input.big, center, 800, STORY_WIDTH - 640, 300, palette.headline, palette.glow);
   context.save();
   context.textAlign = 'center';
   context.fillStyle = 'rgba(255,255,255,0.85)';
   context.font = `800 54px ${BODY}`;
-  context.fillText(input.bigCaption.toLocaleUpperCase('pt-BR'), center, 960);
+  context.fillText(input.bigCaption.toLocaleUpperCase('pt-BR'), center, 880);
   context.fillStyle = '#ffffff';
-  fitFont(context, input.title, STORY_WIDTH - 160, 900, 92, DISPLAY);
-  context.fillText(input.title, center, 1_250);
+  fitFont(context, input.title, STORY_WIDTH - 160, 900, 84, DISPLAY);
+  context.fillText(input.title, center, 1_110);
   context.fillStyle = 'rgba(255,255,255,0.75)';
   fitFont(context, input.description, STORY_WIDTH - 180, 600, 40, BODY);
-  context.fillText(input.description, center, 1_325);
+  context.fillText(input.description, center, 1_178);
   context.fillStyle = 'rgba(255,255,255,0.9)';
   context.font = `700 44px ${BODY}`;
-  context.fillText(input.name, center, 1_440);
+  context.fillText(input.name, center, 1_280);
   context.restore();
 
-  drawCallToAction(context, STORY_WIDTH, 1_570, 'Consegue chegar aqui?', `Jogue grátis · ${input.host ?? shareHost()}`, palette.accent);
+  drawCallToAction(context, STORY_WIDTH, CTA_TOP, 'Consegue chegar aqui?', `Jogue grátis · ${input.host ?? shareHost()}`, palette.accent);
 }
 
 // ---------- convite ----------
@@ -553,22 +563,22 @@ export interface InviteCardInput {
 export function drawInviteCard(context: Ctx, input: InviteCardInput, images: CardImages = {}): void {
   const palette = PALETTES.WIN;
   const center = STORY_WIDTH / 2;
-  drawBackdrop(context, STORY_WIDTH, STORY_HEIGHT, palette, 820);
-  drawBrand(context, center, 140, 46, images.brand);
-  drawHeadline(context, 'BORA', center, 470, STORY_WIDTH - 160, 230, PALETTES.WIN.headline, palette.glow);
-  drawHeadline(context, 'DUELAR?', center, 690, STORY_WIDTH - 160, 230, PALETTES.WIN.headline, palette.glow);
-  drawMedallion(context, center, 980, 150, input.name, palette.ring, images.viewer);
+  drawBackdrop(context, STORY_WIDTH, STORY_HEIGHT, palette, 800);
+  drawBrand(context, center, 340, 44, images.brand);
+  drawHeadline(context, 'BORA', center, 570, STORY_WIDTH - 200, 190, PALETTES.WIN.headline, palette.glow);
+  drawHeadline(context, 'DUELAR?', center, 755, STORY_WIDTH - 200, 190, PALETTES.WIN.headline, palette.glow);
+  drawMedallion(context, center, 930, 112, input.name, palette.ring, images.viewer);
   context.save();
   context.textAlign = 'center';
   context.fillStyle = '#ffffff';
-  fitFont(context, input.name, STORY_WIDTH - 200, 800, 70, DISPLAY);
-  context.fillText(input.name, center, 1_230);
+  fitFont(context, input.name, STORY_WIDTH - 200, 800, 64, DISPLAY);
+  context.fillText(input.name, center, 1_140);
   context.restore();
   const facts = ['1×1 em tempo real', '10 s por pergunta', 'Ranking por tema'];
   facts.forEach((fact, index) => {
-    drawPill(context, center, 1_330 + index * 84, fact, { fill: 'rgba(255,255,255,0.08)', font: `700 34px ${BODY}`, ink: '#ffffff', stroke: 'rgba(255,255,255,0.2)' });
+    drawPill(context, center, 1_215 + index * 76, fact, { fill: 'rgba(255,255,255,0.08)', font: `700 34px ${BODY}`, ink: '#ffffff', stroke: 'rgba(255,255,255,0.2)' });
   });
-  drawCallToAction(context, STORY_WIDTH, 1_600, `Me adiciona: ${input.publicId}`, `Jogue grátis · ${input.host ?? shareHost()}`, palette.accent);
+  drawCallToAction(context, STORY_WIDTH, CTA_TOP, `Me adiciona: ${input.publicId}`, `Jogue grátis · ${input.host ?? shareHost()}`, palette.accent);
 }
 
 // ---------- prévia de link (1200 × 630) ----------
@@ -658,15 +668,8 @@ async function fontsReady(): Promise<void> {
   ]).catch(() => undefined);
 }
 
-/** JPEG de alta qualidade: ~5× menor que PNG com a textura do fundo, e todo app de story aceita. */
-async function renderImage(width: number, height: number, draw: (context: Ctx) => void): Promise<Blob> {
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  const context = canvas.getContext('2d');
-  if (context === null) throw new Error('Não foi possível gerar a imagem.');
-  await fontsReady();
-  draw(context);
+function toJpeg(canvas: HTMLCanvasElement): Promise<Blob> {
+  // JPEG de alta qualidade: ~5× menor que PNG com a textura do fundo; todo app aceita.
   return new Promise((resolve, reject) => canvas.toBlob((blob) => {
     if (blob === null) reject(new Error('Não foi possível gerar a imagem.'));
     else resolve(blob);
@@ -681,15 +684,27 @@ export type ShareCard =
   | { input: MilestoneCardInput; kind: 'milestone' }
   | { input: InviteCardInput; kind: 'invite' };
 
-function fileNameFor(card: ShareCard): string {
-  if (card.kind === 'result') return storyCardFileName(card.input);
-  if (card.kind === 'profile') return 'quiz-gomes-perfil.jpg';
-  if (card.kind === 'milestone') return 'quiz-gomes-conquista.jpg';
-  return 'quiz-gomes-convite.jpg';
+/** Stories/Status (9:16) ou conversa/feed (4:5). */
+export type ShareFormat = 'post' | 'story';
+
+function baseNameFor(card: ShareCard): string {
+  if (card.kind === 'result') return storyCardFileName(card.input).replace(/\.jpg$/, '');
+  if (card.kind === 'profile') return 'quiz-gomes-perfil';
+  if (card.kind === 'milestone') return 'quiz-gomes-conquista';
+  return 'quiz-gomes-convite';
 }
 
-/** Gera a imagem do cartão (com ícone e fotos quando disponíveis). */
-export async function prepareShareCard(card: ShareCard): Promise<File> {
+export interface ShareCardFiles {
+  post: File;
+  story: File;
+}
+
+/**
+ * Gera os dois formatos de uma vez: o story inteiro (1080 × 1920) e, para
+ * conversas e feed, o recorte 4:5 (1080 × 1350) da faixa segura, onde já
+ * está tudo o que importa. Com ícone e fotos quando disponíveis.
+ */
+export async function prepareShareCards(card: ShareCard): Promise<ShareCardFiles> {
   const viewerUrl = card.kind === 'result' ? card.input.viewer.avatarUrl
     : card.kind === 'profile' ? card.input.avatarUrl : null;
   const [brand, viewer, opponent] = await Promise.all([
@@ -698,13 +713,35 @@ export async function prepareShareCard(card: ShareCard): Promise<File> {
     loadCardImage(card.kind === 'result' ? card.input.opponent.avatarUrl : null),
   ]);
   const images: CardImages = { brand, opponent, viewer };
-  const blob = await renderImage(STORY_WIDTH, STORY_HEIGHT, (context) => {
-    if (card.kind === 'result') drawStoryCard(context, card.input, images);
-    else if (card.kind === 'profile') drawProfileCard(context, card.input, images);
-    else if (card.kind === 'milestone') drawMilestoneCard(context, card.input, images);
-    else drawInviteCard(context, card.input, images);
-  });
-  return new File([blob], fileNameFor(card), { type: 'image/jpeg' });
+  const story = document.createElement('canvas');
+  story.width = STORY_WIDTH;
+  story.height = STORY_HEIGHT;
+  const context = story.getContext('2d');
+  if (context === null) throw new Error('Não foi possível gerar a imagem.');
+  await fontsReady();
+  if (card.kind === 'result') drawStoryCard(context, card.input, images);
+  else if (card.kind === 'profile') drawProfileCard(context, card.input, images);
+  else if (card.kind === 'milestone') drawMilestoneCard(context, card.input, images);
+  else drawInviteCard(context, card.input, images);
+
+  const post = document.createElement('canvas');
+  post.width = STORY_WIDTH;
+  post.height = POST_HEIGHT;
+  const postContext = post.getContext('2d');
+  if (postContext === null) throw new Error('Não foi possível gerar a imagem.');
+  postContext.drawImage(story, 0, SAFE_TOP, STORY_WIDTH, POST_HEIGHT, 0, 0, STORY_WIDTH, POST_HEIGHT);
+
+  const [storyBlob, postBlob] = await Promise.all([toJpeg(story), toJpeg(post)]);
+  const base = baseNameFor(card);
+  return {
+    post: new File([postBlob], `${base}-conversa.jpg`, { type: 'image/jpeg' }),
+    story: new File([storyBlob], `${base}.jpg`, { type: 'image/jpeg' }),
+  };
+}
+
+/** Compatibilidade: só o story. */
+export async function prepareShareCard(card: ShareCard): Promise<File> {
+  return (await prepareShareCards(card)).story;
 }
 
 /** Compatibilidade: cartão de resultado. */

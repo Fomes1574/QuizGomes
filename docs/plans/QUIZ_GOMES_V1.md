@@ -1567,6 +1567,13 @@ Pedidos do proprietário nesta rodada: limpeza a cada 15 dias (admin 6 meses), X
 - Desempenho: fontes hospedadas no app (subconjunto latino pré-carregado), CSS da administração fora do pacote inicial.
 - Validação: lint, typecheck, domínio/unit, 220 testes web, 241 testes Worker, validador de migrations (Core 0020, Questions 0010), build e dry-run; prévias em celular e computador, claro e escuro.
 
+### 2026-09-27 — cartões prontos para Stories, Status e conversas
+
+- Todo conteúdo dos cartões fica na faixa segura y 285–1635 (Instagram e WhatsApp cobrem ~250 px no topo e ~270 px na base dos Stories/Status).
+- O mesmo desenho gera dois arquivos: 9:16 (Stories/Status) e o recorte 4:5 dessa faixa (conversa e feed). O botão pergunta onde a pessoa vai postar; o convite da Social usa o 4:5.
+- Página inicial com prévia de link de imagem absoluta (WhatsApp/Facebook não aceitam `og:image` relativa); `/` passa pelo Worker.
+- Não verificado em aparelho real: comportamento de cada app com imagem + texto (alguns, como os Stories do Instagram, ignoram o texto) e prévia com arte de tema em WebP no WhatsApp.
+
 ## Critério de saída desta execução
 
 - Milestones 8 e 8.5 aprovados fisicamente e congelados;

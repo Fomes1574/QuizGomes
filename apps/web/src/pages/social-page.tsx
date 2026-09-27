@@ -11,7 +11,7 @@ import { useChallenges } from '../features/challenge-context.js';
 import { useFriendPresence, useSocial } from '../features/social-context.js';
 import { apiRequest } from '../lib/api.js';
 import { saveChallengeTarget } from '../lib/challenge-target.js';
-import { prepareShareCard } from '../lib/story-card.js';
+import { prepareShareCards } from '../lib/story-card.js';
 import { challengeCardCopy, type ChallengeView } from '../lib/challenges.js';
 import type { FriendPresence, SocialCandidate, SocialFriend, SocialSnapshot, SocialUser } from '../lib/social.js';
 
@@ -51,10 +51,11 @@ function InviteCard({ lonely, profile }: { lonely: boolean; profile: InviteProfi
   useEffect(() => {
     if (typeof navigator.canShare !== 'function') return undefined;
     const timer = window.setTimeout(() => {
-      cardRef.current = prepareShareCard({
+      // Convite vai para conversas: o 4:5 aparece inteiro no chat.
+      cardRef.current = prepareShareCards({
         input: { name: profile.displayName, publicId: profile.publicId },
         kind: 'invite',
-      });
+      }).then((files) => files.post);
       cardRef.current.catch(() => { cardRef.current = null; });
     }, 800);
     return () => window.clearTimeout(timer);

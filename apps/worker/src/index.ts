@@ -53,7 +53,7 @@ import { QuestionImportService } from './services/question-import-service.js';
 import { questionExportCsvHeader, questionExportCsvRow } from './services/question-export.js';
 import { parseQuestionsCsv } from './services/question-csv.js';
 import { DirectChallengeService } from './services/direct-challenge-service.js';
-import { themeLinkPreview } from './http/link-preview.js';
+import { siteLinkPreview, themeLinkPreview } from './http/link-preview.js';
 import { ThemeSuggestionRepository } from './repositories/theme-suggestion-repository.js';
 import { FRIEND_QUEUE_ALERT_DELAY_MS, SocialPushService } from './services/social-push-service.js';
 import { runScheduled } from './scheduled.js';
@@ -2271,6 +2271,14 @@ async function handle(request: Request, env: Env, context: ExecutionContext): Pr
       return applyCors(await apiRoute(request, env, url, context), request, env.ALLOWED_ORIGINS);
     } catch (error) {
       return applyCors(apiErrorResponse(error), request, env.ALLOWED_ORIGINS);
+    }
+  }
+  if (url.pathname === '/') {
+    try {
+      const preview = await siteLinkPreview(request, env, url);
+      if (preview !== null) return preview;
+    } catch {
+      // Prévia é enfeite: sem ela, a SPA abre normalmente.
     }
   }
   if (url.pathname.startsWith('/temas/')) {

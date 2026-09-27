@@ -1,6 +1,6 @@
 import { env } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
-import { themeLinkPreview } from '../http/link-preview.js';
+import { siteLinkPreview, themeLinkPreview } from '../http/link-preview.js';
 
 const SHELL = `<!doctype html><html><head>
 <meta name="description" content="padrão" />
@@ -49,5 +49,17 @@ describe('prévia de link do tema', () => {
     expect(await response!.text()).toContain('<title>QUIZ GOMES</title>');
     const other = new URL('https://quiz.test/social');
     expect(await themeLinkPreview(new Request(other), withShell(), other)).toBeNull();
+  });
+});
+
+describe('prévia de link da página inicial', () => {
+  it('troca a imagem relativa por endereço absoluto (WhatsApp e Facebook exigem)', async () => {
+    const url = new URL('https://quiz.test/');
+    const response = await siteLinkPreview(new Request(url), withShell(), url);
+    const html = await response!.text();
+    expect(html).toContain('<meta property="og:image" content="https://quiz.test/og-image.jpg" />');
+    expect(html).toContain('<meta property="og:url" content="https://quiz.test/" />');
+    expect(html).not.toContain('content="/icons/icon-512.webp"');
+    expect(await siteLinkPreview(new Request('https://quiz.test/perfil'), withShell(), new URL('https://quiz.test/perfil'))).toBeNull();
   });
 });

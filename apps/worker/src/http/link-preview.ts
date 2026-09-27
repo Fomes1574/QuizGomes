@@ -93,3 +93,34 @@ export async function themeLinkPreview(request: Request, env: Env, url: URL): Pr
   headers.delete('Content-Length');
   return new Response(response.body, { headers, status: response.status });
 }
+
+/**
+ * Prévia da página inicial (convites e perfis compartilhados levam para cá).
+ * O index.html tem `og:image` relativa, e WhatsApp e Facebook só aceitam
+ * endereço absoluto: sem isto, o convite chegaria sem imagem.
+ */
+export async function siteLinkPreview(request: Request, env: Env, url: URL): Promise<Response | null> {
+  if (request.method !== 'GET' && request.method !== 'HEAD') return null;
+  if (url.pathname !== '/') return null;
+  const page = await env.ASSETS.fetch(request);
+  if (!page.ok || !(page.headers.get('Content-Type') ?? '').includes('text/html')) return page;
+  const image = new URL('/og-image.jpg', url.origin).toString();
+  const absolute: Record<string, string> = {
+    'og:image': image,
+    'og:url': new URL('/', url.origin).toString(),
+    'twitter:image': image,
+  };
+  const rewrite = (attribute: 'name' | 'property') => ({
+    element: (element: Element) => {
+      const value = absolute[element.getAttribute(attribute) ?? ''];
+      if (value !== undefined) element.setAttribute('content', value);
+    },
+  });
+  const response = new HTMLRewriter()
+    .on('meta[property]', rewrite('property'))
+    .on('meta[name]', rewrite('name'))
+    .transform(page);
+  const headers = new Headers(response.headers);
+  headers.delete('Content-Length');
+  return new Response(response.body, { headers, status: response.status });
+}
