@@ -10,6 +10,8 @@ interface QueueAttachment {
   heartbeat?: boolean;
   joinedAt: number;
   knowledge: number;
+  /** Fila privada de revanche: só a dupla, sem banda de divisão e sem contagem pública. */
+  private?: true;
   resource: string;
   /** Token da reserva de presença desta busca. Ausente em sockets de antes do deploy. */
   token?: string;
@@ -37,6 +39,12 @@ export const QUEUE_SILENCE_LIMIT_MS = 25_000;
 const SUPERSEDED_CODE = 4_103;
 const SILENT_CODE = 4_104;
 const RANKED_RECHECK_MS = [15_000, 30_000, 45_000] as const;
+/** Revanche espera o adversário aceitar por no máximo 30 s. */
+const PRIVATE_QUEUE_TIMEOUT_MS = 30_000;
+
+function timeoutFor(value: QueueAttachment): number {
+  return value.private === true ? PRIVATE_QUEUE_TIMEOUT_MS : QUEUE_TIMEOUT_MS;
+}
 
 /**
  * Socket com batimento que ficou em silêncio além do limite: conexão morta
@@ -87,6 +95,7 @@ export class MatchmakingQueue {
       ...(request.headers.get('X-QG-Heartbeat') === '1' ? { heartbeat: true } : {}),
       joinedAt: Date.now(),
       knowledge,
+      ...(request.headers.get('X-QG-Private-Queue') === '1' ? { private: true as const } : {}),
       resource,
       ...(token === null ? {} : { token }),
       uid,
@@ -98,7 +107,7 @@ export class MatchmakingQueue {
     }
     server.serializeAttachment(current);
     this.ctx.acceptWebSocket(server);
-    const timeoutAt = current.joinedAt + QUEUE_TIMEOUT_MS;
+    const timeoutAt = current.joinedAt + timeoutFor(current);
     server.send(JSON.stringify({ type: 'SEARCHING', timeoutAt }));
     await this.tryPair(server);
     await this.scheduleNextAlarm();
@@ -128,7 +137,8 @@ export class MatchmakingQueue {
       .filter((entry) => entry.socket.readyState === 1)
       .filter((entry) => (
         // Partida normal nunca usa Conhecimento: qualquer candidato do mesmo tema serve.
-        !isRanked || Math.abs(divisionIndexForKnowledge(entry.value.knowledge) - currentDivision)
+        // Na revanche a dupla já se escolheu: nenhuma banda de divisão se aplica.
+        !isRanked || current.private === true || Math.abs(divisionIndexForKnowledge(entry.value.knowledge) - currentDivision)
           <= rankedMatchmakingDivisionBand(now - entry.value.joinedAt)
       ))
       .sort((left, right) => {
@@ -240,7 +250,7 @@ export class MatchmakingQueue {
     const now = Date.now();
     const waiting = this.waitingSockets();
     for (const entry of waiting) {
-      if (entry.value.joinedAt + QUEUE_TIMEOUT_MS <= now) {
+      if (entry.value.joinedAt + timeoutFor(entry.value) <= now) {
         entry.socket.send(JSON.stringify({ type: 'TIMEOUT' }));
         entry.socket.close(1000, 'Tempo de busca encerrado');
       }
@@ -248,7 +258,7 @@ export class MatchmakingQueue {
     // Reavaliar nos marcos 15/30/45 s é o que torna a expansão da banda
     // efetiva mesmo quando nenhum jogador novo entra na fila.
     for (const entry of this.waitingSockets()) {
-      if (entry.value.joinedAt + QUEUE_TIMEOUT_MS > now && await this.tryPair(entry.socket)) break;
+      if (entry.value.joinedAt + timeoutFor(entry.value) > now && await this.tryPair(entry.socket)) break;
     }
     await this.scheduleNextAlarm();
     const resource = waiting[0]?.value.resource;
@@ -271,6 +281,8 @@ export class MatchmakingQueue {
    * crítico do pareamento.
    */
   private reportActivity(resource: string, except?: WebSocket): void {
+    // Fila de revanche é particular: nunca aparece como "gente esperando".
+    if (this.ctx.getWebSockets().some((socket) => attachment(socket)?.private === true)) return;
     const count = this.waitingCount(except);
     this.ctx.waitUntil(this.env.SOCIAL_REALTIME_HUB
       .get(this.env.SOCIAL_REALTIME_HUB.idFromName('global'))
@@ -294,10 +306,10 @@ export class MatchmakingQueue {
     const now = Date.now();
     const deadlines = this.waitingSockets().flatMap((entry) => {
       const base = entry.value.joinedAt;
-      const ranked = entry.value.resource.split(':')[1] === 'RANKED';
+      const ranked = entry.value.resource.split(':')[1] === 'RANKED' && entry.value.private !== true;
       return [
         ...(ranked ? RANKED_RECHECK_MS.map((offset) => base + offset) : []),
-        base + QUEUE_TIMEOUT_MS,
+        base + timeoutFor(entry.value),
       ];
     }).filter((deadline) => deadline > now);
     const next = deadlines.sort((left, right) => left - right)[0];

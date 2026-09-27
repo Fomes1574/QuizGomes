@@ -1651,3 +1651,20 @@ input, select, textarea { font-size: max(16px, 1em); }
   .celebration__card, .celebration__big strong, .celebration__rays, .celebration__sparkles i { animation: none; }
   .celebration__sparkles i { opacity: .5; }
 }
+
+/* ===== Revanche ===== */
+.match-result-actions__rematch span[aria-hidden] { margin-right: 8px; }
+.rematch-invite { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 10px 12px; width: min(100%, 460px); margin: 0 auto 14px; padding: 14px 16px; border: 1px solid color-mix(in srgb, var(--brand) 40%, var(--border)); border-radius: 20px; background: color-mix(in srgb, var(--brand) 10%, var(--surface)); box-shadow: var(--shadow-md); animation: rematch-in 420ms var(--ease-spring) both; }
+.rematch-invite p { margin: 0; font-size: .9rem; }
+.rematch-invite__icon { display: grid; width: 40px; height: 40px; place-items: center; border-radius: 12px; color: #fff; background: var(--brand); font-size: 1.1rem; animation: rematch-pulse 1.4s ease-in-out infinite; }
+.rematch-invite__accept { grid-column: 1 / -1; }
+.rematch-toast { position: fixed; z-index: 60; left: 50%; bottom: calc(var(--nav-height, 72px) + 16px + env(safe-area-inset-bottom)); display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 10px 12px; width: min(420px, calc(100vw - 32px)); padding: 14px 16px; border: 1px solid var(--border); border-radius: 20px; background: var(--surface-raised, var(--surface)); box-shadow: var(--shadow-lg); transform: translateX(-50%); animation: rematch-toast-in 420ms var(--ease-spring) both; }
+.rematch-toast p { margin: 0; font-size: .86rem; }
+.rematch-toast__actions { display: flex; grid-column: 1 / -1; gap: 8px; }
+.rematch-toast__actions .button { flex: 1; }
+@keyframes rematch-in { from { opacity: 0; transform: translateY(10px) scale(.96); } }
+@keyframes rematch-toast-in { from { opacity: 0; transform: translate(-50%, 16px); } }
+@keyframes rematch-pulse { 50% { transform: scale(1.08); } }
+@media (prefers-reduced-motion: reduce) {
+  .rematch-invite, .rematch-toast, .rematch-invite__icon { animation: none; }
+}

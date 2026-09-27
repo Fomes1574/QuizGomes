@@ -131,7 +131,7 @@ export function useMatchmaking() {
   const originRef = useRef<MatchOrigin | null>(null);
   const navigatingRef = useRef(false);
   const statusRef = useRef<MatchmakingStatus>('idle');
-  const lastStartRef = useRef<{ mode: MatchMode; themeId: string; themeName?: string | undefined; themeSlug?: string | undefined } | null>(null);
+  const lastStartRef = useRef<{ mode: MatchMode; rematch?: string | undefined; themeId: string; themeName?: string | undefined; themeSlug?: string | undefined } | null>(null);
   const wentHiddenRef = useRef(false);
   const [status, setStatusState] = useState<MatchmakingStatus>('idle');
   const [error, setError] = useState<string | null>(null);
@@ -269,8 +269,14 @@ export function useMatchmaking() {
     }
   }, [getToken, navigate, setStatus]);
 
-  const start = useCallback(async (themeId: string, mode: MatchMode, themeSlug?: string, themeName?: string) => {
-    lastStartRef.current = { mode, themeId, themeName, themeSlug };
+  const start = useCallback(async (
+    themeId: string,
+    mode: MatchMode,
+    themeSlug?: string,
+    themeName?: string,
+    options: { rematch?: string } = {},
+  ) => {
+    lastStartRef.current = { mode, rematch: options.rematch, themeId, themeName, themeSlug };
     wentHiddenRef.current = typeof document !== 'undefined' && document.visibilityState === 'hidden';
     originRef.current = themeSlug === undefined ? null : {
       mode,
@@ -297,6 +303,8 @@ export function useMatchmaking() {
         body: { resource, scope: 'matchmaking' }, getToken, method: 'POST', token,
       });
       const params = new URLSearchParams({ hb: '1', resource, ticket: ticket.ticket });
+      // Revanche: a fila privada da dupla daquela partida (o servidor confere).
+      if (options.rematch !== undefined) params.set('rematch', options.rematch);
       const socket = new WebSocket(websocketUrl(`/api/realtime/matchmaking?${params}`));
       socketRef.current = socket;
       setStatus('searching');
@@ -368,7 +376,7 @@ export function useMatchmaking() {
   const resume = useCallback(() => {
     const last = lastStartRef.current;
     if (last === null) return;
-    void start(last.themeId, last.mode, last.themeSlug, last.themeName);
+    void start(last.themeId, last.mode, last.themeSlug, last.themeName, last.rematch === undefined ? {} : { rematch: last.rematch });
   }, [start]);
 
   return { cancel, elapsedSeconds, error, opponent, paused: status === 'paused', preparing, resume, start, status, timeoutAt };

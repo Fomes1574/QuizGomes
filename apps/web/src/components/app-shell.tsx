@@ -5,6 +5,7 @@ import { useAuth } from '../features/auth-context.js';
 import { useSocial } from '../features/social-context.js';
 import { Avatar } from './avatar.js';
 import { CelebrationHost } from './celebration-host.js';
+import { RematchToast } from './rematch-toast.js';
 import { AvatarFrame } from './avatar-frame.js';
 import { Icon, type IconName } from './icons.js';
 import { Logo } from './logo.js';
@@ -67,6 +68,7 @@ export function AppShell() {
         <Outlet />
       </main>
       <CelebrationHost />
+      <RematchToast />
       <nav className={`bottom-nav${activeIndex < 0 ? ' bottom-nav--none' : ''}`} aria-label="Navegação principal" style={navStyle}>
         <span aria-hidden="true" className="bottom-nav__indicator" />
         {destinations.map((destination, index) => (

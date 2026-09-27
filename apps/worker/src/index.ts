@@ -306,6 +306,13 @@ async function realtimeRoute(request: Request, env: Env, url: URL, context?: Exe
     const userRow = await env.CORE_DB.prepare('SELECT id FROM users WHERE firebase_uid = ?1 AND disabled_at IS NULL')
       .bind(uid).first<{ id: string }>();
     if (userRow === null) throw new ApiError(409, 'PROFILE_REQUIRED', 'Conclua seu perfil antes de jogar.');
+    // Revanche: fila privada da dupla (só os dois jogadores daquela partida).
+    const rematchId = url.searchParams.get('rematch');
+    if (rematchId !== null) {
+      if (!/^[a-f0-9-]{36}$/i.test(rematchId)) throw new ApiError(400, 'INVALID_QUEUE', 'A fila escolhida é inválida.');
+      const target = await rematchTarget(env, userRow.id, rematchId);
+      if (target.resource !== resource) throw new ApiError(400, 'INVALID_QUEUE', 'A fila escolhida é inválida.');
+    }
     const matches = new LiveMatchRepository(env.CORE_DB, env.QUESTIONS_DB);
     if (await matches.activeMatchForFirebaseUid(uid) !== null) {
       throw new ApiError(409, 'PLAYER_BUSY', 'Você já está em outra partida.');
@@ -344,7 +351,7 @@ async function realtimeRoute(request: Request, env: Env, url: URL, context?: Exe
       method: 'POST',
     });
     if (!reserved.ok) throw new ApiError(409, 'PLAYER_BUSY', 'Você já está em outra atividade.');
-    const queue = env.MATCHMAKING_QUEUE.get(env.MATCHMAKING_QUEUE.idFromName(resource));
+    const queue = env.MATCHMAKING_QUEUE.get(env.MATCHMAKING_QUEUE.idFromName(rematchId === null ? resource : `rematch:${rematchId}`));
     let response: Response;
     try {
       response = await queue.fetch(new Request('https://queue.internal/socket', {
@@ -353,6 +360,7 @@ async function realtimeRoute(request: Request, env: Env, url: URL, context?: Exe
           'X-QG-Authenticated-Uid': uid,
           ...(url.searchParams.get('hb') === '1' ? { 'X-QG-Heartbeat': '1' } : {}),
           'X-QG-Match-Resource': resource,
+          ...(rematchId === null ? {} : { 'X-QG-Private-Queue': '1' }),
           'X-QG-Search-Token': searchToken,
           'X-QG-Theme-Knowledge': String(ranking?.knowledge ?? 0),
         },
@@ -366,7 +374,7 @@ async function realtimeRoute(request: Request, env: Env, url: URL, context?: Exe
     }
     if (response.status !== 101) {
       await releaseThisSearch();
-    } else if (context !== undefined && new SocialPushService(env, new SocialRepository(env.CORE_DB)).configured) {
+    } else if (rematchId === null && context !== undefined && new SocialPushService(env, new SocialRepository(env.CORE_DB)).configured) {
       context.waitUntil(alertFriendsInQueue(env, {
         origin: url.origin, resource, themeId, uid, userId: userRow.id,
       }).catch(() => {
@@ -1424,6 +1432,53 @@ async function themeArtworkRoute(
   return new Response(request.method === 'HEAD' ? null : artwork.data, { headers });
 }
 
+/** Revanche: vale até 3 min depois do fim; o convite ao adversário dura 30 s. */
+export const REMATCH_WINDOW_MS = 3 * 60_000;
+export const REMATCH_INVITE_MS = 30_000;
+
+interface RematchTarget {
+  mode: 'CASUAL' | 'RANKED';
+  opponentUserId: string;
+  resource: string;
+  themeName: string;
+  themeSlug: string;
+}
+
+/**
+ * Revanche só existe entre os dois jogadores de uma partida ao vivo que
+ * terminou há pouco (nunca anulada nem desafio assíncrono). O servidor
+ * descobre adversário, tema e modo pela própria partida.
+ */
+async function rematchTarget(env: Env, userId: string, matchId: string, nowMs = Date.now()): Promise<RematchTarget> {
+  const row = await env.CORE_DB.prepare(
+    `SELECT m.theme_id, m.mode, m.finished_at, t.name AS theme_name, t.slug AS theme_slug, them.user_id AS opponent_user_id
+       FROM matches m
+       JOIN match_players me ON me.match_id = m.id AND me.user_id = ?2
+       JOIN match_players them ON them.match_id = m.id AND them.user_id <> me.user_id
+       JOIN themes t ON t.id = m.theme_id AND t.status = 'ACTIVE'
+      WHERE m.id = ?1 AND m.status = 'FINISHED' AND m.kind IN ('MATCHMAKING', 'DIRECT_LIVE')`,
+  ).bind(matchId, userId).first<{
+    finished_at: string | null;
+    mode: 'CASUAL' | 'RANKED';
+    opponent_user_id: string;
+    theme_id: string;
+    theme_name: string;
+    theme_slug: string;
+  }>();
+  if (row === null) throw new ApiError(404, 'REMATCH_UNAVAILABLE', 'Essa revanche não está disponível.');
+  const finishedMs = row.finished_at === null ? Number.NaN : Date.parse(`${row.finished_at.replace(' ', 'T')}${row.finished_at.endsWith('Z') ? '' : 'Z'}`);
+  if (!Number.isFinite(finishedMs) || nowMs - finishedMs > REMATCH_WINDOW_MS) {
+    throw new ApiError(409, 'REMATCH_EXPIRED', 'O tempo para a revanche acabou.');
+  }
+  return {
+    mode: row.mode,
+    opponentUserId: row.opponent_user_id,
+    resource: `${row.theme_id}:${row.mode}`,
+    themeName: row.theme_name,
+    themeSlug: row.theme_slug,
+  };
+}
+
 function notifySocial(
   env: Env,
   context: ExecutionContext,
@@ -1879,6 +1934,25 @@ async function socialRoute(request: Request, env: Env, url: URL, context: Execut
   }
   if (url.pathname === '/api/social/search' && request.method === 'GET') {
     return json({ users: await social.search(profile.userId, url.searchParams.get('q') ?? '') });
+  }
+  const rematch = /^\/api\/social\/rematch\/([a-f0-9-]{36})$/i.exec(url.pathname);
+  if (rematch?.[1] !== undefined && request.method === 'POST') {
+    const target = await rematchTarget(env, profile.userId, rematch[1]);
+    // Quem bloqueou (ou foi bloqueado) nunca recebe convite; a fila privada também não os parearia.
+    if (await social.blocked(profile.userId, target.opponentUserId)) {
+      throw new ApiError(404, 'REMATCH_UNAVAILABLE', 'Essa revanche não está disponível.');
+    }
+    const expiresAt = Date.now() + REMATCH_INVITE_MS;
+    notifySocial(env, context, [target.opponentUserId], {
+      expiresAt,
+      fromName: profile.displayName,
+      matchId: rematch[1],
+      mode: target.mode,
+      themeName: target.themeName,
+      themeSlug: target.themeSlug,
+      type: 'REMATCH_REQUESTED',
+    });
+    return json({ expiresAt, mode: target.mode, resource: target.resource, themeSlug: target.themeSlug });
   }
   const matchOpponent = /^\/api\/social\/match-opponent\/([a-f0-9-]{36})$/i.exec(url.pathname);
   if (matchOpponent?.[1] !== undefined && (request.method === 'GET' || request.method === 'POST')) {

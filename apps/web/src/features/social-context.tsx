@@ -12,6 +12,7 @@ import type { PublicQuestion } from '@quiz-gomes/domain';
 import { apiRequest, websocketUrl } from '../lib/api.js';
 import type { MatchFoundOpponent } from '../lib/preloaded-match-room.js';
 import { parseQueueActivity, type QueueActivity } from '../lib/queue-activity.js';
+import { parseRematchInvite, publishRematchInvite } from '../lib/rematch.js';
 import type { FriendPresence, FriendPresenceEntry, FriendPresenceSnapshot } from '../lib/social.js';
 import { listenForForegroundFriendRequests } from '../lib/social-notifications.js';
 import { useAuth } from './auth-context.js';
@@ -195,6 +196,9 @@ export function SocialProvider({ children }: { children: ReactNode }) {
               if (parsed !== null) setQueueActivity(parsed);
             } else if (message.type === 'SOCIAL_INVALIDATED') {
               void refresh();
+            } else if (message.type === 'REMATCH_REQUESTED') {
+              const invite = parseRematchInvite(message);
+              if (invite !== null) publishRematchInvite(invite);
             } else if (message.type === 'CHALLENGE_UPDATED') {
               setChallengeRevision((current) => current + 1);
             } else if (message.type === 'CHALLENGE_STARTED' &&

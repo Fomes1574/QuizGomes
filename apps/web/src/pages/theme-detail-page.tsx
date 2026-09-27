@@ -26,7 +26,13 @@ import type { SocialFriend, SocialSnapshot } from '../lib/social.js';
 export function ThemeDetailPage() {
   const { slug = '' } = useParams();
   const location = useLocation();
-  const restored = location.state as { autoPlay?: boolean; mode?: MatchMode } | null;
+  const restored = location.state as { autoPlay?: boolean; mode?: MatchMode; rematch?: string; rematchWith?: string } | null;
+  // Revanche vem do resultado (quem pediu ou quem aceitou): fila privada da dupla.
+  const [rematch, setRematch] = useState<{ matchId: string; opponentName: string } | null>(() => (
+    typeof restored?.rematch === 'string' && /^[a-f0-9-]{36}$/i.test(restored.rematch)
+      ? { matchId: restored.rematch, opponentName: typeof restored.rematchWith === 'string' ? restored.rematchWith.slice(0, 40) : 'seu adversário' }
+      : null
+  ));
   // Link "Me chama nessa fila": ?jogar=normal|rankeada.
   const invitedMode = queueInviteMode(location.search);
   const navigate = useNavigate();
@@ -98,10 +104,15 @@ export function ThemeDetailPage() {
     if (consumedAutoPlay.current || !wantsAutoPlay || profile === null || data === null) return;
     consumedAutoPlay.current = true;
     const autoMode = invitedMode ?? (restored?.mode === 'RANKED' ? 'RANKED' : 'CASUAL');
-    void navigate(location.pathname, { replace: true, state: { mode: autoMode } });
+    // Mantém a revanche no histórico: a rota usa esse id como chave e não pode remontar no meio da busca.
+    void navigate(location.pathname, {
+      replace: true,
+      state: rematch === null ? { mode: autoMode } : { mode: autoMode, rematch: rematch.matchId, rematchWith: rematch.opponentName },
+    });
     if (data.theme.activeQuestionCount < questionsForMode(autoMode)) return;
-    void startMatchmaking(data.theme.id, autoMode, slug, data.theme.name);
-  }, [data, invitedMode, location.pathname, navigate, profile, restored, slug, startMatchmaking]);
+    if (rematch === null) void startMatchmaking(data.theme.id, autoMode, slug, data.theme.name);
+    else void startMatchmaking(data.theme.id, autoMode, slug, data.theme.name, { rematch: rematch.matchId });
+  }, [data, invitedMode, location.pathname, navigate, profile, rematch, restored, slug, startMatchmaking]);
 
   // Nome do tema vizinho com gente esperando só é necessário durante a busca.
   const searching = matchmaking.status === 'searching';
@@ -221,7 +232,7 @@ export function ThemeDetailPage() {
                 <Button
                   className="play-card__cta"
                   disabled={!canPlay || !realtimeEnabled}
-                  onClick={() => { feedback('tap'); void matchmaking.start(data.theme.id, mode, slug, data.theme.name); }}
+                  onClick={() => { feedback('tap'); setRematch(null); void matchmaking.start(data.theme.id, mode, slug, data.theme.name); }}
                 ><Icon name="play" />Puxar partida</Button>
                 {mode === 'CASUAL' && (
                   <Button
@@ -304,19 +315,20 @@ export function ThemeDetailPage() {
             void navigate(`/temas/${encodeURIComponent(neighbor.theme.slug)}`, { state: { autoPlay: true, mode } });
           },
         }}
-        onCancel={matchmaking.cancel}
-        onClose={matchmaking.cancel}
+        onCancel={() => { matchmaking.cancel(); setRematch(null); }}
+        onClose={() => { matchmaking.cancel(); setRematch(null); }}
         onResume={matchmaking.resume}
         timeoutActions={{
           onCallSomeone: () => { matchmaking.cancel(); void callSomeone(); },
           onChallengeFriend: mode === 'CASUAL' && friends.length > 0
             ? () => { matchmaking.cancel(); setChallengePickerOpen(true); }
             : undefined,
-          onRetry: () => { void matchmaking.start(data.theme.id, mode, slug, data.theme.name); },
+          onRetry: () => { setRematch(null); void matchmaking.start(data.theme.id, mode, slug, data.theme.name); },
         }}
         waitingOthers={Math.max(0, waitingHere - 1)}
         opponent={matchmaking.opponent}
         preparing={matchmaking.preparing}
+        rematchWith={rematch?.opponentName}
         status={matchmaking.status}
         theme={data.theme}
         viewer={profile === null ? undefined : {

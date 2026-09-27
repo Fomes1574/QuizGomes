@@ -52,6 +52,7 @@ export function MatchmakingDialog({
   onResume,
   opponent,
   preparing,
+  rematchWith,
   status,
   theme,
   timeoutActions,
@@ -75,6 +76,8 @@ export function MatchmakingDialog({
   waitingOthers?: number | undefined;
   opponent: MatchFoundOpponent | null;
   preparing: boolean;
+  /** Revanche: fila privada esperando esta pessoa aceitar (30 s). */
+  rematchWith?: string | undefined;
   status: Exclude<MatchmakingStatus, 'idle'>;
   theme: ThemeSummary;
   /** Ausente enquanto não houver perfil carregado: a tela cai no retrato único do adversário. */
@@ -200,10 +203,12 @@ export function MatchmakingDialog({
           <div className="matchmaking-search__heading">
             <span className="eyebrow">{theme.name}</span>
             <h2 id="matchmaking-search-title">
-              Procurando adversário
+              {rematchWith === undefined ? 'Procurando adversário' : `Revanche com ${rematchWith}`}
               <span aria-hidden="true" className="matchmaking-dots"><i /><i /><i /></span>
             </h2>
-            <p aria-live="off" className="matchmaking-tagline" key={phraseIndex}>{SEARCH_PHRASES[phraseIndex]}</p>
+            <p aria-live="off" className="matchmaking-tagline" key={rematchWith === undefined ? phraseIndex : 'rematch'}>
+              {rematchWith === undefined ? SEARCH_PHRASES[phraseIndex] : `Esperando ${rematchWith} aceitar. Mesmo tema, mesmo modo.`}
+            </p>
           </div>
           <div className="matchmaking-meta">
             {mode !== undefined && (
@@ -213,7 +218,7 @@ export function MatchmakingDialog({
               <span aria-hidden="true" className="matchmaking-clock__dot" />{searchTimer(elapsedSeconds)}
             </strong>
           </div>
-          {waitingOthers !== undefined && (
+          {waitingOthers !== undefined && rematchWith === undefined && (
             <p className={`matchmaking-live${waitingOthers > 0 ? ' matchmaking-live--warm' : ''}`}>
               <span aria-hidden="true" className="theme-card__live-dot" />
               <span>{waitingOthers === 0
@@ -221,7 +226,7 @@ export function MatchmakingDialog({
                 : waitingOthers === 1 ? 'Tem mais 1 pessoa nesta fila' : `Tem mais ${waitingOthers} pessoas nesta fila`}</span>
             </p>
           )}
-          {neighbor !== undefined && (waitingOthers ?? 0) === 0 && status === 'searching' && (
+          {neighbor !== undefined && rematchWith === undefined && (waitingOthers ?? 0) === 0 && status === 'searching' && (
             <button className="matchmaking-neighbor" onClick={neighbor.onSwitch} type="button">
               <span className="matchmaking-neighbor__copy">
                 <small>{neighbor.count === 1 ? '1 pessoa esperando' : `${neighbor.count} pessoas esperando`} em</small>
@@ -290,8 +295,10 @@ export function MatchmakingDialog({
         {status === 'timed-out' ? (
           <div className="matchmaking-timeout">
             <span className="state-card__orb">…</span>
-            <h2 id="matchmaking-timeout-title">Nenhum jogador neste tema no momento</h2>
-            <p>A busca terminou após 60 segundos. Chame alguém para cair na fila com você, ou tente de novo.</p>
+            <h2 id="matchmaking-timeout-title">{rematchWith === undefined ? 'Nenhum jogador neste tema no momento' : `${rematchWith} não aceitou a tempo`}</h2>
+            <p>{rematchWith === undefined
+              ? 'A busca terminou após 60 segundos. Chame alguém para cair na fila com você, ou tente de novo.'
+              : 'A revanche vale por 30 segundos. Que tal buscar outro adversário no mesmo tema?'}</p>
             {timeoutActions === undefined ? (
               <Button data-matchmaking-focus="close" onClick={onClose}>Voltar ao tema</Button>
             ) : (
@@ -300,7 +307,7 @@ export function MatchmakingDialog({
                 {timeoutActions.onChallengeFriend !== undefined && (
                   <Button onClick={timeoutActions.onChallengeFriend} variant="secondary">Desafiar um amigo</Button>
                 )}
-                <Button onClick={timeoutActions.onRetry} variant="secondary">Tentar de novo</Button>
+                <Button onClick={timeoutActions.onRetry} variant="secondary">{rematchWith === undefined ? 'Tentar de novo' : 'Buscar outro adversário'}</Button>
                 <Button data-matchmaking-focus="close" onClick={onClose} variant="ghost">Voltar ao tema</Button>
               </div>
             )}

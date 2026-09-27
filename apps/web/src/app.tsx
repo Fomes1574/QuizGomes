@@ -1,5 +1,5 @@
 import { lazy, Suspense } from 'react';
-import { Navigate, Route, Routes, useParams } from 'react-router-dom';
+import { Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom';
 import { AppShell } from './components/app-shell.js';
 import { LoadingState } from './components/async-state.js';
 import { DirectChallengeWaiting } from './components/direct-challenge-waiting.js';
@@ -17,7 +17,10 @@ const SocialPage = lazy(() => import('./pages/social-page.js').then((module) => 
 /** Trocar de tema (ex.: "ir para a fila vizinha") remonta a página do zero. */
 function ThemeDetailRoute() {
   const { slug = '' } = useParams();
-  return <ThemeDetailPage key={slug} />;
+  // Um convite de revanche aceito já dentro do mesmo tema também remonta a
+  // página: a busca privada começa do zero, como veio do resultado.
+  const rematch = (useLocation().state as { rematch?: unknown } | null)?.rematch;
+  return <ThemeDetailPage key={typeof rematch === 'string' ? `${slug}:${rematch}` : slug} />;
 }
 
 export function App() {

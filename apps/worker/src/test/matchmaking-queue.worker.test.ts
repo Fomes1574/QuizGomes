@@ -91,7 +91,7 @@ async function seedFixture(prefix: string): Promise<{
   return { themeId, uids };
 }
 
-async function openQueue(resource: string, uid: string, knowledge: number): Promise<SocketCapture> {
+async function openQueue(resource: string, uid: string, knowledge: number, privateQueue?: string): Promise<SocketCapture> {
   // A fila reconcilia a reserva de Presence ao parear (idle -> matchmaking -> preparing):
   // sem essa reserva prévia a transição falha por CAS e o par nunca fecha.
   const presence = env.PRESENCE_HUB.get(env.PRESENCE_HUB.idFromName(uid));
@@ -101,12 +101,13 @@ async function openQueue(resource: string, uid: string, knowledge: number): Prom
   });
   expect(reserved.ok).toBe(true);
 
-  const queue = env.MATCHMAKING_QUEUE.get(env.MATCHMAKING_QUEUE.idFromName(resource));
+  const queue = env.MATCHMAKING_QUEUE.get(env.MATCHMAKING_QUEUE.idFromName(privateQueue ?? resource));
   const response = await queue.fetch(new Request('https://queue.internal/socket', {
     headers: {
       Upgrade: 'websocket',
       'X-QG-Authenticated-Uid': uid,
       'X-QG-Match-Resource': resource,
+      ...(privateQueue === undefined ? {} : { 'X-QG-Private-Queue': '1' }),
       'X-QG-Theme-Knowledge': String(knowledge),
     },
   }));
@@ -138,6 +139,19 @@ describe('MatchmakingQueue — pareamento por tema/Conhecimento', () => {
       first.waitFor('MATCH_FOUND'), second.waitFor('MATCH_FOUND'),
     ]);
     expect(foundFirst.roomId).toBe(foundSecond.roomId);
+  });
+
+  it('revanche: fila privada pareia a dupla na Rankeada mesmo em divisões opostas, com prazo de 30 s', async () => {
+    const { themeId, uids } = await seedFixture('mmq-rematch');
+    const resource = `${themeId}:RANKED`;
+    const key = `rematch:${crypto.randomUUID()}`;
+    const low = await openQueue(resource, uids[0], 0, key);
+    const searching = await low.waitFor('SEARCHING');
+    // Prazo menor que o da fila pública (60 s): a revanche é um convite rápido.
+    expect(Number(searching.timeoutAt) - Date.now()).toBeLessThanOrEqual(30_000);
+    const high = await openQueue(resource, uids[1], 999_999, key);
+    const [foundLow, foundHigh] = await Promise.all([low.waitFor('MATCH_FOUND'), high.waitFor('MATCH_FOUND')]);
+    expect(foundLow.roomId).toBe(foundHigh.roomId);
   });
 
   it('Rankeada não pareia divisões muito distantes nos primeiros 15 s de espera', async () => {

@@ -19,6 +19,13 @@ import { MatchScreen } from '../components/match-screen.js';
 import { ReportQuestionDialog } from '../components/report-question-dialog.js';
 import { useAuth } from '../features/auth-context.js';
 import { apiRequest, websocketUrl } from '../lib/api.js';
+import {
+  clearRematchInvite,
+  currentRematchInvite,
+  REMATCH_INVITE_EVENT,
+  rematchNavigationState,
+  type RematchInvite,
+} from '../lib/rematch.js';
 import { clearDuelHandoff } from '../lib/match-handoff.js';
 import { takePreparedMatchRoom } from '../lib/preloaded-match-room.js';
 import { QUESTION_IMAGE_READY_CAP_MS, waitForQuestionImage } from '../lib/question-image-ready.js';
@@ -554,6 +561,47 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
       }));
   };
 
+  // Revanche: convite recebido para esta partida (canal social) e pedido próprio.
+  const [rematchInvite, setRematchInvite] = useState<RematchInvite | null>(() => {
+    const invite = currentRematchInvite();
+    return invite?.matchId === sessionId ? invite : null;
+  });
+  const [rematchRequest, setRematchRequest] = useState<{ message?: string; state: 'error' | 'idle' | 'sending' }>({ state: 'idle' });
+  useEffect(() => {
+    if (isChallenge) return undefined;
+    const onInvite = (event: Event) => {
+      const invite = (event as CustomEvent<RematchInvite>).detail;
+      if (invite.matchId === sessionId) setRematchInvite(invite);
+    };
+    window.addEventListener(REMATCH_INVITE_EVENT, onInvite);
+    return () => window.removeEventListener(REMATCH_INVITE_EVENT, onInvite);
+  }, [isChallenge, sessionId]);
+  useEffect(() => {
+    if (rematchInvite === null) return undefined;
+    // O convite vale 30 s: depois disso o botão de aceitar some sozinho.
+    const timer = window.setTimeout(() => setRematchInvite(null), Math.max(0, rematchInvite.expiresAt - Date.now()));
+    return () => window.clearTimeout(timer);
+  }, [rematchInvite]);
+  const opponentDisplayName = projection?.opponent.displayName ?? 'seu adversário';
+  const requestRematch = () => {
+    setRematchRequest({ state: 'sending' });
+    void apiRequest<{ mode: 'CASUAL' | 'RANKED'; themeSlug: string }>(`/api/social/rematch/${encodeURIComponent(sessionId)}`, {
+      getToken,
+      method: 'POST',
+    }).then((response) => {
+      void navigate(`/temas/${encodeURIComponent(response.themeSlug)}`, {
+        state: rematchNavigationState({ fromName: opponentDisplayName, matchId: sessionId, mode: response.mode }),
+      });
+    }).catch((requestError: unknown) => setRematchRequest({
+      message: requestError instanceof Error ? requestError.message : 'Não foi possível pedir revanche.',
+      state: 'error',
+    }));
+  };
+  const acceptRematch = (invite: RematchInvite) => {
+    clearRematchInvite(invite.matchId);
+    void navigate(`/temas/${encodeURIComponent(invite.themeSlug)}`, { state: rematchNavigationState(invite) });
+  };
+
   const matchOrigin = (location.state as {
     matchOrigin?: { mode?: string; returnTo?: string; themeName?: string };
   } | null)?.matchOrigin;
@@ -613,6 +661,13 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
         onReport={(question) => setReportTarget(question)}
         personalRecord={viewer.personalRecord === true}
         ranked={rankedMatch}
+        rematch={isChallenge || viewer.result === 'VOID' ? undefined : {
+          ...(rematchRequest.message === undefined ? {} : { message: rematchRequest.message }),
+          incoming: rematchInvite,
+          onAccept: acceptRematch,
+          onRequest: requestRematch,
+          state: rematchRequest.state,
+        }}
         shareUrl={typeof matchOrigin?.returnTo === 'string' && matchOrigin.returnTo.startsWith('/temas/')
           ? `${window.location.origin}${matchOrigin.returnTo.split('?')[0] ?? ''}`
           : window.location.origin}

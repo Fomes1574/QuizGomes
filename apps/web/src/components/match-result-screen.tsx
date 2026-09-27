@@ -9,6 +9,7 @@ import { Icon } from './icons.js';
 import { Logo } from './logo.js';
 import { InstallInvite } from './install-invite.js';
 import { ShareResultButton } from './share-result-button.js';
+import type { RematchInvite } from '../lib/rematch.js';
 
 interface ResultParticipant {
   customAvatarUrl?: string | null;
@@ -112,6 +113,7 @@ export function MatchResultScreen({
   personalRecord = false,
   questions,
   ranked,
+  rematch,
   shareUrl,
   themeName,
   viewer,
@@ -134,6 +136,14 @@ export function MatchResultScreen({
   personalRecord?: boolean;
   /** Normal nunca altera Conhecimento; indefinido mantém os três indicadores. */
   ranked?: boolean | undefined;
+  /** Revanche imediata contra o mesmo adversário (fila privada de 30 s). */
+  rematch?: {
+    incoming: RematchInvite | null;
+    message?: string;
+    onAccept: (invite: RematchInvite) => void;
+    onRequest: () => void;
+    state: 'error' | 'idle' | 'sending';
+  } | undefined;
   /** Link do tema que acompanha o cartão compartilhado (abre a prévia do tema). */
   shareUrl?: string | undefined;
   /** Nome do tema, só para a carta de story (texto de exibição). */
@@ -249,9 +259,22 @@ export function MatchResultScreen({
           </ul>
         </section>
       )}
+      {rematch?.incoming != null && !cancelledBeforeStart && (
+        <div className="rematch-invite" role="status">
+          <span aria-hidden="true" className="rematch-invite__icon">⚔</span>
+          <p><strong>{rematch.incoming.fromName}</strong> quer revanche!</p>
+          <Button className="rematch-invite__accept" onClick={() => { if (rematch.incoming !== null) rematch.onAccept(rematch.incoming); }}>Aceitar revanche</Button>
+        </div>
+      )}
       <div className="match-result-actions">
+        {rematch !== undefined && rematch.incoming === null && !cancelledBeforeStart && (
+          <Button className="match-result-actions__rematch" disabled={rematch.state === 'sending'} onClick={rematch.onRequest}>
+            <span aria-hidden="true">⚔</span>{rematch.state === 'sending' ? 'Chamando…' : `Revanche com ${opponent.name.split(' ')[0] ?? 'adversário'}`}
+          </Button>
+        )}
+        {rematch?.state === 'error' && rematch.message !== undefined && <p className="form-error">{rematch.message}</p>}
         {onPlayAgain !== undefined && !cancelledBeforeStart && (
-          <Button className="match-result-actions__again" onClick={onPlayAgain}><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 4.5v15a1 1 0 0 0 1.5.86l12.3-7.5a1 1 0 0 0 0-1.72L8.5 3.64A1 1 0 0 0 7 4.5Z" /></svg>Jogar de novo</Button>
+          <Button className="match-result-actions__again" onClick={onPlayAgain} variant={rematch === undefined ? 'primary' : 'secondary'}><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 4.5v15a1 1 0 0 0 1.5.86l12.3-7.5a1 1 0 0 0 0-1.72L8.5 3.64A1 1 0 0 0 7 4.5Z" /></svg>Jogar de novo</Button>
         )}
         {addFriend !== undefined && addFriend.status !== 'friend' && !cancelledBeforeStart && (
           <Button
