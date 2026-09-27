@@ -35,7 +35,7 @@ describe('prévia de link do tema', () => {
     expect(html).toContain(`<title>Bora uma rankeada de Rock &amp; "Metal" ${prefix}? · QUIZ GOMES</title>`);
     expect(html).toContain(`content="Bora uma rankeada de Rock & &quot;Metal&quot; ${prefix}? · QUIZ GOMES"`);
     expect(html).toContain(`content="https://quiz.test/temas/${prefix}?jogar=rankeada"`);
-    expect(html).toContain('content="https://quiz.test/icons/icon-512.webp"');
+    expect(html).toContain('content="https://quiz.test/og-image.jpg"');
     // Dentro de atributo entre aspas, "<" é texto inerte; aspas são escapadas acima.
     expect(html).toContain('content="Entra na fila comigo: 10 segundos por pergunta, sem desempate. Riffs <b>pesados</b>."');
     expect(html).not.toContain('<b>pesados</b>.</');

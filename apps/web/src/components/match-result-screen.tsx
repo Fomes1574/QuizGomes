@@ -112,6 +112,7 @@ export function MatchResultScreen({
   personalRecord = false,
   questions,
   ranked,
+  shareUrl,
   themeName,
   viewer,
   voidReason,
@@ -133,6 +134,8 @@ export function MatchResultScreen({
   personalRecord?: boolean;
   /** Normal nunca altera Conhecimento; indefinido mantém os três indicadores. */
   ranked?: boolean | undefined;
+  /** Link do tema que acompanha o cartão compartilhado (abre a prévia do tema). */
+  shareUrl?: string | undefined;
   /** Nome do tema, só para a carta de story (texto de exibição). */
   themeName?: string | null | undefined;
   viewer: ResultParticipant;
@@ -262,13 +265,13 @@ export function MatchResultScreen({
         {addFriend?.status === 'error' && addFriend.message !== undefined && <p className="form-error">{addFriend.message}</p>}
         {!cancelledBeforeStart && viewer.result !== 'VOID' && (
           <ShareResultButton input={{
-            opponent: { name: opponent.name, score: opponent.score },
+            opponent: { avatarUrl: opponent.customAvatarUrl ?? opponent.photoUrl ?? null, name: opponent.name, score: opponent.score },
             personalRecord,
             ranked: ranked === true,
             result: viewer.result,
             themeName: themeName ?? null,
-            viewer: { name: viewer.name, score: viewer.score },
-          }} />
+            viewer: { avatarUrl: viewer.customAvatarUrl ?? viewer.photoUrl ?? null, name: viewer.name, score: viewer.score },
+          }} url={shareUrl} />
         )}
         {viewer.result === 'WIN' && <InstallInvite />}
         <Button onClick={onBack} variant={onPlayAgain !== undefined && !cancelledBeforeStart ? 'ghost' : 'primary'}>{cancelledBeforeStart ? 'Voltar ao tema' : 'Voltar aos temas'}</Button>

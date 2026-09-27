@@ -613,6 +613,9 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
         onReport={(question) => setReportTarget(question)}
         personalRecord={viewer.personalRecord === true}
         ranked={rankedMatch}
+        shareUrl={typeof matchOrigin?.returnTo === 'string' && matchOrigin.returnTo.startsWith('/temas/')
+          ? `${window.location.origin}${matchOrigin.returnTo.split('?')[0] ?? ''}`
+          : window.location.origin}
         themeName={typeof matchOrigin?.themeName === 'string' ? matchOrigin.themeName.slice(0, 80) : null}
         opponent={{
           customAvatarUrl: projection?.opponent.customAvatarUrl ?? null,

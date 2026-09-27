@@ -11,6 +11,7 @@ import { useChallenges } from '../features/challenge-context.js';
 import { useFriendPresence, useSocial } from '../features/social-context.js';
 import { apiRequest } from '../lib/api.js';
 import { saveChallengeTarget } from '../lib/challenge-target.js';
+import { prepareShareCard } from '../lib/story-card.js';
 import { challengeCardCopy, type ChallengeView } from '../lib/challenges.js';
 import type { FriendPresence, SocialCandidate, SocialFriend, SocialSnapshot, SocialUser } from '../lib/social.js';
 
@@ -44,7 +45,20 @@ interface InviteProfile {
 function InviteCard({ lonely, profile }: { lonely: boolean; profile: InviteProfile }) {
   const [copied, setCopied] = useState<'id' | 'invite' | null>(null);
   const resetTimer = useRef<number | null>(null);
+  const cardRef = useRef<Promise<File> | null>(null);
   useEffect(() => () => { if (resetTimer.current !== null) window.clearTimeout(resetTimer.current); }, []);
+  // Cartão de convite pronto antes do toque (o Safari só compartilha no gesto).
+  useEffect(() => {
+    if (typeof navigator.canShare !== 'function') return undefined;
+    const timer = window.setTimeout(() => {
+      cardRef.current = prepareShareCard({
+        input: { name: profile.displayName, publicId: profile.publicId },
+        kind: 'invite',
+      });
+      cardRef.current.catch(() => { cardRef.current = null; });
+    }, 800);
+    return () => window.clearTimeout(timer);
+  }, [profile.displayName, profile.publicId]);
 
   async function copy(text: string, kind: 'id' | 'invite') {
     try {
@@ -63,6 +77,11 @@ function InviteCard({ lonely, profile }: { lonely: boolean; profile: InviteProfi
     const touch = typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches;
     if (touch && typeof navigator.share === 'function') {
       try {
+        const card = cardRef.current === null ? null : await cardRef.current.catch(() => null);
+        if (card !== null && navigator.canShare({ files: [card] })) {
+          await navigator.share({ files: [card], text: `${text} ${url}`, title: 'QUIZ GOMES' });
+          return;
+        }
         await navigator.share({ text, title: 'QUIZ GOMES', url });
       } catch {
         // Fechar a folha de compartilhamento não é erro.

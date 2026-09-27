@@ -50,9 +50,11 @@ export async function themeLinkPreview(request: Request, env: Env, url: URL): Pr
       : `Entra na fila comigo: 10 segundos por pergunta, sem desempate. ${theme.description}`,
     200,
   );
-  const image = theme.artwork_kind === 'CUSTOM' && theme.artwork_version > 0
+  const customArt = theme.artwork_kind === 'CUSTOM' && theme.artwork_version > 0;
+  // Sem arte própria, o cartão largo do QUIZ GOMES (1200 × 630) chama mais que um ícone.
+  const image = customArt
     ? new URL(`/api/theme-artwork/${encodeURIComponent(theme.id)}/v${theme.artwork_version}.webp`, url.origin).toString()
-    : new URL('/icons/icon-512.webp', url.origin).toString();
+    : new URL('/og-image.jpg', url.origin).toString();
   const canonical = new URL(`/temas/${encodeURIComponent(slug.toLowerCase())}`, url.origin);
   if (invite === 'normal' || invite === 'rankeada') canonical.searchParams.set('jogar', invite);
 
@@ -64,6 +66,7 @@ export async function themeLinkPreview(request: Request, env: Env, url: URL): Pr
   };
   const names: Record<string, string> = {
     description,
+    'twitter:card': customArt ? 'summary' : 'summary_large_image',
     'twitter:description': description,
     'twitter:image': image,
     'twitter:title': title,
