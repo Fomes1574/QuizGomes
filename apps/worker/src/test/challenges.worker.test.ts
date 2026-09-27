@@ -505,13 +505,14 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
     await repository.applyCompletionXp(created.challengeId);
 
     expect(await repository.byId(created.challengeId)).toMatchObject({ status: 'COMPLETED' });
-    // 64 do primeiro contra 60 do segundo: vitória do primeiro, +20 XP (desafio é sempre Casual).
+    // 64 do primeiro contra 60 do segundo: vitória do primeiro, +20 XP (desafio é sempre Casual);
+    // o segundo terminou e leva a participação de 5 XP.
     const xp = await env.CORE_DB.prepare(
       'SELECT user_id, total_xp FROM user_profiles WHERE user_id IN (?1, ?2) ORDER BY user_id',
     ).bind(first.id, second.id).all<{ total_xp: number; user_id: string }>();
     const byUser = new Map(xp.results.map((row) => [row.user_id, row.total_xp]));
     expect(byUser.get(first.id)).toBe(20);
-    expect(byUser.get(second.id)).toBe(0);
+    expect(byUser.get(second.id)).toBe(5);
 
     // Reexecutar sealHalf, recordHalfEffects e applyCompletionXp (simulando um retry
     // após falha) não duplica resposta, progressão nem paga XP duas vezes.
@@ -529,10 +530,10 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
     expect(await env.CORE_DB.prepare('SELECT total_xp FROM user_profiles WHERE user_id = ?1')
       .bind(first.id).first()).toEqual({ total_xp: 20 });
     expect(await env.CORE_DB.prepare('SELECT total_xp FROM user_profiles WHERE user_id = ?1')
-      .bind(second.id).first()).toEqual({ total_xp: 0 });
+      .bind(second.id).first()).toEqual({ total_xp: 5 });
   });
 
-  it('empate no assíncrono não paga XP a ninguém e Conhecimento nunca muda', async () => {
+  it('empate no assíncrono paga só a participação e Conhecimento nunca muda', async () => {
     const { themeSlug, users } = await fixture(2);
     const first = userAt(users, 0);
     const second = userAt(users, 1);
@@ -565,7 +566,7 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
     const xp = await env.CORE_DB.prepare(
       'SELECT SUM(total_xp) AS total FROM user_profiles WHERE user_id IN (?1, ?2)',
     ).bind(first.id, second.id).first<{ total: number }>();
-    expect(xp?.total).toBe(0);
+    expect(xp?.total).toBe(10);
     expect(await env.CORE_DB.prepare(
       'SELECT COUNT(*) AS total FROM theme_rankings WHERE user_id IN (?1, ?2)',
     ).bind(first.id, second.id).first()).toEqual({ total: 0 });

@@ -170,6 +170,26 @@ describe('Milestone 9B — presença privada entre amigos no runtime Workers', (
     }
   });
 
+  it('retrato usa a atividade já recebida, sem consultar a PresenceHub de cada amigo', async () => {
+    const users = await fixture();
+    const subject = at(users, 0);
+    const observer = await open(at(users, 1));
+    await open(subject);
+    await observer.waitFor('FRIEND_PRESENCE_CHANGED', subject.publicId);
+    // Aviso direto ao hub, sem passar pela PresenceHub (que continua "idle"):
+    // se o retrato consultasse a PresenceHub, voltaria ONLINE.
+    const pushed = await hub().fetch('https://social.internal/activity', {
+      body: JSON.stringify({
+        activity: 'matchmaking',
+        presenceObjectId: env.PRESENCE_HUB.idFromName(subject.uid).toString(),
+        resource: 'tema-cache:CASUAL',
+      }),
+      method: 'POST',
+    });
+    expect(pushed.ok).toBe(true);
+    expect((await snapshot([subject]))[0]).toMatchObject({ presence: 'MATCHMAKING', queueThemeId: 'tema-cache' });
+  });
+
   it('OFFLINE vence playing residual e snapshot consulta somente sessões conectadas', async () => {
     const users = await fixture();
     const subject = at(users, 0);

@@ -1,4 +1,4 @@
-import { advanceThemeStreak, type ThemeStreakState } from '@quiz-gomes/domain';
+import { advanceThemeStreak, previousDayKey, type ThemeStreakState } from '@quiz-gomes/domain';
 
 export interface ThemeStreakRecord extends ThemeStreakState {
   themeId: string;
@@ -69,16 +69,31 @@ export class StreakRepository {
     return row === null ? null : toRecord(row);
   }
 
-  /** Mesmo fallback de `activeStreak`, com nome/slug do tema para exibição direta. */
-  async activeStreakWithTheme(userId: string): Promise<(ThemeStreakRecord & { themeName: string; themeSlug: string }) | null> {
+  /**
+   * Ofensiva exibida no perfil, com nome/slug do tema. Quem não joga desde
+   * anteontem já perdeu a sequência, mesmo que a linha ainda guarde o número
+   * antigo; por isso o ranking usa a ofensiva viva, não `current_streak` cru.
+   */
+  async activeStreakWithTheme(
+    userId: string,
+    todayKey: string,
+  ): Promise<(ThemeStreakRecord & { atRisk: boolean; themeName: string; themeSlug: string }) | null> {
+    const yesterday = previousDayKey(todayKey);
     const row = await this.db.prepare(
-      `SELECT s.theme_id, s.current_streak, s.best_streak, s.last_active_day, t.name AS theme_name, t.slug AS theme_slug
+      `SELECT s.theme_id, s.best_streak, s.last_active_day, t.name AS theme_name, t.slug AS theme_slug,
+              CASE WHEN s.last_active_day >= ?2 THEN s.current_streak ELSE 0 END AS current_streak
          FROM user_theme_streaks s
          JOIN themes t ON t.id = s.theme_id
         WHERE s.user_id = ?1
-        ORDER BY s.current_streak DESC, s.theme_id
+        ORDER BY current_streak DESC, s.best_streak DESC, s.theme_id
         LIMIT 1`,
-    ).bind(userId).first<StreakRow & { theme_name: string; theme_slug: string }>();
-    return row === null ? null : { ...toRecord(row), themeName: row.theme_name, themeSlug: row.theme_slug };
+    ).bind(userId, yesterday).first<StreakRow & { theme_name: string; theme_slug: string }>();
+    if (row === null) return null;
+    return {
+      ...toRecord(row),
+      atRisk: row.current_streak > 0 && row.last_active_day === yesterday,
+      themeName: row.theme_name,
+      themeSlug: row.theme_slug,
+    };
   }
 }

@@ -730,7 +730,7 @@ describe('Milestone 8 no runtime Workers simulado', () => {
       firstReconnected.waitFor('MATCH_FINISHED'), second.waitFor('MATCH_FINISHED'),
     ]);
     expect(firstFinished.result?.viewer).toMatchObject({ knowledgeAfter: 575, knowledgeDelta: 75, result: 'WIN', xpDelta: 30 });
-    expect(secondFinished.result?.viewer).toMatchObject({ knowledgeAfter: 470, knowledgeDelta: -30, result: 'LOSS', xpDelta: 0 });
+    expect(secondFinished.result?.viewer).toMatchObject({ knowledgeAfter: 470, knowledgeDelta: -30, result: 'LOSS', xpDelta: 5 });
 
     const matchRow = await env.CORE_DB.prepare(
       'SELECT status, result_version, winner_user_id FROM matches WHERE id = ?1',
@@ -1135,7 +1135,8 @@ describe('Milestone 8 no runtime Workers simulado', () => {
     expect(concurrentResults[1]).toEqual(result);
     expect(result).toMatchObject({ status: 'FINISHED', winnerUserId: null });
     expect(result.players.map((player) => player.result)).toEqual(['DRAW', 'DRAW']);
-    expect(result.players.map((player) => [player.knowledgeDelta, player.xpDelta])).toEqual([[0, 0], [0, 0]]);
+    // Empate concluído paga só a participação (5 XP) e nunca mexe em Conhecimento.
+    expect(result.players.map((player) => [player.knowledgeDelta, player.xpDelta])).toEqual([[0, 5], [0, 5]]);
     const rankings = await env.CORE_DB.prepare(
       `SELECT knowledge, ranked_matches, wins, losses, draws
          FROM theme_rankings
@@ -1165,7 +1166,7 @@ describe('Milestone 8 no runtime Workers simulado', () => {
     await repository.markStarted(matchId);
     const result = await repository.finalize(finalizing);
     expect(result.players[0]).toMatchObject({ knowledgeAfter: 500, knowledgeDelta: 0, result: 'WIN', xpDelta: 20 });
-    expect(result.players[1]).toMatchObject({ knowledgeAfter: 500, knowledgeDelta: 0, result: 'LOSS', xpDelta: 0 });
+    expect(result.players[1]).toMatchObject({ knowledgeAfter: 500, knowledgeDelta: 0, result: 'LOSS', xpDelta: 5 });
     const rankings = await env.CORE_DB.prepare(
       'SELECT knowledge, ranked_matches FROM theme_rankings WHERE theme_id = ?1 ORDER BY user_id',
     ).bind(fixture.themeId).all<{ knowledge: number; ranked_matches: number }>();

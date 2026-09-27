@@ -38,11 +38,13 @@ Estas regras valem para toda alteração neste repositório.
 - Existe exatamente um pool por tema (não mais um pool por dificuldade); usa slots densos e sorteio uniforme.
 - O sorteio não consulta histórico de exibição: amostra uniforme sem reposição sobre os slots do pool. Repetir entre partidas diferentes é permitido; repetir dentro da mesma partida, não.
 - Por usuário+pool, manter apenas a descoberta histórica em estado compacto.
-- Normal (Casual) = 7 perguntas, vale 20 XP na vitória e nunca altera Conhecimento. Rankeada = 10 perguntas, vale 30 XP na vitória e altera Conhecimento pela tabela que antes pertencia só a Difícil (Empate/Anulada nunca alteram Conhecimento; abandono ranqueado aplica a perda que antes era de Difícil). Ambas usam 10 s por pergunta. Um tema libera Normal com 7 perguntas ativas e Rankeada com 10.
+- Normal (Casual) = 7 perguntas, vale 20 XP na vitória e nunca altera Conhecimento. Rankeada = 10 perguntas, vale 30 XP na vitória e altera Conhecimento pela tabela que antes pertencia só a Difícil (Empate/Anulada nunca alteram Conhecimento; abandono ranqueado aplica a perda que antes era de Difícil). Derrota ou empate de partida concluída (Normal, Rankeada ou desafio) vale 5 XP de participação; anulada e abandono valem 0. Ambas usam 10 s por pergunta. Um tema libera Normal com 7 perguntas ativas e Rankeada com 10.
 - Matchmaking Normal pareia só por tema. Matchmaking Rankeado pareia por tema e Conhecimento, com banda de divisão que se alarga pelo tempo de espera: mesma divisão até 15 s, divisões vizinhas até 30 s, até duas divisões até 45 s, qualquer divisão do mesmo tema depois disso.
 - No máximo 200 amizades ativas por usuário. Por dupla podem coexistir no máximo um desafio ASYNC vivo e um DIRECT vivo; DIRECT dura 30 s, ASYNC não expira e ambos são sempre Casual (7 perguntas, nunca alteram Conhecimento; desafio ranqueado não existe).
 - Manter camada de repository e roteamento de shards para perguntas.
 - Migrations D1 são versionadas e nunca reescritas depois de aplicadas.
+- O dia do jogo (missões, ofensiva, avisos) é o dia de Brasília (America/Sao_Paulo, UTC−3).
+- Limpeza automática (Cron de hora em hora): detalhes de partida/desafio encerrados, recibos de denúncia e de estatística vencem em 15 dias (denúncia só vale nesse prazo); histórico de administração vence em 6 meses, exceto concessão/remoção de ADMIN. Partidas, placares, perfis, Conhecimento, recordes, ofensivas e conquistas nunca vencem.
 
 ## Interface e acessibilidade
 

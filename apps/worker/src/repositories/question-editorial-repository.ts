@@ -276,30 +276,48 @@ export class QuestionEditorialRepository {
   }
 
   /**
-   * Aprova uma seleção já revisada, sempre em série. Assim cada aprovação vê
-   * a contagem/slot produzido pela anterior e não há corrida interna no mesmo
-   * pool. Antes de começar, o lote inteiro é conferido contra o tema e o
-   * estado atual; uma corrida externa vira falha explícita por item, nunca
-   * publicação silenciosa de outra pergunta.
+   * Aprova uma seleção já revisada. Perguntas novas do mesmo pool entram de
+   * uma vez, num único batch atômico: um UPDATE numera só as que ainda estão
+   * em revisão (na ordem enviada) a partir do fim do pool, e o pool passa a
+   * contar até o maior slot ocupado. Se outra aprovação mexeu no pool antes,
+   * as duas instruções não casam e nada muda (conflito explícito, sem slot
+   * vago). Rascunhos de edição trocam o slot da antiga, um a um.
    */
   async approveMany(input: {
     actorUserId: string;
     questionIds: readonly string[];
     themeId: string;
   }): Promise<{ approvedQuestionIds: string[]; failed: Array<{ code: string; questionId: string }> }> {
-    const records = await Promise.all(input.questionIds.map((questionId) => this.findForModeration(questionId)));
-    for (const record of records) {
-      if (record === null || record.themeId !== input.themeId) {
+    const ids = [...new Set(input.questionIds)];
+    const rows = await this.db.prepare(
+      `SELECT q.id, q.status, q.pool_id, q.replaces_question_id, p.theme_id
+         FROM questions q JOIN question_pools p ON p.id = q.pool_id
+        WHERE q.id IN (${ids.map((_, index) => `?${index + 1}`).join(',')})`,
+    ).bind(...ids).all<{ id: string; pool_id: string; replaces_question_id: string | null; status: string; theme_id: string }>();
+    const byId = new Map(rows.results.map((row) => [row.id, row]));
+    for (const questionId of ids) {
+      const row = byId.get(questionId);
+      if (row === undefined || row.theme_id !== input.themeId) {
         throw new ApiError(404, 'QUESTION_NOT_FOUND', 'Uma das perguntas não pertence a este tema.');
       }
-      if (record.status !== 'IN_REVIEW') {
+      if (row.status !== 'IN_REVIEW') {
         throw new ApiError(409, 'QUESTION_NOT_PENDING', 'Todas as perguntas do lote precisam estar em revisão. Atualize a tela.');
       }
     }
 
     const approvedQuestionIds: string[] = [];
     const failed: Array<{ code: string; questionId: string }> = [];
-    for (const questionId of input.questionIds) {
+    const fresh = ids.filter((questionId) => byId.get(questionId)?.replaces_question_id === null);
+    const poolIds = [...new Set(fresh.map((questionId) => byId.get(questionId)!.pool_id))];
+    for (const poolId of poolIds) {
+      const poolQuestionIds = fresh.filter((questionId) => byId.get(questionId)!.pool_id === poolId);
+      const approved = await this.approveNewInPool(poolId, poolQuestionIds, input.actorUserId);
+      for (const questionId of poolQuestionIds) {
+        if (approved.has(questionId)) approvedQuestionIds.push(questionId);
+        else failed.push({ code: 'QUESTION_CONFLICT', questionId });
+      }
+    }
+    for (const questionId of ids.filter((id) => !fresh.includes(id))) {
       try {
         await this.approve(questionId, input.actorUserId);
         approvedQuestionIds.push(questionId);
@@ -311,6 +329,54 @@ export class QuestionEditorialRepository {
       }
     }
     return { approvedQuestionIds, failed };
+  }
+
+  /** Publica perguntas novas de um pool num batch só; devolve as que ficaram ACTIVE. */
+  private async approveNewInPool(poolId: string, questionIds: readonly string[], actorUserId: string): Promise<Set<string>> {
+    const pool = await this.db.prepare('SELECT active_count FROM question_pools WHERE id = ?1')
+      .bind(poolId).first<{ active_count: number }>();
+    if (pool === null) throw new ApiError(500, 'POOL_NOT_FOUND', 'Pool da pergunta não encontrado.');
+    const base = pool.active_count;
+    try {
+      await this.db.batch([
+        // A guarda `active_count = base` fica dentro do CTE: se outra aprovação
+        // passou na frente, nenhuma linha é numerada e o pool não muda.
+        this.db.prepare(
+          `WITH ranked AS (
+             SELECT q.id, ROW_NUMBER() OVER (ORDER BY CAST(j.key AS INTEGER)) AS position
+               FROM json_each(?2) j
+               JOIN questions q ON q.id = j.value
+              WHERE q.pool_id = ?1 AND q.status = 'IN_REVIEW' AND q.replaces_question_id IS NULL
+                AND EXISTS (SELECT 1 FROM question_pools WHERE id = ?1 AND active_count = ?3)
+           )
+           UPDATE questions
+              SET status = 'ACTIVE',
+                  active_slot = ?3 + (SELECT position FROM ranked WHERE ranked.id = questions.id),
+                  resolved_by_user_id = ?4,
+                  resolved_at = CURRENT_TIMESTAMP
+            WHERE id IN (SELECT id FROM ranked)`,
+        ).bind(poolId, JSON.stringify(questionIds), base, actorUserId),
+        // Slots são densos (1..N), então o maior slot ocupado é a nova contagem;
+        // o índice único (pool_id, active_slot) responde isso sem varrer o pool.
+        this.db.prepare(
+          `UPDATE question_pools
+              SET active_count = COALESCE((SELECT MAX(active_slot) FROM questions WHERE pool_id = ?1), 0),
+                  version = version + 1,
+                  updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?1 AND active_count = ?2`,
+        ).bind(poolId, base),
+      ]);
+    } catch (error) {
+      if (error instanceof Error && /UNIQUE constraint failed: questions\.pool_id, questions\.active_slot/i.test(error.message)) {
+        return new Set();
+      }
+      throw error;
+    }
+    const placeholders = questionIds.map((_, index) => `?${index + 2}`).join(',');
+    const active = await this.db.prepare(
+      `SELECT id FROM questions WHERE pool_id = ?1 AND status = 'ACTIVE' AND id IN (${placeholders})`,
+    ).bind(poolId, ...questionIds).all<{ id: string }>();
+    return new Set(active.results.map((row) => row.id));
   }
 
   async findForModeration(questionId: string): Promise<QuestionModerationRecord | null> {

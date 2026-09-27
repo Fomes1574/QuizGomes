@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { discoveredCount, RECONNECT_GRACE_MS, utcDayKey, type ChallengeRecord, type FriendPresence } from '@quiz-gomes/domain';
+import { discoveredCount, gameDayKey, nextGameDayStartMs, RECONNECT_GRACE_MS, type ChallengeRecord, type FriendPresence } from '@quiz-gomes/domain';
 import { bootstrapAdminUids, hasAdminAccess, requireAdmin, requireUser } from './auth/authorize.js';
 import { ChallengeRoom } from './durable-objects/challenge-room.js';
 import { MatchRoom } from './durable-objects/match-room.js';
@@ -56,6 +56,7 @@ import { DirectChallengeService } from './services/direct-challenge-service.js';
 import { themeLinkPreview } from './http/link-preview.js';
 import { ThemeSuggestionRepository } from './repositories/theme-suggestion-repository.js';
 import { FRIEND_QUEUE_ALERT_DELAY_MS, SocialPushService } from './services/social-push-service.js';
+import { runScheduled } from './scheduled.js';
 import { inspectQuestionImageWebp, inspectWebp, QUESTION_IMAGE_MAX_BYTES, THEME_ARTWORK_MAX_BYTES } from './storage/webp.js';
 import { CUSTOM_AVATAR_BYTES, CUSTOM_AVATAR_DIMENSION } from './storage/custom-avatar.js';
 import { isQuestionImageKey, R2ImageStorage } from './storage/image-storage.js';
@@ -443,13 +444,16 @@ async function profileSummaryRoute(request: Request, env: Env): Promise<Response
   const repository = new UserRepository(env.CORE_DB);
   const profile = await repository.findByFirebaseUid(identity.uid);
   if (profile === null) throw new ApiError(404, 'PROFILE_NOT_FOUND', 'Perfil ainda não criado.');
-  const dayKey = utcDayKey(Date.now());
+  const nowMs = Date.now();
+  const dayKey = gameDayKey(nowMs);
   return json({
-    activeStreak: await new StreakRepository(env.CORE_DB).activeStreakWithTheme(profile.userId),
+    activeStreak: await new StreakRepository(env.CORE_DB).activeStreakWithTheme(profile.userId, dayKey),
     bestTheme: await repository.bestTheme(profile.userId),
     categoryAverages: await repository.categoryAverages(profile.userId),
     matchSummary: await repository.matchSummary(profile.userId),
     missions: await new MissionRepository(env.CORE_DB).listForDay(profile.userId, dayKey),
+    // Meia-noite de Brasília: o cliente mostra "renovam em 3 h 12 min".
+    missionsResetAt: new Date(nextGameDayStartMs(nowMs)).toISOString(),
   });
 }
 
@@ -574,11 +578,13 @@ async function adminImportRoute(request: Request, env: Env, url: URL): Promise<R
   const isCsv = contentType === 'text/csv';
   const requestedThemeId = url.searchParams.get('themeId')?.trim();
   const defaultThemeId = requestedThemeId === '' || requestedThemeId === undefined ? undefined : requestedThemeId;
+  // Arquivo grande enviado em partes pelo painel: repetidas são puladas.
+  const skipDuplicates = url.searchParams.get('duplicates') === 'skip';
 
   let importedQuestions;
   if (isCsv) {
     const text = await readText(request, CSV_IMPORT_MAX_BYTES);
-    const { diagnostics, questions: parsedQuestions } = parseQuestionsCsv(text, defaultThemeId);
+    const { diagnostics, questions: parsedQuestions } = parseQuestionsCsv(text, defaultThemeId, { allowRepeated: skipDuplicates });
     if (diagnostics.length > 0) {
       // `details` precisa ser o array em si: `apiErrorResponse` o repassa tal
       // como está, e o cliente só reconhece diagnóstico por linha quando
@@ -594,9 +600,9 @@ async function adminImportRoute(request: Request, env: Env, url: URL): Promise<R
 
   const idempotencyKey = request.headers.get('Idempotency-Key') ?? '';
   const result = await new QuestionImportService(env.CORE_DB, env.QUESTIONS_DB)
-    .import(profile.userId, idempotencyKey, importedQuestions);
+    .import(profile.userId, idempotencyKey, importedQuestions, { skipDuplicates });
   await auditLog(env, profile.userId, 'IMPORT_QUESTIONS_BATCH', 'theme', defaultThemeId ?? 'multiple', {
-    imported: result.imported, questionCount: importedQuestions.length, status: result.status,
+    imported: result.imported, questionCount: importedQuestions.length, skipped: result.skipped, status: result.status,
   });
   return json(result, { status: result.status === 'APPLIED' ? 201 : 200 });
 }
@@ -2127,6 +2133,12 @@ async function handle(request: Request, env: Env, context: ExecutionContext): Pr
 }
 
 export default {
+  scheduled(controller: ScheduledController, env: Env, context: ExecutionContext): void {
+    context.waitUntil(runScheduled(controller, env).catch((error: unknown) => {
+      console.error(JSON.stringify({ code: 'SCHEDULED_FAILED', cron: controller.cron, message: error instanceof Error ? error.message : 'unknown' }));
+      throw error;
+    }));
+  },
   async fetch(request: Request, env: Env, context: ExecutionContext): Promise<Response> {
     const response = await handle(request, env, context);
     // Páginas da SPA (inclusive /temas/* com prévia de link) mantêm os mesmos

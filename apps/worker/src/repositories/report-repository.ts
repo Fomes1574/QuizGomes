@@ -7,6 +7,7 @@ import {
   type ReportStatus,
 } from '@quiz-gomes/domain';
 import { ApiError } from '../http/api-error.js';
+import { retentionCutoffDay } from '../services/retention-service.js';
 
 /** Teto técnico de denúncias por usuário numa janela curta: anti-abuso, não punição social. */
 export const REPORT_RATE_LIMIT = 20;
@@ -141,7 +142,7 @@ export class ReportRepository {
     const proof = await this.db.prepare(
       `SELECT 1 FROM question_report_views
         WHERE context_kind = ?1 AND context_id = ?2 AND user_id = ?3
-          AND round_number = ?4 AND question_id = ?5
+          AND round_number = ?4 AND question_id = ?5 AND delivered_at >= ?6
         LIMIT 1`,
     ).bind(
       input.contextKind,
@@ -149,6 +150,9 @@ export class ReportRepository {
       input.reporterUserId,
       input.roundNumber,
       input.questionId,
+      // Denúncia vale pelos mesmos 15 dias em que a limpeza guarda o recibo;
+      // o corte explícito não depende do horário em que o Cron rodou.
+      retentionCutoffDay(this.now().getTime()),
     ).first();
     if (proof === null) {
       throw new ApiError(403, 'REPORT_CONTEXT_MISMATCH', 'Não foi possível confirmar que você viu esta pergunta.');

@@ -66,7 +66,26 @@ export function advanceMissionProgress(
   return { ...mission, completedAt: progress >= mission.target ? nowIso : mission.completedAt, progress };
 }
 
-/** Chave de dia UTC (`YYYY-MM-DD`) a partir de um instante em ms. Uso exclusivamente server-side. */
-export function utcDayKey(nowMs: number): string {
-  return new Date(nowMs).toISOString().slice(0, 10);
+/**
+ * O dia do jogo é o dia de Brasília (America/Sao_Paulo, UTC−3 fixo: o Brasil
+ * não tem horário de verão desde 2019). Missões e ofensivas viram à
+ * meia-noite de Brasília, não às 21h do dia anterior como seria em UTC.
+ */
+export const GAME_DAY_OFFSET_MS = -3 * 60 * 60 * 1_000;
+const DAY_MS = 86_400_000;
+
+/** Chave do dia do jogo (`YYYY-MM-DD`) a partir de um instante em ms. */
+export function gameDayKey(nowMs: number): string {
+  return new Date(nowMs + GAME_DAY_OFFSET_MS).toISOString().slice(0, 10);
+}
+
+/** Instante (ms) da próxima meia-noite de Brasília: quando as missões renovam. */
+export function nextGameDayStartMs(nowMs: number): number {
+  const shifted = nowMs + GAME_DAY_OFFSET_MS;
+  return (Math.floor(shifted / DAY_MS) + 1) * DAY_MS - GAME_DAY_OFFSET_MS;
+}
+
+/** Dia anterior a uma chave de dia (`YYYY-MM-DD`). */
+export function previousDayKey(dayKey: string): string {
+  return new Date(Date.parse(`${dayKey}T00:00:00.000Z`) - DAY_MS).toISOString().slice(0, 10);
 }

@@ -45,11 +45,15 @@ describe('XP global', () => {
     expect(levelProgress(TOTAL_XP_TO_MAX_LEVEL + 1_000_000).level).toBe(999);
   });
 
-  it('concede XP apenas em vitória', () => {
+  it('vitória vale o XP do modo; derrota e empate concluídos valem participação', () => {
     expect(xpAward('CASUAL', 'WIN')).toBe(20);
     expect(xpAward('RANKED', 'WIN')).toBe(30);
-    expect(xpAward('RANKED', 'LOSS')).toBe(0);
-    expect(xpAward('RANKED', 'DRAW')).toBe(0);
+    // Participação: derrota e empate de partida concluída valem 5 XP.
+    expect(xpAward('RANKED', 'LOSS')).toBe(5);
+    expect(xpAward('CASUAL', 'LOSS')).toBe(5);
+    expect(xpAward('RANKED', 'DRAW')).toBe(5);
+    expect(xpAward('CASUAL', 'DRAW')).toBe(5);
     expect(xpAward('RANKED', 'VOID')).toBe(0);
+    expect(xpAward('CASUAL', 'VOID')).toBe(0);
   });
 });

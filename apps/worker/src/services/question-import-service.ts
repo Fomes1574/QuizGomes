@@ -18,11 +18,21 @@ export class QuestionImportService {
     private readonly questionsDb: D1Database,
   ) {}
 
+  /**
+   * Importa um lote (até 100 perguntas) para revisão, tudo ou nada.
+   *
+   * Com `skipDuplicates`, perguntas que já existem no catálogo (ou repetidas
+   * dentro do próprio lote) são puladas e contadas em `skipped` em vez de
+   * recusar o lote inteiro. É o modo usado pelo painel ao enviar um arquivo
+   * grande em partes: reenviar o mesmo arquivo depois de uma falha continua
+   * de onde parou, sem duplicar nada.
+   */
   async import(
     actorUserId: string,
     idempotencyKey: string,
     questions: readonly ImportedQuestion[],
-  ): Promise<{ batchId: string; imported: number; status: 'APPLIED' | 'ALREADY_APPLIED' }> {
+    options: { skipDuplicates?: boolean } = {},
+  ): Promise<{ batchId: string; imported: number; skipped: number; status: 'APPLIED' | 'ALREADY_APPLIED' }> {
     if (idempotencyKey.length < 8 || idempotencyKey.length > 128) {
       throw new ApiError(400, 'INVALID_IDEMPOTENCY_KEY', 'Envie uma Idempotency-Key válida.');
     }
@@ -30,7 +40,9 @@ export class QuestionImportService {
       'SELECT id, status, item_count FROM question_import_batches WHERE idempotency_key = ?1',
     ).bind(idempotencyKey).first<{ id: string; item_count: number; status: string }>();
     if (existing !== null) {
-      if (existing.status === 'APPLIED') return { batchId: existing.id, imported: existing.item_count, status: 'ALREADY_APPLIED' };
+      if (existing.status === 'APPLIED') {
+        return { batchId: existing.id, imported: existing.item_count, skipped: 0, status: 'ALREADY_APPLIED' };
+      }
       throw new ApiError(409, 'IMPORT_IN_PROGRESS', 'Este lote já está em processamento.');
     }
 
@@ -44,40 +56,58 @@ export class QuestionImportService {
     if (missing.length > 0) throw new ApiError(400, 'UNKNOWN_THEME', 'O lote contém tema inexistente.', { themeIds: missing });
 
     const hashCandidates = await Promise.all(questions.map((question) => questionContentHashCandidates(question)));
-    const hashes = hashCandidates.map(([canonical]) => canonical);
-    if (new Set(hashes).size !== hashes.length) {
+    const canonicalHashes = hashCandidates.map(([canonical]) => canonical);
+    if (!options.skipDuplicates && new Set(canonicalHashes).size !== canonicalHashes.length) {
       throw new ApiError(400, 'DUPLICATE_IN_BATCH', 'O lote contém perguntas duplicadas.');
     }
     const allHashCandidates = [...new Set(hashCandidates.flat())];
+    const existingHashes = new Set<string>();
     // Nunca monte um IN acima dos 100 parâmetros do D1. Este era o motivo de
     // o CSV válido de 100 perguntas falhar com erro genérico em produção.
     for (const hashChunk of chunks(allHashCandidates, D1_MAX_BOUND_PARAMETERS)) {
       const hashPlaceholders = hashChunk.map((_, index) => `?${index + 1}`).join(',');
-      const existingDuplicate = await this.questionsDb.prepare(
-        `SELECT 1 FROM questions WHERE content_hash IN (${hashPlaceholders}) LIMIT 1`,
-      ).bind(...hashChunk).first();
-      if (existingDuplicate !== null) {
+      const found = await this.questionsDb.prepare(
+        `SELECT content_hash FROM questions WHERE content_hash IN (${hashPlaceholders})`,
+      ).bind(...hashChunk).all<{ content_hash: string }>();
+      for (const row of found.results) existingHashes.add(row.content_hash);
+      if (!options.skipDuplicates && existingHashes.size > 0) {
         throw new ApiError(409, 'DUPLICATE_QUESTION', 'Uma ou mais perguntas já existem.');
       }
     }
+
+    const seen = new Set<string>();
+    const accepted: Array<{ hash: string; question: ImportedQuestion }> = [];
+    let skipped = 0;
+    questions.forEach((question, index) => {
+      const candidates = hashCandidates[index] ?? [];
+      const hash = candidates[0]!;
+      if (seen.has(hash)) {
+        skipped += 1;
+        return;
+      }
+      seen.add(hash);
+      if (candidates.some((candidate) => existingHashes.has(candidate))) {
+        skipped += 1;
+        return;
+      }
+      accepted.push({ hash, question });
+    });
 
     const batchId = crypto.randomUUID();
     const statements: D1PreparedStatement[] = [
       this.questionsDb.prepare(
         `INSERT INTO question_import_batches (id, actor_user_id, idempotency_key, status, item_count)
          VALUES (?1, ?2, ?3, 'VALIDATING', ?4)`,
-      ).bind(batchId, actorUserId, idempotencyKey, questions.length),
+      ).bind(batchId, actorUserId, idempotencyKey, accepted.length),
+      // `difficulty` é legado físico do schema (nunca lido de volta); todo pool novo nasce com o mesmo valor fixo.
+      ...[...new Set(accepted.map(({ question }) => question.themeId))].map((themeId) => this.questionsDb.prepare(
+        `INSERT OR IGNORE INTO question_pools (id, theme_id, difficulty)
+         VALUES (?1, ?2, 'MEDIUM')`,
+      ).bind(questionPoolId(themeId), themeId)),
     ];
 
-    questions.forEach((question, index) => {
+    accepted.forEach(({ hash, question }) => {
       const targetPoolId = questionPoolId(question.themeId);
-      statements.push(
-        // `difficulty` é legado físico do schema (nunca lido de volta); todo pool novo nasce com o mesmo valor fixo.
-        this.questionsDb.prepare(
-          `INSERT OR IGNORE INTO question_pools (id, theme_id, difficulty)
-           VALUES (?1, ?2, 'MEDIUM')`,
-        ).bind(targetPoolId, question.themeId),
-      );
       const questionId = crypto.randomUUID();
       statements.push(
         this.questionsDb.prepare(
@@ -91,7 +121,7 @@ export class QuestionImportService {
           question.prompt,
           ...question.options,
           question.correctOption,
-          hashes[index],
+          hash,
           actorUserId,
         ),
       );
@@ -113,7 +143,7 @@ export class QuestionImportService {
 
     try {
       await this.questionsDb.batch(statements);
-      return { batchId, imported: questions.length, status: 'APPLIED' };
+      return { batchId, imported: accepted.length, skipped, status: 'APPLIED' };
     } catch (error) {
       if (error instanceof Error && /UNIQUE constraint failed: questions\.content_hash/i.test(error.message)) {
         throw new ApiError(409, 'DUPLICATE_QUESTION', 'Uma ou mais perguntas já existem.');

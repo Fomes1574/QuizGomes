@@ -203,7 +203,7 @@ describe('M11 — CRUD e versionamento de pergunta', () => {
     expect(pool?.active_count).toBe(1);
   });
 
-  it('aprova um lote do mesmo pool em série, mantendo slots densos', async () => {
+  it('aprova um lote do mesmo pool de uma vez, mantendo slots densos', async () => {
     const themeId = `theme-editorial-batch-${crypto.randomUUID()}`;
     const questions = new QuestionEditorialRepository(env.QUESTIONS_DB);
     const ids: string[] = [];
@@ -217,6 +217,73 @@ describe('M11 — CRUD e versionamento de pergunta', () => {
       "SELECT active_slot FROM questions WHERE pool_id = ?1 AND status = 'ACTIVE' ORDER BY active_slot",
     ).bind((await questions.findForModeration(ids[0]!))?.poolId).all<{ active_slot: number }>();
     expect(slots.results.map((row) => row.active_slot)).toEqual([1, 2, 3]);
+  });
+
+  it('aprova 50 de uma vez, no fim do pool e na ordem enviada, junto com um rascunho de edição', async () => {
+    const themeId = `theme-editorial-big-batch-${crypto.randomUUID()}`;
+    const questions = new QuestionEditorialRepository(env.QUESTIONS_DB);
+    const published: string[] = [];
+    for (let index = 1; index <= 2; index += 1) {
+      const created = await questions.create(questionInput(themeId, `Publicada ${index}?`, 'actor-1'));
+      await questions.approve(created.questionId, 'admin-1');
+      published.push(created.questionId);
+    }
+    const draft = await questions.proposeEdit({
+      actorUserId: 'actor-1', correctOption: 1, options: ['A', 'B', 'C', 'D'],
+      prompt: 'Publicada 1, revisada?', questionId: published[0]!, sources: [SOURCE],
+    });
+    const fresh: string[] = [];
+    for (let index = 1; index <= 49; index += 1) {
+      fresh.push((await questions.create(questionInput(themeId, `Grande lote ${index}?`, 'actor-1'))).questionId);
+    }
+    // Ordem enviada diferente da ordem de criação: os slots seguem o envio.
+    const sent = [...fresh].reverse();
+    const result = await questions.approveMany({
+      actorUserId: 'admin-1', questionIds: [draft.draftId, ...sent], themeId,
+    });
+    expect(result.failed).toEqual([]);
+    expect(new Set(result.approvedQuestionIds)).toEqual(new Set([draft.draftId, ...sent]));
+
+    const poolId = (await questions.findForModeration(published[1]!))?.poolId;
+    const active = await env.QUESTIONS_DB.prepare(
+      "SELECT id, active_slot FROM questions WHERE pool_id = ?1 AND status = 'ACTIVE' ORDER BY active_slot",
+    ).bind(poolId).all<{ active_slot: number; id: string }>();
+    expect(active.results.map((row) => row.active_slot)).toEqual(Array.from({ length: 51 }, (_, index) => index + 1));
+    // A edição herdou o slot 1 da original; as novas ocupam 3..51 na ordem enviada.
+    expect(active.results[0]?.id).toBe(draft.draftId);
+    expect(active.results.slice(2).map((row) => row.id)).toEqual(sent);
+    const pool = await env.QUESTIONS_DB.prepare('SELECT active_count FROM question_pools WHERE id = ?1')
+      .bind(poolId).first<{ active_count: number }>();
+    expect(pool?.active_count).toBe(51);
+  });
+
+  it('lote atrasado por outra aprovação no mesmo pool falha inteiro, sem slot vago', async () => {
+    const themeId = `theme-editorial-stale-batch-${crypto.randomUUID()}`;
+    const questions = new QuestionEditorialRepository(env.QUESTIONS_DB);
+    const ids: string[] = [];
+    for (let index = 1; index <= 3; index += 1) {
+      ids.push((await questions.create(questionInput(themeId, `Atrasada ${index}?`, 'actor-1'))).questionId);
+    }
+    const poolId = (await questions.findForModeration(ids[0]!))?.poolId;
+    // Simula a contagem lida antes de outra aprovação: o pool já andou.
+    const stale = new QuestionEditorialRepository(new Proxy(env.QUESTIONS_DB, {
+      get(target, property, receiver) {
+        if (property !== 'prepare') return Reflect.get(target, property, receiver) as unknown;
+        return (sql: string) => target.prepare(
+          sql.startsWith('SELECT active_count FROM question_pools') ? 'SELECT active_count - 1 AS active_count FROM question_pools WHERE id = ?1' : sql,
+        );
+      },
+    }));
+    await questions.approve(ids[0]!, 'admin-1');
+    const result = await stale.approveMany({ actorUserId: 'admin-1', questionIds: ids.slice(1), themeId });
+    expect(result.approvedQuestionIds).toEqual([]);
+    expect(result.failed.map((failure) => failure.code)).toEqual(['QUESTION_CONFLICT', 'QUESTION_CONFLICT']);
+    const pool = await env.QUESTIONS_DB.prepare('SELECT active_count FROM question_pools WHERE id = ?1')
+      .bind(poolId).first<{ active_count: number }>();
+    expect(pool?.active_count).toBe(1);
+    // Um novo envio, com a contagem atual, publica as duas sem buraco.
+    await expect(questions.approveMany({ actorUserId: 'admin-1', questionIds: ids.slice(1), themeId }))
+      .resolves.toEqual({ approvedQuestionIds: ids.slice(1), failed: [] });
   });
 
   it('recusa o lote inteiro se uma pergunta não pertencer ao tema selecionado', async () => {

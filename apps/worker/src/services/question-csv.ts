@@ -58,6 +58,7 @@ function parseCsvTable(text: string): string[][] {
 export function parseQuestionsCsv(
   text: string,
   defaultThemeId?: string,
+  options: { allowRepeated?: boolean } = {},
 ): { diagnostics: CsvRowDiagnostic[]; questions: ImportedQuestion[] } {
   const table = parseCsvTable(text.trim());
   if (table.length === 0) return { diagnostics: [{ messages: ['O arquivo CSV está vazio.'], row: 0 }], questions: [] };
@@ -133,7 +134,8 @@ export function parseQuestionsCsv(
   if (diagnostics.length > 0) return { diagnostics, questions: [] };
 
   const hashes = questions.map((question) => JSON.stringify([question.themeId, question.prompt]));
-  if (new Set(hashes).size !== hashes.length) {
+  // No envio em partes, repetidas são puladas pelo serviço de importação.
+  if (!options.allowRepeated && new Set(hashes).size !== hashes.length) {
     return { diagnostics: [{ messages: ['O lote contém perguntas duplicadas entre si.'], row: 0 }], questions: [] };
   }
   return { diagnostics: [], questions };

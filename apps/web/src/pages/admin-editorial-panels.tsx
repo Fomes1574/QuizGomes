@@ -3,6 +3,13 @@ import { Button } from '../components/button.js';
 import { ConfirmDialog } from '../components/confirm-dialog.js';
 import { QuestionImageField } from '../components/question-image-field.js';
 import { ClientApiError, apiDownload, apiRequest, apiUpload } from '../lib/api.js';
+import {
+  chunkCsv,
+  chunkJsonQuestions,
+  fileLineForChunkRow,
+  IMPORT_CHUNK_MAX_BYTES,
+  IMPORT_FILE_MAX_BYTES,
+} from '../lib/import-chunks.js';
 import type {
   AdminThemeSummary, CategoryAdmin, EditorialQuestion, EditorialQuestionPage, QuestionSourceInput, ThemeSuggestion,
 } from '../lib/models.js';
@@ -239,6 +246,8 @@ export function AdminThemeModerationPanel({
 const QUESTION_STATUS_LABEL: Record<EditorialQuestion['status'], string> = {
   ACTIVE: 'Ativa', DISABLED: 'Desativada', IN_REVIEW: 'Em revisão', PENDING: 'Pendente', REJECTED: 'Rejeitada',
 };
+/** Limite do servidor por lote de aprovação. */
+const APPROVAL_BATCH_SIZE = 50;
 const QUESTION_STATUS_TABS: EditorialQuestion['status'][] = ['IN_REVIEW', 'ACTIVE', 'REJECTED', 'DISABLED'];
 const EMPTY_SOURCE: QuestionSourceInput = { kind: 'WEB', title: '', url: '' };
 const CSV_IMPORT_TEMPLATE = [
@@ -316,8 +325,11 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
   // cada tentativa anularia a própria proteção de idempotência.
   const [importIdempotencyKey, setImportIdempotencyKey] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
+  const [importProgress, setImportProgress] = useState<{ done: number; total: number } | null>(null);
   const [selectedQuestionIds, setSelectedQuestionIds] = useState<string[]>([]);
   const [batchApproving, setBatchApproving] = useState(false);
+  const [approvalProgress, setApprovalProgress] = useState<number | null>(null);
+  const [confirmingApproveAll, setConfirmingApproveAll] = useState(false);
   const [confirmingBatchApproval, setConfirmingBatchApproval] = useState(false);
   const [pendingDeactivation, setPendingDeactivation] = useState<EditorialQuestion | null>(null);
   const [editingQuestion, setEditingQuestion] = useState<EditorialQuestion | null>(null);
@@ -441,29 +453,88 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
       : [...new Set([...current, ...reviewIds])]);
   }
 
+  /** Envia ao servidor de 50 em 50 (o limite de um lote), com progresso. */
+  async function approveIds(ids: readonly string[], onProgress: (done: number) => void): Promise<{ approved: string[]; failed: number }> {
+    const approved: string[] = [];
+    let failed = 0;
+    for (let index = 0; index < ids.length; index += APPROVAL_BATCH_SIZE) {
+      const result = await apiRequest<{ approvedQuestionIds: string[]; failed: Array<{ code: string; questionId: string }> }>(
+        `/api/editorial/themes/${encodeURIComponent(themeId)}/questions/approve`,
+        { body: { questionIds: ids.slice(index, index + APPROVAL_BATCH_SIZE) }, getToken, method: 'POST' },
+      );
+      approved.push(...result.approvedQuestionIds);
+      failed += result.failed.length;
+      onProgress(approved.length);
+    }
+    return { approved, failed };
+  }
+
+  function approvalMessage(approved: number, failed: number): { kind: 'error' | 'success'; text: string } {
+    return {
+      kind: failed === 0 ? 'success' : 'error',
+      text: failed === 0
+        ? `${approved} ${approved === 1 ? 'pergunta aprovada.' : 'perguntas aprovadas.'}`
+        : `${approved} aprovadas; ${failed} mudaram de estado. Atualize e revise as restantes.`,
+    };
+  }
+
   async function approveSelected() {
     if (themeId === '' || selectedQuestionIds.length === 0) return;
     setBatchApproving(true);
     setMessage(null);
+    let approvedSoFar = 0;
     try {
-      const result = await apiRequest<{ approvedQuestionIds: string[]; failed: Array<{ code: string; questionId: string }> }>(
-        `/api/editorial/themes/${encodeURIComponent(themeId)}/questions/approve`,
-        { body: { questionIds: selectedQuestionIds }, getToken, method: 'POST' },
-      );
-      const approved = new Set(result.approvedQuestionIds);
+      const result = await approveIds(selectedQuestionIds, (done) => {
+        approvedSoFar = done;
+        setApprovalProgress(done);
+      });
+      const approved = new Set(result.approved);
       setPage((current) => ({ ...current, questions: current.questions.filter((question) => !approved.has(question.id)) }));
       setSelectedQuestionIds((current) => current.filter((id) => !approved.has(id)));
-      setMessage({
-        kind: result.failed.length === 0 ? 'success' : 'error',
-        text: result.failed.length === 0
-          ? `${result.approvedQuestionIds.length} ${result.approvedQuestionIds.length === 1 ? 'pergunta aprovada.' : 'perguntas aprovadas.'}`
-          : `${result.approvedQuestionIds.length} aprovadas; ${result.failed.length} mudaram de estado. Atualize e revise as restantes.`,
-      });
+      setMessage(approvalMessage(result.approved.length, result.failed));
     } catch (approvalError) {
-      setMessage({ kind: 'error', text: errorText(approvalError, 'Não foi possível aprovar o lote.') });
+      const partial = approvedSoFar > 0 ? ` ${approvedSoFar} já foram aprovadas antes da falha.` : '';
+      setMessage({ kind: 'error', text: `${errorText(approvalError, 'Não foi possível aprovar o lote.')}${partial}` });
+      if (approvedSoFar > 0) loadQuestions(themeId, status, null, true);
     } finally {
       setBatchApproving(false);
+      setApprovalProgress(null);
       setConfirmingBatchApproval(false);
+    }
+  }
+
+  /**
+   * Aprova tudo o que está em revisão no tema, página por página. Para quando
+   * a fila esvazia ou quando uma rodada não aprova nada (evita laço infinito
+   * com perguntas que mudaram de estado).
+   */
+  async function approveAllInReview() {
+    if (themeId === '') return;
+    setBatchApproving(true);
+    setMessage(null);
+    let approvedTotal = 0;
+    let failedTotal = 0;
+    try {
+      for (let round = 0; round < 10_000; round += 1) {
+        const pageResult = await apiRequest<EditorialQuestionPage>(
+          `/api/editorial/themes/${encodeURIComponent(themeId)}/questions?statuses=IN_REVIEW`, { getToken },
+        );
+        const ids = pageResult.questions.filter((question) => question.status === 'IN_REVIEW').map((question) => question.id);
+        if (ids.length === 0) break;
+        const result = await approveIds(ids, (done) => setApprovalProgress(approvedTotal + done));
+        approvedTotal += result.approved.length;
+        failedTotal += result.failed;
+        if (result.approved.length === 0) break;
+      }
+      setMessage(approvalMessage(approvedTotal, failedTotal));
+    } catch (approvalError) {
+      const partial = approvedTotal > 0 ? ` ${approvedTotal} já foram aprovadas antes da falha.` : '';
+      setMessage({ kind: 'error', text: `${errorText(approvalError, 'Não foi possível aprovar tudo.')}${partial}` });
+    } finally {
+      setBatchApproving(false);
+      setApprovalProgress(null);
+      setConfirmingApproveAll(false);
+      loadQuestions(themeId, status, null, true);
     }
   }
 
@@ -504,37 +575,88 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
 
   async function importQuestions() {
     if (themeId === '' || importFile === null) return;
-    if (importFile.size > 256 * 1024) {
-      setMessage({ kind: 'error', text: 'O lote deve ter no máximo 256 KB.' });
+    if (importFile.size > IMPORT_FILE_MAX_BYTES) {
+      setMessage({ kind: 'error', text: 'O arquivo deve ter no máximo 8 MB. Divida em arquivos menores.' });
       return;
     }
     setImporting(true);
     setMessage(null);
+    const baseKey = importIdempotencyKey ?? crypto.randomUUID();
+    // Partes de até 100 perguntas; repetidas (no catálogo ou no arquivo) são
+    // puladas. Cada parte tem chave própria derivada do arquivo: reenviar o
+    // mesmo arquivo depois de uma falha continua de onde parou.
+    const importPath = `/api/admin/questions/import?themeId=${encodeURIComponent(themeId)}&duplicates=skip`;
+    const isCsv = importFile.name.toLowerCase().endsWith('.csv') || importFile.type === 'text/csv';
+    let imported = 0;
+    let skipped = 0;
+    let alreadyApplied = 0;
+    let done = 0;
+    let total = 0;
     try {
-      const importPath = `/api/admin/questions/import?themeId=${encodeURIComponent(themeId)}`;
-      const headers = { 'Idempotency-Key': importIdempotencyKey ?? crypto.randomUUID() };
-      const isCsv = importFile.name.toLowerCase().endsWith('.csv') || importFile.type === 'text/csv';
-      let result: { imported: number; status: 'ALREADY_APPLIED' | 'APPLIED' };
-      if (isCsv) {
-        result = await apiUpload(importPath, {
-          body: new Blob([await importFile.text()], { type: 'text/csv' }), getToken, headers, method: 'POST',
-        });
-      } else {
-        const parsedFile = JSON.parse(await importFile.text()) as unknown;
-        result = await apiRequest(importPath, {
-          body: Array.isArray(parsedFile) ? { questions: parsedFile } : parsedFile,
-          getToken, headers, method: 'POST',
-        });
+      const text = await importFile.text();
+      const csvChunks = isCsv ? chunkCsv(text) : [];
+      const jsonChunks = isCsv ? [] : chunkJsonQuestions(JSON.parse(text) as unknown);
+      if (jsonChunks === null) throw new Error('JSON_SHAPE');
+      total = isCsv ? csvChunks.length : jsonChunks.length;
+      if (total === 0) throw new Error('EMPTY_FILE');
+      for (let index = 0; index < total; index += 1) {
+        setImportProgress({ done: index, total });
+        const headers = { 'Idempotency-Key': `${baseKey}:${index + 1}` };
+        let result: { imported: number; skipped?: number; status: 'ALREADY_APPLIED' | 'APPLIED' };
+        const csvChunk = csvChunks[index];
+        try {
+          if (csvChunk !== undefined) {
+            if (new Blob([csvChunk.text]).size > IMPORT_CHUNK_MAX_BYTES) throw new Error('CHUNK_TOO_BIG');
+            result = await apiUpload(importPath, {
+              body: new Blob([csvChunk.text], { type: 'text/csv' }), getToken, headers, method: 'POST',
+            });
+          } else {
+            result = await apiRequest(importPath, {
+              body: { questions: jsonChunks?.[index] ?? [] }, getToken, headers, method: 'POST',
+            });
+          }
+        } catch (chunkError) {
+          // Diagnóstico de linha da parte vira a linha do arquivo inteiro.
+          if (csvChunk !== undefined && chunkError instanceof ClientApiError && Array.isArray(chunkError.details)) {
+            for (const detail of chunkError.details as unknown[]) {
+              if (typeof detail === 'object' && detail !== null && typeof (detail as { row?: unknown }).row === 'number') {
+                (detail as { row: number }).row = fileLineForChunkRow(csvChunk, (detail as { row: number }).row);
+              }
+            }
+          }
+          throw chunkError;
+        }
+        if (result.status === 'ALREADY_APPLIED') alreadyApplied += result.imported;
+        else imported += result.imported;
+        skipped += result.skipped ?? 0;
+        done = index + 1;
       }
       setImportFile(null);
       setImportFileKey((current) => current + 1);
       setImportIdempotencyKey(null);
-      setMessage({ kind: 'success', text: result.status === 'ALREADY_APPLIED' ? 'Este lote já havia sido importado.' : `${result.imported} ${result.imported === 1 ? 'pergunta enviada' : 'perguntas enviadas'} para revisão.` });
+      const parts = [
+        imported > 0 ? `${imported} ${imported === 1 ? 'pergunta enviada' : 'perguntas enviadas'} para revisão` : null,
+        alreadyApplied > 0 ? `${alreadyApplied} já tinham sido importadas antes` : null,
+        skipped > 0 ? `${skipped} ${skipped === 1 ? 'repetida pulada' : 'repetidas puladas'}` : null,
+      ].filter((part): part is string => part !== null);
+      setMessage({ kind: 'success', text: parts.length === 0 ? 'Nada novo neste arquivo: todas as perguntas já existem.' : `${parts.join(' · ')}.` });
       if (status === 'IN_REVIEW') loadQuestions(themeId, status, null, true);
     } catch (importError) {
-      setMessage({ kind: 'error', text: importErrorText(importError) });
+      const shapeError = importError instanceof SyntaxError || (importError instanceof Error && importError.message === 'JSON_SHAPE')
+        ? 'O JSON precisa ser uma lista de perguntas ou { "questions": [...] }.'
+        : importError instanceof Error && importError.message === 'EMPTY_FILE'
+          ? 'O arquivo está vazio.'
+          : importError instanceof Error && importError.message === 'CHUNK_TOO_BIG'
+            ? 'Um trecho de 100 perguntas passou de 256 KB. Encurte os textos ou divida o arquivo.'
+            : null;
+      const progress = total > 1 && done > 0
+        ? ` ${done} de ${total} partes já entraram (${imported} perguntas); envie o mesmo arquivo de novo para continuar de onde parou.`
+        : '';
+      setMessage({ kind: 'error', text: `${shapeError ?? importErrorText(importError)}${progress}` });
+      if (status === 'IN_REVIEW' && done > 0) loadQuestions(themeId, status, null, true);
     } finally {
       setImporting(false);
+      setImportProgress(null);
     }
   }
 
@@ -591,7 +713,12 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
                   : `${selectedQuestionIds.length} ${selectedQuestionIds.length === 1 ? 'pergunta selecionada' : 'perguntas selecionadas'}`}
               </span>
               <Button disabled={batchApproving || busyId !== null || selectedQuestionIds.length === 0} onClick={() => setConfirmingBatchApproval(true)} type="button">
-                {batchApproving ? 'Aprovando…' : `Aprovar selecionadas (${selectedQuestionIds.length})`}
+                {batchApproving
+                  ? approvalProgress === null ? 'Aprovando…' : `Aprovando… ${approvalProgress} prontas`
+                  : `Aprovar selecionadas (${selectedQuestionIds.length})`}
+              </Button>
+              <Button disabled={batchApproving || busyId !== null} onClick={() => setConfirmingApproveAll(true)} type="button" variant="ghost">
+                Aprovar todas em revisão deste tema
               </Button>
             </div>
           )}
@@ -684,6 +811,16 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
               title="Aprovar o lote selecionado?"
             />
           )}
+          {confirmingApproveAll && (
+            <ConfirmDialog
+              body="Todas as perguntas em revisão deste tema serão publicadas, de 50 em 50, e passam a valer em partidas. Confira antes: não dá para desfazer em lote."
+              busy={batchApproving}
+              confirmLabel="Aprovar todas"
+              onCancel={() => setConfirmingApproveAll(false)}
+              onConfirm={() => void approveAllInReview()}
+              title="Aprovar todas em revisão?"
+            />
+          )}
           {editingQuestion !== null && (
             <form className="form-card" onSubmit={(event) => { event.preventDefault(); void saveEdit(); }}>
               <h3>{editingQuestion.status === 'ACTIVE' ? 'Criar revisão da pergunta publicada' : 'Revisar pergunta'}</h3>
@@ -717,7 +854,7 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
           )}
           <section className="form-card" aria-labelledby="admin-question-import-title">
             <h3 id="admin-question-import-title">Importar perguntas</h3>
-            <p>Envie CSV ou JSON com no máximo 100 perguntas. O tema selecionado acima é aplicado ao lote; fontes são opcionais.</p>
+            <p>Envie CSV ou JSON de qualquer tamanho até 8 MB. O arquivo sobe em partes de 100 perguntas, e as que já existem são puladas. O tema selecionado acima vale para todas; fontes são opcionais.</p>
             <label className="field"><span>Arquivo CSV ou JSON</span><input accept=".csv,application/json,text/csv" key={importFileKey} onChange={(event) => {
               const file = event.target.files?.[0] ?? null;
               setImportFile(file);
@@ -726,7 +863,9 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
             <div className="admin-card__actions">
               <Button onClick={downloadCsvTemplate} type="button" variant="ghost">Baixar modelo CSV</Button>
               <Button disabled={importing || importFile === null} onClick={() => void importQuestions()} type="button">
-                {importing ? 'Importando…' : 'Importar para revisão'}
+                {importing
+                  ? importProgress !== null && importProgress.total > 1 ? `Enviando parte ${importProgress.done + 1} de ${importProgress.total}…` : 'Importando…'
+                  : 'Importar para revisão'}
               </Button>
             </div>
           </section>

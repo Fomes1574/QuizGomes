@@ -170,9 +170,67 @@ describe('AdminQuestionEditorialPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Importar para revisão' }));
 
     await waitFor(() => expect(mocks.apiUpload).toHaveBeenCalledWith(
-      '/api/admin/questions/import?themeId=theme-1',
+      '/api/admin/questions/import?themeId=theme-1&duplicates=skip',
       expect.objectContaining({ method: 'POST' }),
     ));
     expect(await screen.findByText('1 pergunta enviada para revisão.')).toBeInTheDocument();
+  });
+
+  it('arquivo grande sobe em partes de 100, com chave por parte, e soma puladas', async () => {
+    mocks.apiRequest.mockImplementation((path: string) => {
+      if (path.startsWith('/api/admin/themes?')) return Promise.resolve({ themes: [theme] });
+      if (path.startsWith('/api/editorial/themes/theme-1/questions')) return Promise.resolve({ nextCursor: null, questions: [] });
+      return Promise.resolve({ ok: true });
+    });
+    mocks.apiUpload
+      .mockResolvedValueOnce({ imported: 98, skipped: 2, status: 'APPLIED' })
+      .mockResolvedValueOnce({ imported: 100, skipped: 0, status: 'APPLIED' })
+      .mockResolvedValueOnce({ imported: 50, skipped: 0, status: 'APPLIED' });
+    render(<AdminQuestionEditorialPanel getToken={mocks.getToken} />);
+    fireEvent.change(screen.getByPlaceholderText('Buscar tema'), { target: { value: 'Tema' } });
+    await screen.findByRole('option', { name: 'Tema Um' });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Tema' }), { target: { value: 'theme-1' } });
+    await screen.findByText('Importar perguntas');
+
+    const rows = Array.from({ length: 250 }, (_, index) => `"Pergunta ${index}?",A,B,C,D,0`);
+    const file = new File([['prompt,optionA,optionB,optionC,optionD,correctOption', ...rows].join('\n')], 'grande.csv', { type: 'text/csv' });
+    fireEvent.change(screen.getByLabelText('Arquivo CSV ou JSON'), { target: { files: [file] } });
+    fireEvent.click(screen.getByRole('button', { name: 'Importar para revisão' }));
+
+    expect(await screen.findByText('248 perguntas enviadas para revisão · 2 repetidas puladas.')).toBeInTheDocument();
+    expect(mocks.apiUpload).toHaveBeenCalledTimes(3);
+    const keys = mocks.apiUpload.mock.calls.map((call) => (call[1] as { headers: Record<string, string> }).headers['Idempotency-Key'] ?? '');
+    expect(keys.map((key) => key.split(':')[1])).toEqual(['1', '2', '3']);
+    expect(new Set(keys.map((key) => key.split(':')[0])).size).toBe(1);
+  });
+
+  it('aprova todas em revisão do tema, página por página, até esvaziar', async () => {
+    const pending = Array.from({ length: 60 }, (_, index) => ({ ...question, id: `q-${index}`, prompt: `Pendente ${index}?` }));
+    const approveCalls: string[][] = [];
+    mocks.apiRequest.mockImplementation((path: string, options?: { body?: { questionIds?: string[] } }) => {
+      if (path.startsWith('/api/admin/themes?')) return Promise.resolve({ themes: [theme] });
+      if (path.endsWith('/questions/approve')) {
+        const ids = options?.body?.questionIds ?? [];
+        approveCalls.push(ids);
+        for (const id of ids) pending.splice(pending.findIndex((item) => item.id === id), 1);
+        return Promise.resolve({ approvedQuestionIds: ids, failed: [] });
+      }
+      if (path.startsWith('/api/editorial/themes/theme-1/questions')) {
+        return Promise.resolve({ nextCursor: null, questions: pending.slice(0, 50) });
+      }
+      return Promise.resolve({ ok: true });
+    });
+    render(<AdminQuestionEditorialPanel getToken={mocks.getToken} />);
+    fireEvent.change(screen.getByPlaceholderText('Buscar tema'), { target: { value: 'Tema' } });
+    await screen.findByRole('option', { name: 'Tema Um' });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Tema' }), { target: { value: 'theme-1' } });
+    await screen.findByText('Pendente 0?');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Aprovar todas em revisão deste tema' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Aprovar todas' }));
+
+    expect(await screen.findByText('60 perguntas aprovadas.')).toBeInTheDocument();
+    expect(approveCalls.map((ids) => ids.length)).toEqual([50, 10]);
+    expect(pending).toHaveLength(0);
   });
 });

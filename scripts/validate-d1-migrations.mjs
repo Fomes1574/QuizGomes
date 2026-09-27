@@ -260,10 +260,11 @@ function assertFinalSchema(scenario) {
 
   const appliedMigrations = query(scenario, 'SELECT name FROM d1_migrations ORDER BY id');
   assert(
-    appliedMigrations.at(-1)?.name === '0019_avatar_object_storage.sql',
-    `${scenario.name}: 0019 de avatar no armazenamento de objetos não foi registrada como última migration`,
+    appliedMigrations.at(-1)?.name === '0020_retention_and_achievements.sql',
+    `${scenario.name}: 0020 de limpeza e conquistas não foi registrada como última migration`,
   );
   assertAvatarObjectStorageSchema(scenario);
+  assertRetentionAndAchievementsSchema(scenario);
   assertPersonalRecordsAndVotesSchema(scenario);
   assertFriendQueueAlertsSchema(scenario);
   const upgradedTheme = query(scenario, `
@@ -913,6 +914,41 @@ function assertAvatarRebuildPreserved(scenario, userId) {
 }
 
 /** @param {MigrationScenario} scenario */
+function assertRetentionAndAchievementsSchema(scenario) {
+  /** @param {string} sql @param {string} index */
+  const planUses = (sql, index) => query(scenario, `EXPLAIN QUERY PLAN ${sql}`)
+    .some(({ detail }) => String(detail).includes(index));
+  assert(
+    planUses("SELECT rowid FROM question_report_views WHERE delivered_at < '2026-01-01' LIMIT 500", 'idx_question_report_views_delivered'),
+    `${scenario.name}: limpeza de recibos de denúncia não usa índice`,
+  );
+  assert(
+    planUses("SELECT rowid FROM user_daily_missions WHERE day_key < '2026-01-01' LIMIT 500", 'idx_user_daily_missions_day'),
+    `${scenario.name}: limpeza de missões não usa índice`,
+  );
+  assert(
+    planUses('SELECT rowid FROM friend_queue_alerts WHERE sent_at_ms < 1 LIMIT 500', 'idx_friend_queue_alerts_sent'),
+    `${scenario.name}: limpeza de avisos de fila não usa índice`,
+  );
+  assert(
+    planUses("SELECT user_id FROM user_theme_streaks WHERE last_active_day = '2026-01-01' AND current_streak >= 2", 'idx_user_theme_streaks_day'),
+    `${scenario.name}: aviso de ofensiva não usa índice`,
+  );
+  const frames = query(scenario, "SELECT id FROM cosmetics WHERE kind = 'FRAME' AND status = 'AVAILABLE' ORDER BY id");
+  assert(frames.length === 6, `${scenario.name}: molduras de recompensa ausentes`);
+  const probeId = `achievement-${scenario.name}`;
+  executeSql(scenario, `
+    INSERT INTO users (id, firebase_uid) VALUES ('${probeId}', 'firebase-${probeId}');
+    INSERT INTO streak_reminder_preferences (user_id) VALUES ('${probeId}');
+    INSERT INTO user_achievements (user_id, achievement_id, value) VALUES ('${probeId}', 'STREAK_100', 100);
+  `);
+  const reminder = query(scenario, `SELECT enabled FROM streak_reminder_preferences WHERE user_id = '${probeId}'`);
+  assert(reminder[0]?.enabled === 0, `${scenario.name}: aviso de ofensiva precisa nascer desligado`);
+  executeSql(scenario, `INSERT INTO user_achievements (user_id, achievement_id) VALUES ('${probeId}', 'STREAK_100');`, true);
+  executeSql(scenario, `INSERT INTO user_achievements (user_id, achievement_id) VALUES ('${probeId}', 'X');`, true);
+}
+
+/** @param {MigrationScenario} scenario */
 function assertFriendQueueAlertsSchema(scenario) {
   const alertColumns = query(scenario, 'PRAGMA table_info(friend_queue_alerts)').map(({ name }) => name);
   assert(
@@ -1144,8 +1180,15 @@ function assertQuestionExportIndex(scenario) {
 function assertQuestionImageKeyIndex(scenario) {
   const appliedMigrations = query(scenario, 'SELECT name FROM d1_migrations ORDER BY id');
   assert(
-    appliedMigrations.at(-1)?.name === '0009_question_image_key_index.sql',
-    `${scenario.name}: 0009 de índice de foto não foi registrada como última migration de Questions`,
+    appliedMigrations.at(-1)?.name === '0010_statistics_retention_index.sql',
+    `${scenario.name}: 0010 de limpeza de estatísticas não foi registrada como última migration de Questions`,
+  );
+  const retentionPlan = query(scenario, `
+    EXPLAIN QUERY PLAN SELECT rowid FROM question_statistics_ledger WHERE applied = 1 AND recorded_at < '2026-01-01' LIMIT 500
+  `);
+  assert(
+    retentionPlan.some(({ detail }) => String(detail).includes('idx_question_statistics_ledger_applied_recorded')),
+    `${scenario.name}: limpeza de recibos de estatística não usa o índice parcial`,
   );
   const plan = query(scenario, "EXPLAIN QUERY PLAN SELECT 1 FROM questions WHERE image_key = 'questions/x/v1.webp' LIMIT 1");
   assert(
@@ -1288,6 +1331,10 @@ try {
     migrationNames.includes('0019_avatar_object_storage.sql'),
     'Migration Core 0019 de avatar no armazenamento de objetos ausente',
   );
+  assert(
+    migrationNames.includes('0020_retention_and_achievements.sql'),
+    'Migration Core 0020 de limpeza e conquistas ausente',
+  );
   assert(questionMigrationNames.includes('0003_expand_synthetic_smoke_test.sql'), 'Migration Questions 0003 ausente');
   assert(
     questionMigrationNames.includes('0004_question_editorial_versioning.sql'),
@@ -1312,6 +1359,10 @@ try {
   assert(
     questionMigrationNames.includes('0009_question_image_key_index.sql'),
     'Migration Questions 0009 do índice de foto ausente',
+  );
+  assert(
+    questionMigrationNames.includes('0010_statistics_retention_index.sql'),
+    'Migration Questions 0010 do índice de limpeza ausente',
   );
 
   await assertRemoteParser(coreSourceMigrationsDirectory, migrationNames);
@@ -1349,6 +1400,7 @@ try {
       '0017_personal_records_and_theme_votes.sql',
       '0018_friend_queue_alerts.sql',
       '0019_avatar_object_storage.sql',
+      '0020_retention_and_achievements.sql',
     ].includes(name)),
   );
   console.log('Validando upgrade D1 exato de 0003 para 0004...');
@@ -1500,6 +1552,12 @@ try {
   );
   applyMigrations(upgradeDatabase);
   assertAvatarRebuildPreserved(upgradeDatabase, avatarRebuildUserId);
+  console.log('Validando upgrade D1 atual exato de 0019 para 0020 limpeza e conquistas...');
+  await copyFile(
+    join(coreSourceMigrationsDirectory, '0020_retention_and_achievements.sql'),
+    join(upgradeDatabase.migrationsDirectory, '0020_retention_and_achievements.sql'),
+  );
+  applyMigrations(upgradeDatabase);
   assertFinalSchema(upgradeDatabase);
   console.log('Validando rollback transacional de migration com erro...');
   await assertRollback(upgradeDatabase);
@@ -1528,6 +1586,7 @@ try {
       '0007_unify_question_pools.sql',
       '0008_question_export_index.sql',
       '0009_question_image_key_index.sql',
+      '0010_statistics_retention_index.sql',
     ].includes(name)),
     {
       binding: 'QUESTIONS_DB',
@@ -1603,9 +1662,15 @@ try {
     join(upgradeQuestions.migrationsDirectory, '0009_question_image_key_index.sql'),
   );
   applyMigrations(upgradeQuestions);
+  console.log('Validando upgrade Questions D1 exato de 0009 para 0010 índice de limpeza...');
+  await copyFile(
+    join(questionSourceMigrationsDirectory, '0010_statistics_retention_index.sql'),
+    join(upgradeQuestions.migrationsDirectory, '0010_statistics_retention_index.sql'),
+  );
+  applyMigrations(upgradeQuestions);
   assertQuestionImageKeyIndex(upgradeQuestions);
 
-  console.log('Migrations D1 aprovadas: parser Wrangler, bancos vazios, upgrades Core 0003→0004→0005→0006→0007→0008→0009→0010→0011→0012→0013→0014→0015→0016→0017→0018→0019 e Questions 0002→0003→0004→0005→0006→0007→0008→0009, invariantes sociais, de desafio, de ledger de conclusão, de denúncia, editoriais, pool único por tema, índices de exportação e de foto, rollback e schemas finais.');
+  console.log('Migrations D1 aprovadas: parser Wrangler, bancos vazios, upgrades Core 0003→0004→0005→0006→0007→0008→0009→0010→0011→0012→0013→0014→0015→0016→0017→0018→0019→0020 e Questions 0002→0003→0004→0005→0006→0007→0008→0009→0010, invariantes sociais, de desafio, de ledger de conclusão, de denúncia, editoriais, pool único por tema, índices de exportação, de foto e de limpeza, rollback e schemas finais.');
 } finally {
   await rm(temporaryRoot, { force: true, recursive: true });
 }

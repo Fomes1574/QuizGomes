@@ -27,6 +27,10 @@
       "migrations_dir": "migrations/questions"
     }
   ],
+  // Limpeza automática de hora em hora (15 dias de jogo, 6 meses de admin).
+  "triggers": {
+    "crons": ["17 * * * *"]
+  },
   "r2_buckets": [
     {
       "binding": "QUESTION_IMAGES",

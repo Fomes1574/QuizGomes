@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { advanceThemeStreak } from '../progression/streak.js';
+import { advanceThemeStreak, liveStreak, streakAtRisk } from '../progression/streak.js';
 
 describe('streak por usuário+tema', () => {
   it('nasce em 1/1 no primeiro dia ativo', () => {
@@ -36,5 +36,20 @@ describe('streak por usuário+tema', () => {
     const state = { bestStreak: 2, currentStreak: 2, lastActiveDay: '2026-09-01' };
     const afterGap = advanceThemeStreak(state, '2026-09-30');
     expect(afterGap.bestStreak).toBeGreaterThanOrEqual(afterGap.currentStreak);
+  });
+
+  it('ofensiva que vale hoje: jogou hoje ou ontem mantém; antes disso já acabou', () => {
+    const state = { bestStreak: 9, currentStreak: 7, lastActiveDay: '2026-09-21' };
+    expect(liveStreak(state, '2026-09-21')).toBe(7);
+    expect(liveStreak(state, '2026-09-22')).toBe(7);
+    expect(liveStreak(state, '2026-09-23')).toBe(0);
+    expect(liveStreak(null, '2026-09-23')).toBe(0);
+  });
+
+  it('só está em risco quem jogou ontem e ainda não hoje', () => {
+    const state = { bestStreak: 3, currentStreak: 3, lastActiveDay: '2026-09-21' };
+    expect(streakAtRisk(state, '2026-09-21')).toBe(false);
+    expect(streakAtRisk(state, '2026-09-22')).toBe(true);
+    expect(streakAtRisk(state, '2026-09-23')).toBe(false);
   });
 });

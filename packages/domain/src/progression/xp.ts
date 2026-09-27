@@ -55,8 +55,16 @@ export function levelProgress(totalXpInput: number): LevelProgress {
   };
 }
 
+/**
+ * XP de participação: quem termina a partida ganha algo mesmo sem vencer.
+ * Vale para derrota e empate de partida concluída; partida anulada (VOID) e
+ * abandono nunca pagam.
+ */
+export const PARTICIPATION_XP = 5;
+
 export function xpAward(mode: MatchMode, result: MatchResult): number {
-  return result === 'WIN' ? XP_BY_MODE[mode] : 0;
+  if (result === 'WIN') return XP_BY_MODE[mode];
+  return result === 'LOSS' || result === 'DRAW' ? PARTICIPATION_XP : 0;
 }
 
 export function minimumRankedWinsToMaxLevel(): number {

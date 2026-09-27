@@ -1,4 +1,4 @@
-import { utcDayKey } from '@quiz-gomes/domain';
+import { gameDayKey } from '@quiz-gomes/domain';
 import { MissionRepository } from '../repositories/mission-repository.js';
 import { StreakRepository } from '../repositories/streak-repository.js';
 
@@ -19,7 +19,7 @@ export interface ValidPlayEvent {
  */
 export async function recordValidPlay(coreDb: D1Database, event: ValidPlayEvent): Promise<void> {
   try {
-    const dayKey = utcDayKey(event.nowMs);
+    const dayKey = gameDayKey(event.nowMs);
     await new MissionRepository(coreDb).advance(event.userId, dayKey, {
       correctAnswers: event.correctAnswers, playedValidMatch: true, totalAnswers: event.totalAnswers,
     });

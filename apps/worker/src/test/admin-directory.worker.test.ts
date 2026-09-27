@@ -66,15 +66,15 @@ describe('M11 — trilha de auditoria (audit_logs)', () => {
     await env.CORE_DB.batch([
       env.CORE_DB.prepare(
         `INSERT INTO audit_logs (id, actor_user_id, action, entity_type, entity_id, metadata_json, created_at)
-         VALUES (?1, ?2, 'CREATE_CATEGORY', 'category', 'cat-1', '{"name":"Esportes"}', '2026-01-01T00:00:00.000Z')`,
+         VALUES (?1, ?2, 'CREATE_CATEGORY', 'category', 'cat-1', '{"name":"Esportes"}', '2099-01-01T00:00:00.000Z')`,
       ).bind(crypto.randomUUID(), actor.id),
       env.CORE_DB.prepare(
         `INSERT INTO audit_logs (id, actor_user_id, action, entity_type, entity_id, metadata_json, created_at)
-         VALUES (?1, ?2, 'APPROVE_THEME', 'theme', 'theme-1', '{}', '2026-01-02T00:00:00.000Z')`,
+         VALUES (?1, ?2, 'APPROVE_THEME', 'theme', 'theme-1', '{}', '2099-01-02T00:00:00.000Z')`,
       ).bind(crypto.randomUUID(), actor.id),
       env.CORE_DB.prepare(
         `INSERT INTO audit_logs (id, actor_user_id, action, entity_type, entity_id, metadata_json, created_at)
-         VALUES (?1, NULL, 'SYSTEM_EVENT', 'system', NULL, '{}', '2026-01-03T00:00:00.000Z')`,
+         VALUES (?1, NULL, 'SYSTEM_EVENT', 'system', NULL, '{}', '2099-01-03T00:00:00.000Z')`,
       ).bind(crypto.randomUUID()),
     ]);
 

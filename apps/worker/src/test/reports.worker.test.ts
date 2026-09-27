@@ -267,6 +267,9 @@ describe('Denúncias de pergunta — validação de contexto e idempotência', (
     for (let index = 0; index < 5; index += 1) {
       now += 1_000;
       const matchId = await matchContext(themeId, first, second);
+      // A denúncia só vale por 15 dias depois da entrega: acompanha o relógio falso.
+      await env.CORE_DB.prepare('UPDATE question_report_views SET delivered_at = ?1 WHERE context_id = ?2')
+        .bind(new Date(now).toISOString(), matchId).run();
       const result = await repository.create({
         contextId: matchId, contextKind: 'MATCH', note: null,
         questionId: `match-question-${matchId}-1`, reason: 'INCORRECT', reporterUserId: first.id, roundNumber: 1,

@@ -8,7 +8,7 @@ import {
   questionsForMode,
   transitionChallenge,
   xpAward,
-  utcDayKey,
+  gameDayKey,
   ChallengeRuleError,
   LIVE_CHALLENGE_STATUSES,
   TOTAL_XP_TO_MAX_LEVEL,
@@ -607,7 +607,7 @@ export class ChallengeRepository {
     if (!statisticsRecorded) throw new Error('Estatísticas de pergunta pendentes.');
 
     const now = this.clock();
-    const dayKey = utcDayKey(now.getTime());
+    const dayKey = gameDayKey(now.getTime());
     await this.db.prepare(
       `INSERT OR IGNORE INTO challenge_progression_ledger (challenge_id, user_id, applied)
        VALUES (?1, ?2, 0)`,
@@ -680,7 +680,7 @@ export class ChallengeRepository {
       [challenge.firstPlayerUserId, xpAward(CHALLENGE_MODE, resultFor(firstScore, secondScore))],
       [challenge.secondPlayerUserId, xpAward(CHALLENGE_MODE, resultFor(secondScore, firstScore))],
     ];
-    // Empate paga zero aos dois: sem linha de ledger nenhuma, e sem batch vazio.
+    // Vitória paga o XP do modo; derrota e empate pagam a participação.
     const payable = awards.filter(([, xp]) => xp > 0);
     if (payable.length === 0) return;
     await this.db.batch(payable.map(([userId, xp]) => this.db.prepare(

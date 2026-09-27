@@ -153,14 +153,30 @@ describe('M11 — streak por usuário+tema', () => {
     const themeId = await themeIdOf(themeSlug);
     const streaks = new StreakRepository(env.CORE_DB);
 
-    expect(await streaks.activeStreakWithTheme(user.id)).toBeNull();
+    expect(await streaks.activeStreakWithTheme(user.id, '2026-05-10')).toBeNull();
 
     const themeRow = await env.CORE_DB.prepare('SELECT name FROM themes WHERE id = ?1')
       .bind(themeId).first<{ name: string }>();
     await streaks.advance(user.id, themeId, '2026-05-10');
-    expect(await streaks.activeStreakWithTheme(user.id)).toEqual({
-      bestStreak: 1, currentStreak: 1, lastActiveDay: '2026-05-10', themeId, themeName: themeRow?.name, themeSlug,
+    expect(await streaks.activeStreakWithTheme(user.id, '2026-05-10')).toEqual({
+      atRisk: false, bestStreak: 1, currentStreak: 1, lastActiveDay: '2026-05-10', themeId, themeName: themeRow?.name, themeSlug,
     });
+    // No dia seguinte a ofensiva ainda vale, mas depende de jogar hoje.
+    expect(await streaks.activeStreakWithTheme(user.id, '2026-05-11')).toMatchObject({ atRisk: true, currentStreak: 1 });
+  });
+
+  it('ofensiva perdida não aparece como viva nem vence uma ofensiva menor, porém ativa', async () => {
+    const { users, themeSlug } = await fixture(1);
+    const user = userAt(users, 0);
+    const oldThemeId = await themeIdOf(themeSlug);
+    const { themeSlug: themeSlugB } = await fixture(0);
+    const liveThemeId = await themeIdOf(themeSlugB);
+    const streaks = new StreakRepository(env.CORE_DB);
+    for (const day of ['2026-05-01', '2026-05-02', '2026-05-03', '2026-05-04']) await streaks.advance(user.id, oldThemeId, day);
+    await streaks.advance(user.id, liveThemeId, '2026-05-20');
+    expect(await streaks.activeStreakWithTheme(user.id, '2026-05-20')).toMatchObject({ currentStreak: 1, themeId: liveThemeId });
+    // Sem nenhuma ofensiva viva, mostra zero (o recorde continua disponível).
+    expect(await streaks.activeStreakWithTheme(user.id, '2026-06-30')).toMatchObject({ bestStreak: 4, currentStreak: 0, themeId: oldThemeId });
   });
 });
 

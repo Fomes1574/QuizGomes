@@ -3,9 +3,18 @@ import { SocialRepository } from '../repositories/social-repository.js';
 import type { ActivityState, PlayerActivity } from './presence-hub.js';
 
 interface SocialSocketAttachment {
+  /**
+   * Última atividade conhecida (vinda da PresenceHub). Guardada no próprio
+   * socket para o retrato de presença dos amigos não precisar consultar uma
+   * PresenceHub por amigo a cada abertura da Social.
+   */
+  activity?: PlayerActivity;
+  /** Quando `activity` foi confirmada; passado o prazo, o retrato reconsulta. */
+  activityAt?: number;
   connectedAt?: number;
   presenceObjectId?: string;
   publicId?: string;
+  resource?: string | null;
   userId: string;
 }
 
@@ -29,6 +38,14 @@ const QUEUE_BROADCAST_INTERVAL_MS = 1_500;
 const QUEUE_ACTIVITY_KEY = 'queue-activity';
 /** O cliente pinga a cada 45 s; 2 min de silêncio é conexão morta (rede caída sem close). */
 export const SOCIAL_SILENCE_LIMIT_MS = 120_000;
+/**
+ * A atividade chega por /activity a cada mudança; mesmo assim, depois de
+ * 1 min sem confirmação o retrato consulta a PresenceHub de novo (um aviso
+ * perdido nunca deixa o amigo "preso" num estado velho).
+ */
+const ACTIVITY_CACHE_MS = 60_000;
+/** Entradas e saídas seguidas viram um único número "online" para todos. */
+const ONLINE_COUNT_INTERVAL_MS = 1_000;
 
 /** Tema da fila de um amigo, só quando ele está de fato procurando partida. */
 function queueThemeOf(activity: PlayerActivity, resource: string | null | undefined): string | undefined {
@@ -59,6 +76,10 @@ function attachment(socket: WebSocket): SocialSocketAttachment | null {
 export class SocialRealtimeHub {
   private lastRevision = 0;
   private lastQueueBroadcast = 0;
+  private queuePending = false;
+  private lastCountBroadcast = 0;
+  private countPending = false;
+  private readonly sentCounts = new WeakMap<WebSocket, number>();
 
   constructor(
     private readonly ctx: DurableObjectState,
@@ -75,13 +96,16 @@ export class SocialRealtimeHub {
         return Response.json({ error: 'INVALID_PRESENCE' }, { status: 400 });
       }
       const subjects = new Map<string, SocialSocketAttachment>();
-      for (const socket of this.ctx.getWebSockets()) {
+      const known = { activity: input.activity, activityAt: Date.now(), resource: input.resource ?? null };
+      // Tag por PresenceHub: só os sockets daquela pessoa, sem varrer todos.
+      for (const socket of this.ctx.getWebSockets(`presence:${input.presenceObjectId}`)) {
         const session = attachment(socket);
-        if (session?.presenceObjectId === input.presenceObjectId) subjects.set(session.userId, session);
+        if (session?.presenceObjectId !== input.presenceObjectId) continue;
+        const updated = { ...session, ...known };
+        socket.serializeAttachment(updated);
+        subjects.set(session.userId, updated);
       }
-      await Promise.all([...subjects.values()].map((subject) => this.publishPresence(
-        subject, { activity: input.activity, resource: input.resource ?? null },
-      )));
+      await Promise.all([...subjects.values()].map((subject) => this.publishPresence(subject, known)));
       return Response.json({ ok: true });
     }
     if (url.pathname === '/queue-activity' && request.method === 'POST') {
@@ -105,15 +129,17 @@ export class SocialRealtimeHub {
       }
       const revision = this.nextRevision();
       const friends = await Promise.all([...new Set(input.userIds)].map(async (userId) => {
-        const session = this.ctx.getWebSockets(`user:${userId}`).map(attachment)
+        const session = this.ctx.getWebSockets(`user:${userId}`).filter(isOpen).map(attachment)
           .find((candidate) => candidate?.presenceObjectId !== undefined);
         if (session?.presenceObjectId === undefined) {
           return { presence: 'OFFLINE' as const, revision, userId };
         }
-        const response = await this.env.PRESENCE_HUB
-          .get(this.env.PRESENCE_HUB.idFromString(session.presenceObjectId))
-          .fetch('https://presence.internal/state');
-        const state = await response.json<ActivityState>();
+        // A atividade já chega por /activity; só um socket antigo, sem ela
+        // guardada, ainda custa uma consulta à PresenceHub.
+        const fresh = session.activity !== undefined && Date.now() - (session.activityAt ?? 0) <= ACTIVITY_CACHE_MS;
+        const state = !fresh || session.activity === undefined
+          ? await this.readActivity(session)
+          : { activity: session.activity, resource: session.resource ?? null };
         const queueThemeId = queueThemeOf(state.activity, state.resource);
         return { presence: publicPresence(state.activity), ...(queueThemeId === undefined ? {} : { queueThemeId }), revision, userId };
       }));
@@ -186,13 +212,17 @@ export class SocialRealtimeHub {
       userId,
     };
     server.serializeAttachment(session);
-    this.ctx.acceptWebSocket(server, [`user:${userId}`]);
+    this.ctx.acceptWebSocket(server, [
+      `user:${userId}`,
+      ...(presenceObjectId === null ? [] : [`presence:${presenceObjectId}`]),
+    ]);
     const nextCount = this.users().size;
+    // Quem chega recebe o número na hora; os outros, no máximo 1 vez por segundo.
+    this.sendCount(server, nextCount);
     if (nextCount !== previousCount) {
-      this.broadcastCount(nextCount);
+      await this.scheduleCountBroadcast({ skip: server });
       if (session.presenceObjectId !== undefined) this.background(this.publishPresence(session));
     }
-    else this.send(server, JSON.stringify({ count: nextCount, type: 'ONLINE_COUNT' }));
     const queues = await this.queueActivity();
     // Filas vazias são o padrão: o cliente já nasce com zero, sem mensagem extra.
     if (Object.keys(queues).length > 0) this.send(server, this.queueActivityPayload(queues));
@@ -229,7 +259,7 @@ export class SocialRealtimeHub {
     if (session === null) return;
     const remaining = this.users(socket);
     if (!remaining.has(session.userId)) {
-      this.broadcastCount(remaining.size, socket);
+      this.background(this.scheduleCountBroadcast({ leaving: socket }));
       if (session.presenceObjectId !== undefined) this.background(this.publishPresence(session, undefined, socket));
     }
   }
@@ -247,13 +277,7 @@ export class SocialRealtimeHub {
     let presence: FriendPresence = 'OFFLINE';
     let queueThemeId: string | undefined;
     if (connected) {
-      let current = known;
-      if (current === undefined) {
-        const response = await this.env.PRESENCE_HUB
-          .get(this.env.PRESENCE_HUB.idFromString(subject.presenceObjectId))
-          .fetch('https://presence.internal/state');
-        current = await response.json<ActivityState>();
-      }
+      const current = known ?? await this.readActivity(subject);
       presence = publicPresence(current.activity);
       queueThemeId = queueThemeOf(current.activity, current.resource);
     }
@@ -271,9 +295,46 @@ export class SocialRealtimeHub {
     }
   }
 
+  /** Consulta a PresenceHub e guarda a resposta nos sockets da pessoa. */
+  private async readActivity(subject: SocialSocketAttachment): Promise<{ activity: PlayerActivity; resource: string | null }> {
+    const response = await this.env.PRESENCE_HUB
+      .get(this.env.PRESENCE_HUB.idFromString(subject.presenceObjectId!))
+      .fetch('https://presence.internal/state');
+    const state = await response.json<ActivityState>();
+    const known = { activity: state.activity, activityAt: Date.now(), resource: state.resource ?? null };
+    for (const socket of this.ctx.getWebSockets(`user:${subject.userId}`)) {
+      const session = attachment(socket);
+      if (session?.presenceObjectId === subject.presenceObjectId) socket.serializeAttachment({ ...session, ...known });
+    }
+    return known;
+  }
+
   async alarm(): Promise<void> {
     this.sweepSilent();
-    await this.broadcastQueueActivity();
+    const countOnly = this.countPending && !this.queuePending;
+    if (this.countPending) this.broadcastCount({});
+    // Depois de hibernar as marcas em memória somem: na dúvida, reenvia as filas.
+    if (!countOnly) await this.broadcastQueueActivity();
+  }
+
+  /**
+   * Online muda a cada entrada e saída; avisar todos a cada uma seria
+   * quadrático com muita gente. O primeiro aviso sai na hora e os seguintes
+   * dentro de 1 s viram um só, pelo alarme.
+   */
+  private async scheduleCountBroadcast(sockets: { leaving?: WebSocket; skip?: WebSocket }): Promise<void> {
+    const now = Date.now();
+    if (now - this.lastCountBroadcast >= ONLINE_COUNT_INTERVAL_MS) {
+      this.broadcastCount(sockets);
+      return;
+    }
+    this.countPending = true;
+    await this.ensureAlarm(this.lastCountBroadcast + ONLINE_COUNT_INTERVAL_MS);
+  }
+
+  private async ensureAlarm(at: number): Promise<void> {
+    const current = await this.ctx.storage.getAlarm();
+    if (current === null || current > at) await this.ctx.storage.setAlarm(at);
   }
 
   /**
@@ -319,13 +380,13 @@ export class SocialRealtimeHub {
       await this.broadcastQueueActivity();
       return;
     }
-    if (await this.ctx.storage.getAlarm() === null) {
-      await this.ctx.storage.setAlarm(this.lastQueueBroadcast + QUEUE_BROADCAST_INTERVAL_MS);
-    }
+    this.queuePending = true;
+    await this.ensureAlarm(this.lastQueueBroadcast + QUEUE_BROADCAST_INTERVAL_MS);
   }
 
   private async broadcastQueueActivity(): Promise<void> {
     this.lastQueueBroadcast = Date.now();
+    this.queuePending = false;
     const payload = this.queueActivityPayload(await this.queueActivity());
     for (const socket of this.ctx.getWebSockets()) this.send(socket, payload);
   }
@@ -341,11 +402,24 @@ export class SocialRealtimeHub {
     }));
   }
 
-  private broadcastCount(count: number, except?: WebSocket): void {
-    const payload = JSON.stringify({ count, type: 'ONLINE_COUNT' });
+  /**
+   * Número atual, sempre recontado. `leaving` é o socket saindo (não conta e
+   * não recebe); `skip` é quem acabou de chegar e já recebeu o número.
+   */
+  private broadcastCount({ leaving, skip }: { leaving?: WebSocket; skip?: WebSocket }): void {
+    this.lastCountBroadcast = Date.now();
+    this.countPending = false;
+    const count = this.users(leaving).size;
     for (const socket of this.ctx.getWebSockets()) {
-      if (socket !== except) this.send(socket, payload);
+      if (socket !== leaving && socket !== skip) this.sendCount(socket, count);
     }
+  }
+
+  /** Não repete para um socket o número que ele já tem. */
+  private sendCount(socket: WebSocket, count: number): void {
+    if (this.sentCounts.get(socket) === count) return;
+    this.sentCounts.set(socket, count);
+    this.send(socket, JSON.stringify({ count, type: 'ONLINE_COUNT' }));
   }
 
   private send(socket: WebSocket, payload: string): void {
