@@ -261,7 +261,7 @@ export function MatchResultScreen({
       )}
       {rematch?.incoming != null && !cancelledBeforeStart && (
         <div className="rematch-invite" role="status">
-          <span aria-hidden="true" className="rematch-invite__icon">⚔</span>
+          <span aria-hidden="true" className="rematch-invite__icon"><Icon name="bolt" /></span>
           <p><strong>{rematch.incoming.fromName}</strong> quer revanche!</p>
           <Button className="rematch-invite__accept" onClick={() => { if (rematch.incoming !== null) rematch.onAccept(rematch.incoming); }}>Aceitar revanche</Button>
         </div>
@@ -269,7 +269,7 @@ export function MatchResultScreen({
       <div className="match-result-actions">
         {rematch !== undefined && rematch.incoming === null && !cancelledBeforeStart && (
           <Button className="match-result-actions__rematch" disabled={rematch.state === 'sending'} onClick={rematch.onRequest}>
-            <span aria-hidden="true">⚔</span>{rematch.state === 'sending' ? 'Chamando…' : `Revanche com ${opponent.name.split(' ')[0] ?? 'adversário'}`}
+            <Icon name="bolt" />{rematch.state === 'sending' ? 'Chamando…' : `Revanche com ${opponent.name.split(' ')[0] ?? 'adversário'}`}
           </Button>
         )}
         {rematch?.state === 'error' && rematch.message !== undefined && <p className="form-error">{rematch.message}</p>}

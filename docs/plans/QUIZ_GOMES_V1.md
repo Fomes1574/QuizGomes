@@ -1551,6 +1551,22 @@ Aprovado pelo proprietário após auditoria:
 - Desempenho: CSS morto do globo removido; refresh social por foco limitado a
   15 s (push de pedido continua imediato).
 
+### 2026-09-27 — limpeza automática, dia de Brasília, conquistas, cartões de divulgação e revanche
+
+Pedidos do proprietário nesta rodada: limpeza a cada 15 dias (admin 6 meses), XP de participação 5, compartilhamento como divulgação, V2 #4 (molduras), #5 (aviso de ofensiva), cartões de parabéns a cada 100 dias e em 1/2 anos, #6 (revanche imediata) e todas as melhorias da auditoria.
+
+- Limpeza (Cron de hora em hora, `RetentionService`): detalhe de partidas/desafios encerrados, recibos de denúncia e de estatística vencem em 15 dias; denúncia só vale nesse prazo; auditoria vence em 6 meses, exceto concessão/remoção de ADMIN. Orçamento fixo de consultas por execução; nada que alimente placar, perfil ou ranking é apagado.
+- Dia do jogo = dia de Brasília (`gameDayKey`); o perfil mostra a ofensiva viva e quando as missões renovam. Transição: no dia do deploy, quem jogou entre 21h e 0h pode não ver o dia seguinte contar (uma vez só).
+- XP: vitória 20/30; derrota e empate de partida concluída 5; anulada/abandono 0 (AGENTS.md atualizado).
+- Admin: aprovação em lote num batch atômico por pool (slots densos, corrida vira conflito explícito), "Aprovar todas em revisão", importação de arquivo grande em partes de 100 com repetidas puladas; abas na administração.
+- Sincronia: contagem online agrupada (≤1/s, sem repetição por socket); retrato de presença usa a atividade já recebida (sem uma consulta à PresenceHub por amigo); texto "pareando…" removido.
+- Perfil: estatísticas da Normal (contador na transação do resultado + backfill), últimas partidas, recordes por tema (inclui metade de desafio assíncrono), molduras e conquistas, compartilhar perfil.
+- Conquistas e molduras (Core 0020): `STREAK_7`, `STREAK_{100·n}`, `STREAK_365`, `STREAK_730`, `MISSIONS_DAY`, `PERSONAL_RECORD`; cartões de parabéns no app; aviso opcional de ofensiva às ~20h.
+- Compartilhamento: cartões 1080×1920 (resultado, perfil, convite, marcos) com marca, desafio e endereço; prévia de link sem arte própria usa `og-image.jpg` 1200×630.
+- Revanche: fila privada `rematch:<matchId>` (30 s, sem banda de divisão). Decisão registrada: a banda de divisão da Rankeada não se aplica à revanche porque a dupla acabou de ser pareada pela própria banda.
+- Desempenho: fontes hospedadas no app (subconjunto latino pré-carregado), CSS da administração fora do pacote inicial.
+- Validação: lint, typecheck, domínio/unit, 220 testes web, 241 testes Worker, validador de migrations (Core 0020, Questions 0010), build e dry-run; prévias em celular e computador, claro e escuro.
+
 ## Critério de saída desta execução
 
 - Milestones 8 e 8.5 aprovados fisicamente e congelados;

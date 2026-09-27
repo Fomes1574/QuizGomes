@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { clearRematchInvite, currentRematchInvite, REMATCH_INVITE_EVENT, rematchNavigationState, type RematchInvite } from '../lib/rematch.js';
 import { feedback } from '../lib/feedback.js';
 import { Button } from './button.js';
+import { Icon } from './icons.js';
 
 /**
  * Convite de revanche quando a pessoa já saiu da tela de resultado (está em
@@ -34,7 +35,7 @@ export function RematchToast() {
   };
   return (
     <aside aria-live="polite" className="rematch-toast" role="status">
-      <span aria-hidden="true" className="rematch-invite__icon">⚔</span>
+      <span aria-hidden="true" className="rematch-invite__icon"><Icon name="bolt" /></span>
       <p><strong>{invite.fromName}</strong> quer revanche{invite.themeName === '' ? '' : ` em ${invite.themeName}`}!</p>
       <div className="rematch-toast__actions">
         <Button onClick={() => {

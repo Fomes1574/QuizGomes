@@ -11,6 +11,8 @@ Estas regras valem para toda alteração neste repositório.
 - Fontes e evidências são opcionais na V1: podem ser registradas quando disponíveis, mas sua ausência não bloqueia revisão, importação ou publicação de uma pergunta.
 - Ranking e Conhecimento são por tema. Média de categoria é somente estatística.
 - Matchmaking público é apenas simultâneo. Assíncrono é apenas entre amigos.
+- Revanche imediata: só os dois jogadores de uma partida ao vivo concluída há até 3 min, fila privada da dupla (mesmo tema e modo, 30 s, sem banda de divisão, fora da contagem pública da fila).
+- Conquistas (7 dias, cada 100 dias, 365 e 730 dias de ofensiva, dia completo de missões, recorde batido) dão molduras equipáveis; nunca são vendidas nem apagadas.
 - Empates não têm desempate. Normal (Casual) nunca altera Conhecimento; somente a Rankeada altera.
 - Não inventar regras de jogo, conquistas, cosméticos, monetização ou catálogo editorial.
 

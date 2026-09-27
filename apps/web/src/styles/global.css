@@ -1653,7 +1653,8 @@ input, select, textarea { font-size: max(16px, 1em); }
 }
 
 /* ===== Revanche ===== */
-.match-result-actions__rematch span[aria-hidden] { margin-right: 8px; }
+.match-result-actions__rematch svg { width: 18px; height: 18px; margin-right: 6px; }
+.rematch-invite__icon svg { width: 20px; height: 20px; fill: currentColor; }
 .rematch-invite { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 10px 12px; width: min(100%, 460px); margin: 0 auto 14px; padding: 14px 16px; border: 1px solid color-mix(in srgb, var(--brand) 40%, var(--border)); border-radius: 20px; background: color-mix(in srgb, var(--brand) 10%, var(--surface)); box-shadow: var(--shadow-md); animation: rematch-in 420ms var(--ease-spring) both; }
 .rematch-invite p { margin: 0; font-size: .9rem; }
 .rematch-invite__icon { display: grid; width: 40px; height: 40px; place-items: center; border-radius: 12px; color: #fff; background: var(--brand); font-size: 1.1rem; animation: rematch-pulse 1.4s ease-in-out infinite; }
@@ -1668,3 +1669,5 @@ input, select, textarea { font-size: max(16px, 1em); }
 @media (prefers-reduced-motion: reduce) {
   .rematch-invite, .rematch-toast, .rematch-invite__icon { animation: none; }
 }
+.celebration__actions .button--secondary { border-color: rgba(255,255,255,.6); color: #1b1b24; background: #fff; }
+.celebration__actions .button--secondary svg { color: inherit; }

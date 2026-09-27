@@ -136,8 +136,8 @@ npm run deploy:cloudflare -w @quiz-gomes/worker
 
 `test:migrations` aplica somente migrations pendentes:
 
-- `QUESTIONS_DB`: `0001_questions.sql` até `0009_question_image_key_index.sql`;
-- `CORE_DB`: `0001_core.sql` até `0019_avatar_object_storage.sql`.
+- `QUESTIONS_DB`: `0001_questions.sql` até `0010_statistics_retention_index.sql`;
+- `CORE_DB`: `0001_core.sql` até `0020_retention_and_achievements.sql`.
 
 Questions é aplicado primeiro para que o tema temporário só fique visível depois que seu pool estiver pronto. Wrangler registra o histórico em `d1_migrations`; retries não reaplicam versões concluídas. Se uma migration falhar, o D1 reverte integralmente aquela migration, preserva as anteriores e o deploy não começa. Arquivos já aplicados são imutáveis e qualquer correção posterior é forward-only. Uma migration que falhou e não foi registrada, como a primeira tentativa remota da `0004_theme_artwork.sql`, continua pendente e deve ser corrigida no próprio arquivo antes do retry — não recebe uma compensação vazia ou manual.
 
@@ -145,8 +145,8 @@ Questions é aplicado primeiro para que o tema temporário só fique visível de
 
 - lê e passa todas as migrations pelo splitter SQL exportado pelo Wrangler, incluindo o statement de tracking;
 - exige LF e bloqueia `CREATE TRIGGER`, pois compound statements continuam sujeitos a diferenças entre o splitter local e o parser multi-statement do endpoint D1 `/query` usado por migrations remotas;
-- aplica Core `0001–0019` e Questions `0001–0009` em bancos vazios e isolados;
-- prova os upgrades Core `0003→0004→0005→0006→0007→0008→0009→0010→0011→0012→0013→0014→0015→0016→0017→0018→0019` e Questions `0002→0003→0004→0005→0006→0007→0008→0009` (a `0019` reconstrói `user_custom_avatars` e o gate confere que BLOBs, versões, datas e a FK com CASCADE sobrevivem), incluindo a passagem exata do pool sintético de 30 para 250 slots;
+- aplica Core `0001–0020` e Questions `0001–0010` em bancos vazios e isolados;
+- prova os upgrades Core `0003→0004→0005→0006→0007→0008→0009→0010→0011→0012→0013→0014→0015→0016→0017→0018→0019→0020` e Questions `0002→0003→0004→0005→0006→0007→0008→0009→0010` (a `0019` reconstrói `user_custom_avatars` e o gate confere que BLOBs, versões, datas e a FK com CASCADE sobrevivem), incluindo a passagem exata do pool sintético de 30 para 250 slots;
 - valida pedidos cruzados, constraints direcionais de recusas/bloqueios e instalações FCM no schema social;
 - inspeciona colunas, índice e FK composta, e tenta estados inválidos de metadata/BLOB;
 - injeta uma migration temporária que falha depois de criar/escrever e comprova rollback de schema e de `d1_migrations`.
@@ -154,6 +154,15 @@ Questions é aplicado primeiro para que o tema temporário só fique visível de
 Esse gate remove a classe conhecida de SQL remoto frágil e testa o runtime D1 local real, sem mock. Ele não reproduz o parser hospedado do endpoint `/query` e, portanto, não substitui o smoke remoto automático do Workers Build. Não cole SQL no Dashboard para contornar uma falha: o retry da pipeline GitHub → Workers Builds → migrations → deploy permanece a única fonte de verdade.
 
 Os únicos comandos de seed contêm `:local` no nome e não fazem parte de `build:cloudflare` nem de `deploy:cloudflare`. O conteúdo temporário de produção usa migrations próprias, IDs reservados e a flag `SYNTHETIC_SMOKE_TEST`; ele não reutiliza os seeds de desenvolvimento. Não cole SQL de fixture no Dashboard D1.
+
+### 4.1. Cron Triggers (grátis)
+
+O `wrangler.jsonc` declara dois Cron Triggers, publicados junto com o Worker:
+
+- `17 * * * *` — limpeza automática de hora em hora, em lotes pequenos (orçamento de 40 consultas por execução). Apaga o detalhe de partidas/desafios encerrados há mais de 15 dias (perguntas seladas, respostas, recibos de denúncia e de estatística), missões com mais de 15 dias, lotes de importação concluídos e marcas de aviso de fila com mais de 1 dia; histórico de administração com mais de 6 meses, exceto `GRANT_ADMIN_ROLE`/`REVOKE_ADMIN_ROLE`. Partidas, placares, perfis, Conhecimento, recordes, ofensivas e conquistas nunca são apagados. O log `{"event":"retention",…,"backlog":true}` indica que sobrou trabalho para a próxima hora.
+- `5,20,35,50 23 * * *` — aviso opcional "sua ofensiva acaba hoje" (~20h de Brasília). Só roda com FCM configurado; no máximo 25 pessoas e 35 envios por execução, um aviso por pessoa por dia.
+
+Para testar localmente: `npx wrangler dev --test-scheduled` e `curl "http://localhost:8787/__scheduled?cron=17+*+*+*+*"`.
 
 ## 5. Validação local
 
