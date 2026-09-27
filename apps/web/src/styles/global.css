@@ -1438,7 +1438,20 @@ input, select, textarea { font-size: max(16px, 1em); }
   .question-stage { grid-template-columns: minmax(180px, .9fr) minmax(360px, 1.3fr); grid-template-rows: auto minmax(0, 1fr); padding-bottom: 52px; }
   .question-stage h1 { grid-column: 1; }
   .question-media { grid-column: 1; height: clamp(80px, 24vh, 160px); }
-  .answer-grid { grid-column: 2; grid-row: 1 / span 2; align-self: center; }
+  /*
+   * Celular deitado: 4 alternativas de duas linhas passavam da altura útil e o
+   * "center" empurrava a A para baixo da barra do tempo. "safe center" alinha
+   * ao topo quando não cabe (a rolagem alcança tudo) e as alternativas ficam
+   * mais compactas; o enunciado passa a escalar pela altura, não pela largura.
+   */
+  .answer-grid { grid-column: 2; grid-row: 1 / span 2; align-self: safe center; }
+  .answer-grid--list { gap: 6px; }
+  .answer-grid--list .answer-option { min-height: 48px; padding: 6px 10px; box-shadow: 0 3px 0 color-mix(in srgb, var(--option-color) 26%, var(--border)); }
+  .answer-grid--list .answer-option__marker { width: 30px; height: 30px; }
+  .answer-option > strong { font-size: clamp(.84rem, 3.6vh, .98rem); line-height: 1.22; }
+  .question-stage h1[data-length='short'] { font-size: clamp(1.3rem, 7vh, 2.2rem); }
+  .question-stage h1[data-length='medium'] { font-size: clamp(1.15rem, 6vh, 1.8rem); }
+  .question-stage h1[data-length='long'] { font-size: clamp(1rem, 5vh, 1.5rem); }
 }
 
 @media (prefers-reduced-motion: reduce) {

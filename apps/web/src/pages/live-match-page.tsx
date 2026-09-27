@@ -28,6 +28,7 @@ import {
 } from '../lib/rematch.js';
 import { clearDuelHandoff } from '../lib/match-handoff.js';
 import { takePreparedMatchRoom } from '../lib/preloaded-match-room.js';
+import { answerDeadline, nextRoundTrip } from '../lib/latency.js';
 import { QUESTION_IMAGE_READY_CAP_MS, waitForQuestionImage } from '../lib/question-image-ready.js';
 import { loadSeenQuestions, storeSeenQuestions, type SeenQuestion } from '../lib/reports.js';
 
@@ -84,6 +85,8 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
   const socketRef = useRef<WebSocket | null>(null);
   const [projection, setProjection] = useState<LiveMatchProjection | null>(null);
   const [deadlineMs, setDeadlineMs] = useState<number | null>(null);
+  // Janela da rodada já compensada pela ida e volta: anima o anel e a barra.
+  const [answerWindowMs, setAnswerWindowMs] = useState(0);
   const [roundIntro, setRoundIntro] = useState<{ durationMs: number; number: number; total: number } | null>(null);
   const [statusMessage, setStatusMessage] = useState('Conectando à sala');
   const [error, setError] = useState<string | null>(null);
@@ -123,6 +126,9 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
     let connecting = false;
     let connectionState: LocalConnectionState = 'CONNECTED';
     let lastPongAt = 0;
+    // Ida e volta medida pelo batimento: compensa o relógio da rodada (ver lib/latency).
+    let heartbeatSentAt: number | null = null;
+    let roundTripMs: number | null = null;
     let pauseKind: MatchConnectionScreenKind | null = null;
     let connect: (() => Promise<void>) | null = null;
 
@@ -288,7 +294,10 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
         }
       }
       if (match.phase === 'ANSWERING' && match.remainingMs !== undefined) {
-        setDeadlineMs(Date.now() + match.remainingMs);
+        const receivedAt = Date.now();
+        const deadline = answerDeadline(receivedAt, match.remainingMs, roundTripMs);
+        setDeadlineMs(deadline);
+        setAnswerWindowMs(deadline - receivedAt);
         setRoundIntro(null);
       }
       if (match.phase === 'ROUND_RESULT') {
@@ -311,7 +320,11 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
         return;
       }
       if (payload.type === 'PONG') {
-        if (socketRef.current === socket) lastPongAt = performance.now();
+        if (socketRef.current === socket) {
+          lastPongAt = performance.now();
+          if (heartbeatSentAt !== null) roundTripMs = nextRoundTrip(roundTripMs, lastPongAt - heartbeatSentAt);
+          heartbeatSentAt = null;
+        }
         return;
       }
       if (payload.type === 'ERROR') {
@@ -391,6 +404,7 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
       clearHeartbeat();
       lastPongAt = performance.now();
       if (socket.readyState === WebSocket.OPEN) {
+        heartbeatSentAt = performance.now();
         socket.send(JSON.stringify({ type: 'HEARTBEAT' }));
       }
       heartbeatTimer = window.setInterval(() => {
@@ -403,6 +417,7 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
           socket.close(CLIENT_CONNECTION_LOSS_CODE, 'Conexão sem resposta');
           return;
         }
+        heartbeatSentAt = performance.now();
         socket.send(JSON.stringify({ type: 'HEARTBEAT' }));
       }, MATCH_HEARTBEAT_INTERVAL_MS);
     };
@@ -770,9 +785,7 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
               ? -MATCH_QUESTION_ENTRANCE_MS
               : Math.max(0, roundIntro.durationMs - MATCH_QUESTION_ENTRANCE_MS)
             : 0}
-          remainingMs={projection.phase === 'ANSWERING'
-            ? projection.remainingMs ?? 0
-            : 0}
+          remainingMs={projection.phase === 'ANSWERING' ? answerWindowMs : 0}
           resolution={projection.resolution}
           round={projection.round}
           selectedOption={projection.selectedOption}

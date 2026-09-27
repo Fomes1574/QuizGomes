@@ -1574,6 +1574,14 @@ Pedidos do proprietário nesta rodada: limpeza a cada 15 dias (admin 6 meses), X
 - Página inicial com prévia de link de imagem absoluta (WhatsApp/Facebook não aceitam `og:image` relativa); `/` passa pelo Worker.
 - Não verificado em aparelho real: comportamento de cada app com imagem + texto (alguns, como os Stories do Instagram, ignoram o texto) e prévia com arte de tema em WebP no WhatsApp.
 
+### 2026-09-27 — revisão da partida: tempo, regras e leitura
+
+- Tempos conferidos no domínio/servidor: 3 s de preparo, 10 s por pergunta, fim imediato quando os dois respondem, 2,9 s de resultado da rodada, 10 s de tolerância para o pronto. Pontuação decidida pelo servidor na chegada da resposta (10 + segundos restantes).
+- Compensação de latência no relógio do cliente: o prazo local desconta o tempo de ida e volta medido pelo batimento (média suavizada, teto de 600 ms, amostras acima de 3 s descartadas). O número na tela passa a bater com os pontos que o servidor concede; nada muda na regra nem no que o servidor aceita.
+- Celular deitado: alternativas de duas linhas passavam da altura útil e a A ficava sob a barra do tempo. Agora alinham com `safe center`, ficam mais compactas e o enunciado escala pela altura.
+- Prévias em 360/390 retrato, 740/844 paisagem, tablet e computador, claro e escuro, com enunciado longo, foto, acerto, erro e tempo urgente.
+- Não verificado em aparelho real: rede móvel instável com dois aparelhos simultâneos.
+
 ## Critério de saída desta execução
 
 - Milestones 8 e 8.5 aprovados fisicamente e congelados;
