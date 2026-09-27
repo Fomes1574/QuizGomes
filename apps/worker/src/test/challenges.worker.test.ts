@@ -505,6 +505,10 @@ describe('M9C+M10 — desafios entre amigos no runtime Workers/D1', () => {
     await repository.applyCompletionXp(created.challengeId);
 
     expect(await repository.byId(created.challengeId)).toMatchObject({ status: 'COMPLETED' });
+    // O recorde pessoal da Normal também conta a metade do desafio assíncrono.
+    expect(await env.CORE_DB.prepare(
+      "SELECT best_score FROM theme_personal_records WHERE user_id = ?1 AND mode = 'CASUAL' AND match_id = ?2",
+    ).bind(second.id, created.challengeId).first()).toEqual({ best_score: 60 });
     // 64 do primeiro contra 60 do segundo: vitória do primeiro, +20 XP (desafio é sempre Casual);
     // o segundo terminou e leva a participação de 5 XP.
     const xp = await env.CORE_DB.prepare(

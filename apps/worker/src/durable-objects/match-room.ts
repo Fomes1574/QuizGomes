@@ -20,6 +20,7 @@ import { ChallengeRepository } from '../repositories/challenge-repository.js';
 import { notifyChallengeUpdated } from '../services/challenge-notifier.js';
 import { recordQuestionAnswers } from '../services/question-statistics-service.js';
 import { recordValidPlay } from '../services/progression-service.js';
+import { AchievementRepository } from '../repositories/achievement-repository.js';
 
 interface RoomAttachment {
   seat: LiveSeat;
@@ -550,6 +551,10 @@ export class MatchRoom {
         totalAnswers: row.total_answers,
         userId: row.user_id,
       })));
+      const achievements = new AchievementRepository(this.env.CORE_DB);
+      await Promise.all(summary.players
+        .filter((player) => player.personalRecord === true)
+        .map((player) => achievements.evaluatePersonalRecord(player.userId, state.themeId, state.mode)));
     } catch {
       console.error(JSON.stringify({ code: 'PROGRESSION_RECORD_FAILED', event: 'match_progress', matchId: state.matchId }));
     }

@@ -57,6 +57,9 @@ import { themeLinkPreview } from './http/link-preview.js';
 import { ThemeSuggestionRepository } from './repositories/theme-suggestion-repository.js';
 import { FRIEND_QUEUE_ALERT_DELAY_MS, SocialPushService } from './services/social-push-service.js';
 import { runScheduled } from './scheduled.js';
+import { AchievementRepository } from './repositories/achievement-repository.js';
+import { ProfileHistoryRepository } from './repositories/profile-history-repository.js';
+import { StreakReminderRepository } from './repositories/streak-reminder-repository.js';
 import { inspectQuestionImageWebp, inspectWebp, QUESTION_IMAGE_MAX_BYTES, THEME_ARTWORK_MAX_BYTES } from './storage/webp.js';
 import { CUSTOM_AVATAR_BYTES, CUSTOM_AVATAR_DIMENSION } from './storage/custom-avatar.js';
 import { isQuestionImageKey, R2ImageStorage } from './storage/image-storage.js';
@@ -446,15 +449,87 @@ async function profileSummaryRoute(request: Request, env: Env): Promise<Response
   if (profile === null) throw new ApiError(404, 'PROFILE_NOT_FOUND', 'Perfil ainda não criado.');
   const nowMs = Date.now();
   const dayKey = gameDayKey(nowMs);
+  const achievements = new AchievementRepository(env.CORE_DB);
+  const history = new ProfileHistoryRepository(env.CORE_DB);
+  // Leituras independentes em paralelo: o Perfil abre numa ida e volta só.
+  const [
+    activeStreak, bestTheme, categoryAverages, matchSummary, missions,
+    achievementList, casualSummary, frames, recentMatches, streakReminder, themeRecords,
+  ] = await Promise.all([
+    new StreakRepository(env.CORE_DB).activeStreakWithTheme(profile.userId, dayKey),
+    repository.bestTheme(profile.userId),
+    repository.categoryAverages(profile.userId),
+    repository.matchSummary(profile.userId),
+    new MissionRepository(env.CORE_DB).listForDay(profile.userId, dayKey),
+    achievements.list(profile.userId),
+    history.casualSummary(profile.userId),
+    achievements.frames(profile.userId, profile.equippedFrameId),
+    history.recentMatches(profile.userId),
+    new StreakReminderRepository(env.CORE_DB).enabled(profile.userId),
+    history.themeRecords(profile.userId),
+  ]);
   return json({
-    activeStreak: await new StreakRepository(env.CORE_DB).activeStreakWithTheme(profile.userId, dayKey),
-    bestTheme: await repository.bestTheme(profile.userId),
-    categoryAverages: await repository.categoryAverages(profile.userId),
-    matchSummary: await repository.matchSummary(profile.userId),
-    missions: await new MissionRepository(env.CORE_DB).listForDay(profile.userId, dayKey),
+    achievements: achievementList,
+    activeStreak,
+    bestTheme,
+    casualSummary,
+    categoryAverages,
+    frames,
+    matchSummary,
+    missions,
     // Meia-noite de Brasília: o cliente mostra "renovam em 3 h 12 min".
     missionsResetAt: new Date(nextGameDayStartMs(nowMs)).toISOString(),
+    recentMatches,
+    streakReminder,
+    themeRecords,
   });
+}
+
+async function profileOf(request: Request, env: Env) {
+  const identity = await requireUser(request, env);
+  const profile = await new UserRepository(env.CORE_DB).findByFirebaseUid(identity.uid);
+  if (profile === null) throw new ApiError(404, 'PROFILE_NOT_FOUND', 'Perfil ainda não criado.');
+  return profile;
+}
+
+/** Cartões de parabéns ainda não vistos (GET) e marcação de vistos (POST). */
+async function profileCelebrationsRoute(request: Request, env: Env): Promise<Response> {
+  const profile = await profileOf(request, env);
+  const achievements = new AchievementRepository(env.CORE_DB);
+  if (request.method === 'GET') return json({ celebrations: await achievements.unseen(profile.userId) });
+  if (request.method === 'POST') {
+    const parsed = z.object({ achievementIds: z.array(z.string().min(3).max(40)).min(1).max(20) }).strict()
+      .safeParse(await readJson(request));
+    if (!parsed.success) throw validationError(parsed.error);
+    await achievements.markSeen(profile.userId, parsed.data.achievementIds);
+    return json({ ok: true });
+  }
+  throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Método não permitido.');
+}
+
+/** Equipa (ou tira) uma moldura que a pessoa ganhou. */
+async function profileFrameRoute(request: Request, env: Env): Promise<Response> {
+  if (request.method !== 'PUT') throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Método não permitido.');
+  const profile = await profileOf(request, env);
+  const parsed = z.object({ frameId: z.string().min(1).max(64).nullable() }).strict().safeParse(await readJson(request));
+  if (!parsed.success) throw validationError(parsed.error);
+  const equipped = await new AchievementRepository(env.CORE_DB).equipFrame(profile.userId, parsed.data.frameId);
+  if (!equipped) throw new ApiError(403, 'FRAME_NOT_OWNED', 'Essa moldura ainda não é sua.');
+  return json({ equippedFrameId: parsed.data.frameId });
+}
+
+/** Aviso opcional "sua ofensiva acaba hoje". */
+async function profileStreakReminderRoute(request: Request, env: Env): Promise<Response> {
+  const profile = await profileOf(request, env);
+  const reminders = new StreakReminderRepository(env.CORE_DB);
+  if (request.method === 'GET') return json({ enabled: await reminders.enabled(profile.userId) });
+  if (request.method === 'PUT') {
+    const parsed = z.object({ enabled: z.boolean() }).strict().safeParse(await readJson(request));
+    if (!parsed.success) throw validationError(parsed.error);
+    await reminders.setEnabled(profile.userId, parsed.data.enabled);
+    return json({ enabled: parsed.data.enabled });
+  }
+  throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Método não permitido.');
 }
 
 async function profileAvatarRoute(request: Request, env: Env): Promise<Response> {
@@ -1942,6 +2017,9 @@ async function apiRoute(request: Request, env: Env, url: URL, context: Execution
   }
   if (url.pathname === '/api/profile/me') return profileRoute(request, env, context);
   if (url.pathname === '/api/profile/summary') return profileSummaryRoute(request, env);
+  if (url.pathname === '/api/profile/celebrations') return profileCelebrationsRoute(request, env);
+  if (url.pathname === '/api/profile/frame') return profileFrameRoute(request, env);
+  if (url.pathname === '/api/profile/streak-reminder') return profileStreakReminderRoute(request, env);
   if (url.pathname === '/api/profile/avatar') return profileAvatarRoute(request, env);
   if (url.pathname === '/api/social' || url.pathname.startsWith('/api/social/')) {
     return socialRoute(request, env, url, context);

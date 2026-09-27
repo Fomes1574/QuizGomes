@@ -467,6 +467,30 @@ export class LiveMatchRepository {
         ),
       );
 
+      if (outcome.kind === 'COMPLETED' && state.mode === 'CASUAL') {
+        // Totais da Partida normal no Perfil (a Rankeada usa theme_rankings).
+        statements.push(this.coreDb.prepare(
+          `INSERT INTO user_casual_stats (user_id, matches, wins, losses, draws)
+           SELECT ?1, 1, ?2, ?3, ?4
+            WHERE EXISTS (
+              SELECT 1 FROM result_ledger
+               WHERE match_id = ?5 AND user_id = ?1 AND applied = 0
+            )
+           ON CONFLICT (user_id) DO UPDATE
+              SET matches = matches + 1,
+                  wins = wins + excluded.wins,
+                  losses = losses + excluded.losses,
+                  draws = draws + excluded.draws,
+                  updated_at = CURRENT_TIMESTAMP`,
+        ).bind(
+          player.userId,
+          delta.result === 'WIN' ? 1 : 0,
+          delta.result === 'LOSS' ? 1 : 0,
+          delta.result === 'DRAW' ? 1 : 0,
+          state.matchId,
+        ));
+      }
+
       if (outcome.kind === 'COMPLETED' && player.score > 0) {
         // Upsert só melhora o recorde; o ledger garante uma única aplicação.
         statements.push(this.coreDb.prepare(

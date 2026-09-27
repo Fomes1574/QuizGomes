@@ -1167,6 +1167,14 @@ describe('Milestone 8 no runtime Workers simulado', () => {
     const result = await repository.finalize(finalizing);
     expect(result.players[0]).toMatchObject({ knowledgeAfter: 500, knowledgeDelta: 0, result: 'WIN', xpDelta: 20 });
     expect(result.players[1]).toMatchObject({ knowledgeAfter: 500, knowledgeDelta: 0, result: 'LOSS', xpDelta: 5 });
+    // Totais da Normal no Perfil: uma vitória e uma derrota, sem contar duas vezes num retry.
+    await repository.finalize(finalizing);
+    const casual = await env.CORE_DB.prepare(
+      'SELECT user_id, matches, wins, losses, draws FROM user_casual_stats WHERE user_id IN (?1, ?2) ORDER BY user_id',
+    ).bind(result.players[0].userId, result.players[1].userId).all<{ draws: number; losses: number; matches: number; user_id: string; wins: number }>();
+    const byUser = new Map(casual.results.map((row) => [row.user_id, row]));
+    expect(byUser.get(result.players[0].userId)).toMatchObject({ losses: 0, matches: 1, wins: 1 });
+    expect(byUser.get(result.players[1].userId)).toMatchObject({ losses: 1, matches: 1, wins: 0 });
     const rankings = await env.CORE_DB.prepare(
       'SELECT knowledge, ranked_matches FROM theme_rankings WHERE theme_id = ?1 ORDER BY user_id',
     ).bind(fixture.themeId).all<{ knowledge: number; ranked_matches: number }>();

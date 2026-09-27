@@ -26,6 +26,7 @@ import { questionImageUrl } from '../storage/image-storage.js';
 import { QuestionSelectionService } from '../services/question-selection-service.js';
 import { recordQuestionAnswers } from '../services/question-statistics-service.js';
 import { StreakRepository } from './streak-repository.js';
+import { recordProgressAchievements } from '../services/progression-service.js';
 import { customAvatarUrl } from '../storage/custom-avatar.js';
 
 const LIVE_STATUS_LIST = LIVE_CHALLENGE_STATUSES.map((status) => `'${status}'`).join(', ');
@@ -581,9 +582,10 @@ export class ChallengeRepository {
    *   progresso duas vezes), então `challenge_progression_ledger` é o gatilho:
    *   só a chamada que efetivamente insere a linha nova executa o efeito.
    *
-   * Lê de `challenge_answers`/`challenge_questions` (D1, nunca apagados para
-   * um desafio COMPLETED) em vez do estado em memória do DO, então funciona
-   * igual numa selagem nova ou numa retomada bem depois, mesmo sem o DO.
+   * Lê de `challenge_answers`/`challenge_questions` (D1) em vez do estado em
+   * memória do DO, então funciona igual numa selagem nova ou numa retomada
+   * depois, mesmo sem o DO. A limpeza automática só apaga esse detalhe 15
+   * dias depois de o desafio terminar; aí não há mais efeito a retomar.
    */
   async recordHalfEffects(challengeId: string, userId: string, questionsDb: D1Database): Promise<void> {
     const challenge = await this.byId(challengeId);
@@ -645,12 +647,28 @@ export class ChallengeRepository {
                WHERE challenge_id = ?6 AND user_id = ?3 AND applied = 0
             )`,
       ).bind(increments[definition.type] ?? 0, nowIso, userId, dayKey, definition.type, challengeId)),
+      // Recorde pessoal da Normal também conta a metade do desafio assíncrono
+      // (7 perguntas, mesmas regras), como já contava o desafio ao vivo.
+      this.db.prepare(
+        `INSERT INTO theme_personal_records (user_id, theme_id, mode, best_score, match_id)
+         SELECT ?1, ?2, 'CASUAL', ?3, ?4
+          WHERE ?3 > 0 AND EXISTS (
+            SELECT 1 FROM challenge_progression_ledger
+             WHERE challenge_id = ?4 AND user_id = ?1 AND applied = 0
+          )
+         ON CONFLICT (user_id, theme_id, mode) DO UPDATE
+            SET best_score = excluded.best_score,
+                match_id = excluded.match_id,
+                achieved_at = CURRENT_TIMESTAMP
+          WHERE excluded.best_score > theme_personal_records.best_score`,
+      ).bind(userId, challenge.themeId, sealed.reduce((total, answer) => total + answer.score, 0), challengeId),
       this.db.prepare(
         `UPDATE challenge_progression_ledger SET applied = 1, applied_at = ?1
           WHERE challenge_id = ?2 AND user_id = ?3 AND applied = 0`,
       ).bind(nowIso, challengeId, userId),
     ];
     await this.db.batch(statements);
+    await recordProgressAchievements(this.db, userId, challenge.themeId, dayKey);
   }
 
   /**

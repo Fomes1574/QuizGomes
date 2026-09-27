@@ -309,6 +309,68 @@ export class SocialPushService {
     return recipients.length;
   }
 
+  /**
+   * "Sua ofensiva acaba hoje": só para quem ligou o aviso, no máximo um por
+   * dia (a marca do dia é gravada antes de enviar). Devolve quantos avisos
+   * foram tentados, respeitando `maxDeliveries` por execução do Cron.
+   */
+  async sendStreakReminders(input: {
+    recipients: ReadonlyArray<{ streak: number; themeName: string; themeSlug: string; userId: string }>;
+    maxDeliveries: number;
+  }): Promise<number> {
+    const account = accountFrom(this.env);
+    if (account === null || input.recipients.length === 0) return 0;
+    let accessToken: string;
+    try {
+      accessToken = await this.accessToken(account);
+    } catch {
+      console.warn(JSON.stringify({ code: 'FCM_AUTH_UNAVAILABLE', event: 'streak_reminder' }));
+      return 0;
+    }
+    let budget = input.maxDeliveries;
+    const deliveries: Array<{ installationId: string; recipient: (typeof input.recipients)[number] }> = [];
+    for (const recipient of input.recipients) {
+      if (budget <= 0) break;
+      const installations = (await this.repository.enabledInstallations(recipient.userId)).slice(0, budget);
+      budget -= installations.length;
+      for (const installationId of installations) deliveries.push({ installationId, recipient });
+    }
+    await Promise.allSettled(deliveries.map(async ({ installationId, recipient }) => {
+      const path = `/temas/${encodeURIComponent(recipient.themeSlug)}`;
+      try {
+        const response = await this.fetcher(
+          `https://fcm.googleapis.com/v1/projects/${encodeURIComponent(this.env.FIREBASE_PROJECT_ID)}/messages:send`,
+          {
+            body: JSON.stringify({
+              message: {
+                data: {
+                  body: `Sua ofensiva de ${recipient.streak} dias em ${recipient.themeName} acaba à meia-noite. Uma partida salva tudo.`,
+                  title: 'Não deixa a chama apagar',
+                  type: 'STREAK_REMINDER',
+                  url: path,
+                },
+                fid: installationId,
+                // Depois da meia-noite o aviso já não serve: expira em 4 h.
+                webpush: { headers: { TTL: '14400', Urgency: 'normal' } },
+              },
+            }),
+            headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+            method: 'POST',
+          },
+        );
+        if (response.ok) {
+          await this.repository.markInstallationSuccess(installationId);
+          return;
+        }
+        if (response.status === 404) await this.repository.disableInstallation(installationId);
+        console.warn(JSON.stringify({ code: 'FCM_DELIVERY_FAILED', event: 'streak_reminder', status: response.status }));
+      } catch {
+        console.warn(JSON.stringify({ code: 'FCM_DELIVERY_UNAVAILABLE', event: 'streak_reminder' }));
+      }
+    }));
+    return deliveries.length;
+  }
+
   private async accessToken(account: ServiceAccount): Promise<string> {
     if (cachedAccessToken !== null
       && cachedAccessToken.projectId === this.env.FIREBASE_PROJECT_ID

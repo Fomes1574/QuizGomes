@@ -27,9 +27,10 @@
       "migrations_dir": "migrations/questions"
     }
   ],
-  // Limpeza automática de hora em hora (15 dias de jogo, 6 meses de admin).
+  // Limpeza automática de hora em hora (15 dias de jogo, 6 meses de admin) e
+  // aviso opcional de ofensiva às ~20h de Brasília (23h UTC).
   "triggers": {
-    "crons": ["17 * * * *"]
+    "crons": ["17 * * * *", "5,20,35,50 23 * * *"]
   },
   "r2_buckets": [
     {

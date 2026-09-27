@@ -934,6 +934,15 @@ function assertRetentionAndAchievementsSchema(scenario) {
     planUses("SELECT user_id FROM user_theme_streaks WHERE last_active_day = '2026-01-01' AND current_streak >= 2", 'idx_user_theme_streaks_day'),
     `${scenario.name}: aviso de ofensiva não usa índice`,
   );
+  assert(
+    planUses("SELECT match_id FROM match_players WHERE user_id = 'x' AND completed_at IS NOT NULL ORDER BY completed_at DESC LIMIT 10", 'idx_match_players_user_completed'),
+    `${scenario.name}: últimas partidas do perfil não usam índice`,
+  );
+  const casualColumns = query(scenario, 'PRAGMA table_info(user_casual_stats)').map(({ name }) => name);
+  assert(
+    ['user_id', 'matches', 'wins', 'losses', 'draws'].every((column) => casualColumns.includes(column)),
+    `${scenario.name}: colunas de user_casual_stats ausentes`,
+  );
   const frames = query(scenario, "SELECT id FROM cosmetics WHERE kind = 'FRAME' AND status = 'AVAILABLE' ORDER BY id");
   assert(frames.length === 6, `${scenario.name}: molduras de recompensa ausentes`);
   const probeId = `achievement-${scenario.name}`;

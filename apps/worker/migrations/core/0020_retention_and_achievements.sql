@@ -40,3 +40,30 @@ INSERT OR IGNORE INTO cosmetics (id, kind, name, status, metadata_json) VALUES
   ('frame-streak-100', 'FRAME', 'Centenário', 'AVAILABLE', '{"achievement":"STREAK_100"}'),
   ('frame-streak-365', 'FRAME', 'Um ano em chamas', 'AVAILABLE', '{"achievement":"STREAK_365"}'),
   ('frame-streak-730', 'FRAME', 'Lenda de dois anos', 'AVAILABLE', '{"achievement":"STREAK_730"}');
+
+-- Perfil: "últimas partidas" lê as partidas concluídas da pessoa, da mais
+-- recente para trás, sem varrer o histórico inteiro.
+CREATE INDEX IF NOT EXISTS idx_match_players_user_completed ON match_players(user_id, completed_at);
+
+-- Estatística da Partida normal no Perfil. A Rankeada já tem os totais em
+-- theme_rankings; a Normal ganha um contador por pessoa, atualizado na mesma
+-- transação do resultado (protegido pelo result_ledger).
+CREATE TABLE user_casual_stats (
+  user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  matches INTEGER NOT NULL DEFAULT 0 CHECK (matches >= 0),
+  wins INTEGER NOT NULL DEFAULT 0 CHECK (wins >= 0),
+  losses INTEGER NOT NULL DEFAULT 0 CHECK (losses >= 0),
+  draws INTEGER NOT NULL DEFAULT 0 CHECK (draws >= 0),
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+INSERT INTO user_casual_stats (user_id, matches, wins, losses, draws)
+SELECT mp.user_id,
+       COUNT(*),
+       SUM(CASE WHEN m.winner_user_id = mp.user_id THEN 1 ELSE 0 END),
+       SUM(CASE WHEN m.winner_user_id IS NOT NULL AND m.winner_user_id <> mp.user_id THEN 1 ELSE 0 END),
+       SUM(CASE WHEN m.winner_user_id IS NULL THEN 1 ELSE 0 END)
+  FROM match_players mp
+  JOIN matches m ON m.id = mp.match_id
+ WHERE m.mode = 'CASUAL' AND m.status = 'FINISHED'
+ GROUP BY mp.user_id;
