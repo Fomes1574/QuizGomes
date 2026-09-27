@@ -30,6 +30,7 @@ vi.mock('../features/auth-context.js', () => ({
     getToken: mocks.getToken,
     profile: mocks.profile,
     removeCustomAvatar: vi.fn(),
+    retryProfile: vi.fn(() => Promise.resolve()),
     role: mocks.role,
     signIn: vi.fn(),
     signOut: vi.fn(),
@@ -187,7 +188,7 @@ describe('M11 — missões e streak no Perfil', () => {
     render(<ProfilePage />);
 
     expect(await screen.findByText('Sem missões disponíveis hoje.')).toBeInTheDocument();
-    expect(screen.getByText('Jogue uma partida válida em qualquer tema para começar sua sequência.')).toBeInTheDocument();
+    expect(screen.getByText('Jogue uma partida em qualquer tema para acender sua ofensiva.')).toBeInTheDocument();
   });
 });
 

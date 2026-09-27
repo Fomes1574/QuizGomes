@@ -1,3 +1,4 @@
+import '../styles/admin.css';
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import type { ReportStatus, ThemeArtwork } from '@quiz-gomes/domain';
 import { Button } from '../components/button.js';
@@ -11,6 +12,25 @@ import { AdminAuditLogPanel, AdminUsersPanel } from './admin-directory-panels.js
 import { AdminCategoriesPanel, AdminQuestionEditorialPanel, AdminThemeModerationPanel, AdminThemeSuggestionsPanel } from './admin-editorial-panels.js';
 
 const ThemeArtworkEditor = lazy(() => import('../components/theme-artwork-editor.js'));
+
+type AdminTabId = 'catalog' | 'history' | 'questions' | 'reports' | 'users' | 'votes';
+const ADMIN_TABS: ReadonlyArray<{ id: AdminTabId; label: string }> = [
+  { id: 'catalog', label: 'Catálogo' },
+  { id: 'questions', label: 'Perguntas' },
+  { id: 'reports', label: 'Denúncias' },
+  { id: 'votes', label: 'Votação' },
+  { id: 'users', label: 'Usuários' },
+  { id: 'history', label: 'Histórico' },
+];
+const ADMIN_TAB_KEY = 'qg:admin-tab';
+
+function initialAdminTab(): AdminTabId {
+  try {
+    const stored = sessionStorage.getItem(ADMIN_TAB_KEY);
+    if (ADMIN_TABS.some((tab) => tab.id === stored)) return stored as AdminTabId;
+  } catch { /* Sem armazenamento: começa pelo catálogo. */ }
+  return 'catalog';
+}
 
 const themeStatusLabel: Record<AdminThemeSummary['status'], string> = {
   ACTIVE: 'Ativo',
@@ -70,6 +90,7 @@ export function CreatePage({ adminOnly = false }: { adminOnly?: boolean }) {
   const [catalogRefreshKey, setCatalogRefreshKey] = useState(0);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ kind: 'error' | 'success'; text: string } | null>(null);
+  const [adminTab, setAdminTab] = useState<AdminTabId>(initialAdminTab);
 
   const refreshCatalog = useCallback(() => {
     setCatalogRefreshKey((current) => current + 1);
@@ -135,10 +156,19 @@ export function CreatePage({ adminOnly = false }: { adminOnly?: boolean }) {
     );
   }
 
+  function showTab(tab: AdminTabId): boolean {
+    return !adminOnly || role !== 'ADMIN' || adminTab === tab;
+  }
+
+  function selectAdminTab(tab: AdminTabId) {
+    setAdminTab(tab);
+    try { sessionStorage.setItem(ADMIN_TAB_KEY, tab); } catch { /* Armazenamento indisponível: fica só nesta visita. */ }
+  }
+
   return (
     <section className="page page--create">
       <div className="page-heading"><div><span className="eyebrow">{adminOnly ? 'Administração' : 'Contribua'}</span><h1>{adminOnly ? 'Conteúdo e moderação' : 'Criar tema'}</h1><p>{adminOnly ? 'Gerencie o catálogo, revisões e auditoria.' : 'Proponha um novo assunto. A publicação acontece somente após revisão.'}</p></div></div>
-      {firebaseUser === null ? (
+      {!showTab('catalog') ? null : firebaseUser === null ? (
         <div className="auth-card">
           <span className="auth-card__symbol">+</span>
           <h2>{adminOnly ? 'Entre para administrar' : 'Entre para criar'}</h2>
@@ -161,14 +191,24 @@ export function CreatePage({ adminOnly = false }: { adminOnly?: boolean }) {
           <Button disabled={saving || profile === null} type="submit">{saving ? 'Enviando…' : 'Enviar para revisão'}</Button>
         </form>
       )}
-      {role === 'ADMIN' ? <AdminCategoriesPanel getToken={getToken} onCatalogChanged={refreshCatalog} /> : null}
-      {role === 'ADMIN' ? <AdminThemeModerationPanel getToken={getToken} onCatalogChanged={refreshCatalog} refreshKey={catalogRefreshKey} /> : null}
-      {role === 'ADMIN' ? <AdminThemeArtworkManager getToken={getToken} refreshKey={catalogRefreshKey} /> : null}
-      {role === 'ADMIN' ? <AdminQuestionEditorialPanel getToken={getToken} refreshKey={catalogRefreshKey} /> : null}
-      {role === 'ADMIN' ? <AdminThemeSuggestionsPanel getToken={getToken} /> : null}
-      {role === 'ADMIN' ? <AdminReportsPanel getToken={getToken} /> : null}
-      {role === 'ADMIN' ? <AdminUsersPanel currentUserId={profile?.userId ?? null} getToken={getToken} /> : null}
-      {role === 'ADMIN' ? <AdminAuditLogPanel getToken={getToken} refreshKey={catalogRefreshKey} /> : null}
+      {role === 'ADMIN' && adminOnly ? (
+        <nav aria-label="Seções da administração" className="admin-tabs" role="tablist">
+          {ADMIN_TABS.map((tab) => (
+            <button aria-selected={adminTab === tab.id} className={adminTab === tab.id ? 'admin-tabs__tab admin-tabs__tab--active' : 'admin-tabs__tab'} key={tab.id} onClick={() => selectAdminTab(tab.id)} role="tab" type="button">
+              {tab.label}
+            </button>
+          ))}
+        </nav>
+      ) : null}
+      {/* Só a aba aberta monta: cada painel busca os próprios dados. */}
+      {role === 'ADMIN' && showTab('catalog') ? <AdminCategoriesPanel getToken={getToken} onCatalogChanged={refreshCatalog} /> : null}
+      {role === 'ADMIN' && showTab('catalog') ? <AdminThemeModerationPanel getToken={getToken} onCatalogChanged={refreshCatalog} refreshKey={catalogRefreshKey} /> : null}
+      {role === 'ADMIN' && showTab('catalog') ? <AdminThemeArtworkManager getToken={getToken} refreshKey={catalogRefreshKey} /> : null}
+      {role === 'ADMIN' && showTab('questions') ? <AdminQuestionEditorialPanel getToken={getToken} refreshKey={catalogRefreshKey} /> : null}
+      {role === 'ADMIN' && showTab('votes') ? <AdminThemeSuggestionsPanel getToken={getToken} /> : null}
+      {role === 'ADMIN' && showTab('reports') ? <AdminReportsPanel getToken={getToken} /> : null}
+      {role === 'ADMIN' && showTab('users') ? <AdminUsersPanel currentUserId={profile?.userId ?? null} getToken={getToken} /> : null}
+      {role === 'ADMIN' && showTab('history') ? <AdminAuditLogPanel getToken={getToken} refreshKey={catalogRefreshKey} /> : null}
     </section>
   );
 }

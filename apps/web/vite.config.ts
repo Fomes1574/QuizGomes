@@ -19,6 +19,8 @@ export default defineConfig({
         globIgnores: [
           '**/avatar-editor-*.js',
           '**/create-page-*.js',
+          '**/create-page-*.css',
+          'og-image.jpg',
           '**/icons/**',
           '**/social-page-*.js',
           '**/theme-artwork-editor-*.js',

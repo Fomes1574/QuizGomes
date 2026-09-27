@@ -1,4 +1,5 @@
-import { levelProgress } from '@quiz-gomes/domain';
+import { levelProgress, rankForKnowledge } from '@quiz-gomes/domain';
+import '../styles/profile.css';
 import { lazy, Suspense, useEffect, useState, type CSSProperties, type FormEvent } from 'react';
 import { NavLink } from 'react-router-dom';
 import { Avatar } from '../components/avatar.js';
@@ -6,6 +7,21 @@ import { AvatarFrame } from '../components/avatar-frame.js';
 import { LoadingState } from '../components/async-state.js';
 import { Button } from '../components/button.js';
 import { Icon } from '../components/icons.js';
+import {
+  AchievementsCard,
+  MissionsCard,
+  ModeStatsCard,
+  RecentMatchesCard,
+  StreakCard,
+  ThemeRecordsCard,
+  type MissionSummary,
+  type RecentMatch,
+  type StreakSummary,
+  type ThemeRecord,
+} from '../components/profile-sections.js';
+import { ShareCardButton } from '../components/share-result-button.js';
+import { StreakReminderToggle } from '../components/streak-reminder-toggle.js';
+import { FRAME_RING_COLORS, type AchievementItem, type FrameItem } from '../lib/achievements.js';
 import { RankBadge } from '../components/rank-badge.js';
 import { SocialConfirmDialog } from '../components/social-confirm-dialog.js';
 import { useAuth } from '../features/auth-context.js';
@@ -20,24 +36,20 @@ import type { SocialUser } from '../lib/social.js';
 
 const AvatarEditor = lazy(() => import('../components/avatar-editor.js'));
 
-interface MissionSummary {
-  completedAt: string | null;
-  progress: number;
-  target: number;
-  type: 'ANSWER_QUESTIONS' | 'CORRECT_ANSWERS' | 'PLAY_MATCH';
+interface ProfileSummaryResponse {
+  achievements?: AchievementItem[];
+  activeStreak: StreakSummary | null;
+  bestTheme: { knowledge: number; name: string; rankedMatches: number; slug: string } | null;
+  casualSummary?: MatchSummary;
+  categoryAverages: CategoryAverage[];
+  frames?: FrameItem[];
+  matchSummary?: MatchSummary;
+  missions: MissionSummary[];
+  missionsResetAt?: string;
+  recentMatches?: RecentMatch[];
+  streakReminder?: boolean;
+  themeRecords?: ThemeRecord[];
 }
-
-interface StreakSummary {
-  bestStreak: number;
-  currentStreak: number;
-  themeName: string;
-}
-
-const MISSION_LABELS: Record<MissionSummary['type'], string> = {
-  ANSWER_QUESTIONS: 'Responda perguntas',
-  CORRECT_ANSWERS: 'Acerte perguntas',
-  PLAY_MATCH: 'Jogue uma partida válida',
-};
 
 export function ProfilePage() {
   const {
@@ -46,6 +58,7 @@ export function ProfilePage() {
     getToken,
     profile,
     removeCustomAvatar,
+    retryProfile,
     role,
     signIn,
     signOut,
@@ -66,39 +79,38 @@ export function ProfilePage() {
   const [notificationState, setNotificationState] = useState(browserNotificationState);
   const [notificationBusy, setNotificationBusy] = useState(false);
   const [settingsError, setSettingsError] = useState<string | null>(null);
-  const [bestTheme, setBestTheme] = useState<{ knowledge: number; name: string; rankedMatches: number; slug: string } | null>(null);
-  const [missions, setMissions] = useState<MissionSummary[]>([]);
-  const [activeStreak, setActiveStreak] = useState<StreakSummary | null>(null);
-  const [matchSummary, setMatchSummary] = useState<MatchSummary | null>(null);
-  const [categoryAverages, setCategoryAverages] = useState<CategoryAverage[]>([]);
+  const [summary, setSummary] = useState<ProfileSummaryResponse | null>(null);
+  const [busyFrame, setBusyFrame] = useState<string | null>(null);
   const progress = levelProgress(profile?.totalXp ?? 0);
   const feedbackPreferences = useFeedbackPreferences();
 
   useEffect(() => {
     if (profile === null) return;
     let active = true;
-    void apiRequest<{
-      activeStreak: StreakSummary | null; bestTheme: typeof bestTheme; categoryAverages: CategoryAverage[];
-      matchSummary: MatchSummary; missions: MissionSummary[];
-    }>('/api/profile/summary', { getToken })
-      .then((response) => {
-        if (!active) return;
-        setBestTheme(response.bestTheme ?? null);
-        setMissions(response.missions ?? []);
-        setActiveStreak(response.activeStreak ?? null);
-        setMatchSummary(response.matchSummary ?? null);
-        setCategoryAverages(response.categoryAverages ?? []);
-      })
-      .catch(() => {
-        if (!active) return;
-        setBestTheme(null);
-        setMissions([]);
-        setActiveStreak(null);
-        setMatchSummary(null);
-        setCategoryAverages([]);
-      });
+    void apiRequest<ProfileSummaryResponse>('/api/profile/summary', { getToken })
+      .then((response) => { if (active) setSummary(response); })
+      .catch(() => { if (active) setSummary(null); });
     return () => { active = false; };
-  }, [getToken, profile]);
+    // A troca de moldura atualiza o perfil, mas não precisa recarregar o resumo.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- recarrega por pessoa, não por campo do perfil.
+  }, [getToken, profile?.userId]);
+
+  async function equipFrame(frameId: string | null) {
+    setBusyFrame(frameId ?? 'none');
+    setSettingsError(null);
+    try {
+      await apiRequest('/api/profile/frame', { body: { frameId }, getToken, method: 'PUT' });
+      setSummary((current) => current === null ? current : {
+        ...current,
+        frames: (current.frames ?? []).map((frame) => ({ ...frame, equipped: frame.id === frameId })),
+      });
+      await retryProfile();
+    } catch (reason) {
+      setSettingsError(reason instanceof Error ? reason.message : 'Não foi possível trocar a moldura.');
+    } finally {
+      setBusyFrame(null);
+    }
+  }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -186,7 +198,33 @@ export function ProfilePage() {
           <span aria-hidden="true" className="xp-ring__level">{progress.level}</span>
         </span>
         <div><span className="eyebrow">{role === 'ADMIN' ? 'Jogador · ADMIN' : 'Jogador'}</span><h1>{profile?.displayName ?? firebaseUser.displayName}</h1><p>{profile?.publicId ?? 'Criando ID público…'}</p></div>
-        {profile && <div className="profile-hero__actions"><Button onClick={() => setEditingAvatar((value) => !value)} variant="secondary">Trocar avatar</Button><Button onClick={() => { setName(profile.displayName); setEditing((value) => !value); }} variant="ghost">Editar nome</Button></div>}
+        {profile && (
+          <div className="profile-hero__actions">
+            <ShareCardButton
+              card={{
+                input: {
+                  avatarUrl: profile.customAvatarUrl ?? profile.photoUrl ?? null,
+                  bestTheme: summary?.bestTheme == null ? null : {
+                    name: summary.bestTheme.name,
+                    rankLabel: `${rankForKnowledge(summary.bestTheme.knowledge).tier} ${rankForKnowledge(summary.bestTheme.knowledge).division}`,
+                  },
+                  frameColors: profile.equippedFrameId === null ? null : FRAME_RING_COLORS[profile.equippedFrameId] ?? null,
+                  level: progress.level,
+                  name: profile.displayName,
+                  publicId: profile.publicId,
+                  streak: summary?.activeStreak?.currentStreak ?? 0,
+                  wins: (summary?.matchSummary?.wins ?? 0) + (summary?.casualSummary?.wins ?? 0),
+                },
+                kind: 'profile',
+              }}
+              label="Compartilhar perfil"
+              message={{ text: `Me desafia no QUIZ GOMES! Me adiciona: ${profile.publicId}`, url: window.location.origin }}
+              variant="primary"
+            />
+            <Button onClick={() => setEditingAvatar((value) => !value)} variant="secondary">Trocar avatar</Button>
+            <Button onClick={() => { setName(profile.displayName); setEditing((value) => !value); }} variant="ghost">Editar nome</Button>
+          </div>
+        )}
       </div>
       {editingAvatar && profile ? (
         <Suspense fallback={<LoadingState label="Abrindo editor de avatar" />}>
@@ -201,36 +239,23 @@ export function ProfilePage() {
       {editing && <form className="inline-edit" onSubmit={(event) => void submit(event)}><label className="field"><span>Novo nome</span><input maxLength={32} minLength={2} onChange={(event) => setName(event.target.value)} value={name} /></label><Button type="submit">Salvar</Button></form>}
       <div className="profile-grid">
         <article className="level-card"><span>Nível</span><strong>{progress.level}</strong><div className="progress-track"><span style={{ transform: `scaleX(${progress.progress})` }} /></div><small>{progress.nextLevelXp === null ? 'Nível máximo' : `${progress.currentLevelXp} / ${progress.nextLevelXp} XP`}</small></article>
-        <article className="profile-card"><span className="eyebrow">Melhor tema</span>{bestTheme === null ? <p>Sua primeira Rankeada aparece aqui.</p> : <><h2>{bestTheme.name}</h2><RankBadge knowledge={bestTheme.knowledge} showKnowledge /><p>{bestTheme.rankedMatches} {bestTheme.rankedMatches === 1 ? 'partida Rankeada' : 'partidas Rankeadas'}</p></>}</article>
-        <article className="profile-card">
-          <span className="eyebrow">Missões de hoje</span>
-          <ul className="missions-list">
-            {missions.map((mission) => (
-              <li className="missions-list__item" data-done={mission.completedAt !== null} key={mission.type}>
-                <div className="missions-list__row"><span><i aria-hidden="true" className="missions-list__check">{mission.completedAt !== null ? '✓' : ''}</i>{MISSION_LABELS[mission.type]}</span><span>{Math.min(mission.progress, mission.target)}/{mission.target}</span></div>
-                <div className="progress-track"><span style={{ transform: `scaleX(${mission.target === 0 ? 0 : Math.min(1, mission.progress / mission.target)})` }} /></div>
-              </li>
-            ))}
-            {missions.length === 0 && <li>Sem missões disponíveis hoje.</li>}
-          </ul>
-        </article>
-        <article className="profile-card"><span className="eyebrow">Sequência</span>{activeStreak === null ? <p>Jogue uma partida válida em qualquer tema para começar sua sequência.</p> : <><h2 className="streak-title"><Icon name="flame" />{activeStreak.currentStreak} {activeStreak.currentStreak === 1 ? 'dia' : 'dias'}</h2><p>{activeStreak.themeName} · recorde de {activeStreak.bestStreak} {activeStreak.bestStreak === 1 ? 'dia' : 'dias'}</p></>}</article>
-        <article className="profile-card">
-          <span className="eyebrow">Partidas Rankeadas</span>
-          {matchSummary === null || matchSummary.matches === 0 ? <p>Sua primeira Rankeada aparece aqui.</p> : (
-            <ul className="match-summary">
-              <li><strong>{matchSummary.matches}</strong><span>Partidas</span></li>
-              <li><strong>{matchSummary.wins}</strong><span>Vitórias</span></li>
-              <li><strong>{matchSummary.losses}</strong><span>Derrotas</span></li>
-              <li><strong>{matchSummary.draws}</strong><span>Empates</span></li>
-            </ul>
-          )}
-        </article>
+        <StreakCard streak={summary?.activeStreak ?? null} />
+        <MissionsCard missions={summary?.missions ?? []} resetAt={summary?.missionsResetAt ?? null} />
+        <ModeStatsCard casual={summary?.casualSummary ?? null} ranked={summary?.matchSummary ?? null} />
+        <RecentMatchesCard matches={summary?.recentMatches ?? []} />
+        <ThemeRecordsCard records={summary?.themeRecords ?? []} />
+        <AchievementsCard
+          achievements={summary?.achievements ?? []}
+          busyFrame={busyFrame}
+          frames={summary?.frames ?? []}
+          onEquip={(frameId) => void equipFrame(frameId)}
+        />
+        <article className="profile-card"><span className="eyebrow">Melhor tema</span>{summary?.bestTheme == null ? <p>Sua primeira Rankeada aparece aqui.</p> : <><h2>{summary.bestTheme.name}</h2><RankBadge knowledge={summary.bestTheme.knowledge} showKnowledge /><p>{summary.bestTheme.rankedMatches} {summary.bestTheme.rankedMatches === 1 ? 'partida Rankeada' : 'partidas Rankeadas'}</p></>}</article>
         <article className="profile-card">
           <span className="eyebrow">Média por categoria</span>
-          {categoryAverages.length === 0 ? <p>Jogue Rankeadas em mais de um tema da mesma categoria para ver sua média.</p> : (
+          {(summary?.categoryAverages ?? []).length === 0 ? <p>Jogue Rankeadas em mais de um tema da mesma categoria para ver sua média.</p> : (
             <ul className="category-average-list">
-              {categoryAverages.map((entry) => (
+              {(summary?.categoryAverages ?? []).map((entry) => (
                 <li key={entry.categoryId}>
                   <span>{entry.categoryName}</span>
                   <RankBadge knowledge={entry.average.rank.knowledge} />
@@ -255,7 +280,7 @@ export function ProfilePage() {
       </section>
       <section className="settings-card"><div><h2>Aparência</h2><p>Vale só neste aparelho.</p></div><div className="segmented" role="radiogroup" aria-label="Aparência">{(['light', 'dark', 'system'] as ThemeMode[]).map((value) => <button aria-checked={mode === value} className={mode === value ? 'segmented__active' : ''} key={value} onClick={() => setMode(value)} role="radio" type="button">{{ light: 'Claro', dark: 'Escuro', system: 'Sistema' }[value]}</button>)}</div></section>
       <section className="settings-card">
-        <div><h2>Notificações</h2><p>Receba pedidos de amizade neste dispositivo.</p></div>
+        <div><h2>Notificações</h2><p>Pedidos de amizade e avisos que você escolher, neste aparelho.</p></div>
         {notificationState === 'denied' ? (
           <span className="settings-card__status">Notificações bloqueadas pelo navegador</span>
         ) : notificationState === 'unsupported' ? (
@@ -264,6 +289,7 @@ export function ProfilePage() {
           <div className="settings-card__stack">
             <span className="settings-card__status settings-card__status--enabled">Pedidos de amizade ativados</span>
             {pushConfigured && <FriendQueueAlertToggle getToken={getToken} />}
+            {pushConfigured && <StreakReminderToggle getToken={getToken} initial={summary?.streakReminder ?? null} />}
           </div>
         ) : !pushConfigured || publicVapidKey() === '' ? (
           <span className="settings-card__status">Notificações ainda não configuradas</span>

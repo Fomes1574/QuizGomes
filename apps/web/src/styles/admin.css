@@ -1,0 +1,31 @@
+/* Estilos só da administração: carregam junto com a rota /admin, fora do CSS inicial. */
+/* Administração em abas: uma seção por vez em vez de uma página enorme. */
+.admin-theme-artwork { display: grid; gap: 18px; padding: 24px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-sm); }
+.admin-theme-artwork > p { margin: 0; color: var(--text-secondary); font-size: .82rem; line-height: 1.55; }
+.admin-theme-artwork__selected { display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid var(--border); border-radius: 16px; background: var(--background-subtle); }
+.admin-theme-artwork__selected .theme-artwork { width: 58px; border-radius: 15px; color: var(--text-on-brand); background: linear-gradient(145deg, var(--brand-active), var(--brand-strong)); font: 700 .9rem/1 var(--font-display); }
+.admin-theme-artwork__selected strong, .admin-theme-artwork__selected small { display: block; }
+.admin-theme-artwork__selected small { margin-top: 4px; color: var(--text-secondary); font-size: .7rem; }
+.admin-reports { display: grid; gap: 16px; padding: 24px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-sm); }
+.admin-panel { display: grid; gap: 16px; padding: 24px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-sm); }
+.admin-panel__form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; }
+.admin-panel__form .field { flex: 1 1 140px; }
+.admin-panel__option-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.admin-panel__option-row input { flex: 1 1 140px; min-width: 0; }
+.admin-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.admin-list__row { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--background-subtle); font-size: .78rem; }
+.admin-list__row > *:first-child { min-width: 0; }
+.admin-list__row--audit { grid-template-columns: 1fr auto auto; }
+.admin-list__row--audit time { color: var(--text-secondary); font-size: .68rem; white-space: nowrap; }
+.admin-list__row--audit small { overflow-wrap: anywhere; }
+.admin-card-list { display: grid; gap: 14px; }
+.admin-card { display: grid; gap: 10px; padding: 16px; border: 1px solid var(--border); border-radius: 16px; background: var(--background-subtle); }
+.admin-card > header { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.admin-card > header small { color: var(--text-secondary); font-size: .68rem; }
+.admin-card__actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.admin-card__actions .button { flex: 1 1 auto; }
+.admin-tabs { position: sticky; z-index: 5; top: 8px; display: flex; gap: 4px; overflow-x: auto; margin: 0 0 18px; padding: 4px; border: 1px solid var(--border); border-radius: 16px; background: color-mix(in srgb, var(--surface) 92%, transparent); box-shadow: var(--shadow-sm); scrollbar-width: none; -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+.admin-tabs::-webkit-scrollbar { display: none; }
+.admin-tabs__tab { flex: none; min-height: 40px; padding: 0 16px; border-radius: 12px; color: var(--text-secondary); background: transparent; font-size: .78rem; font-weight: 750; cursor: pointer; white-space: nowrap; }
+.admin-tabs__tab:hover { color: var(--text-primary); }
+.admin-tabs__tab--active { color: var(--text-on-brand); background: var(--brand); }
