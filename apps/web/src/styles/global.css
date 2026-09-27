@@ -1612,3 +1612,42 @@ input, select, textarea { font-size: max(16px, 1em); }
   .avatar-frame[data-frame-id="frame-streak-730"]::before { animation: none; }
 }
 
+
+/* ===== Cartão de parabéns =====
+   Cores do nível vêm de --tier-bg (as mesmas das conquistas no Perfil).
+   Tudo anima só com transform/opacity. */
+.celebration { width: min(420px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); padding: 0; overflow: visible; border: 0; border-radius: 32px; color: #fff; background: transparent; }
+.celebration::backdrop { background: rgba(6, 6, 12, .72); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+.celebration--ember { --tier-bg: linear-gradient(160deg, #ff9a3c, #e0353d 60%, #3b0a12); }
+.celebration--bronze { --tier-bg: linear-gradient(160deg, #d99058, #7a3e1d 60%, #1a0d05); }
+.celebration--silver { --tier-bg: linear-gradient(160deg, #e2e8f0, #5b6b82 60%, #0c0f14); }
+.celebration--gold { --tier-bg: linear-gradient(160deg, #ffd35c, #b8741a 60%, #1a1204); }
+.celebration--year { --tier-bg: linear-gradient(160deg, #ff5f6d, #7b2ff7 60%, #12051e); }
+.celebration--platinum { --tier-bg: linear-gradient(160deg, #7ee8fa, #3a6ea5 60%, #06121c); }
+.celebration--diamond { --tier-bg: linear-gradient(160deg, #a1ffce, #2b5876 60%, #04121c); }
+.celebration--legend { --tier-bg: linear-gradient(160deg, #f7d774, #b31217 55%, #140312); }
+.celebration__card { position: relative; display: grid; justify-items: center; gap: 6px; overflow: hidden; max-height: calc(100dvh - 32px); padding: 28px 22px 22px; border-radius: 32px; background: var(--tier-bg); box-shadow: 0 30px 80px rgba(0,0,0,.45), inset 0 0 0 1px rgba(255,255,255,.18); text-align: center; overflow-y: auto; animation: celebration-in 520ms var(--ease-spring) both; }
+.celebration__rays { position: absolute; z-index: 0; top: 34%; left: 50%; width: 180%; aspect-ratio: 1; background: repeating-conic-gradient(from 0deg, rgba(255,255,255,.14) 0deg 6deg, transparent 6deg 20deg); border-radius: 50%; pointer-events: none; transform: translate(-50%, -50%); animation: celebration-rays 24s linear infinite; -webkit-mask: radial-gradient(circle, #000 20%, transparent 62%); mask: radial-gradient(circle, #000 20%, transparent 62%); }
+.celebration__sparkles i { position: absolute; z-index: 0; top: calc(10% + (var(--i) * 7%)); left: calc(8% + (var(--i) * 37% - (var(--i) * 30%))); width: 6px; height: 6px; border-radius: 50%; background: #fff; opacity: 0; animation: celebration-sparkle 2.4s ease-in-out infinite; animation-delay: calc(var(--i) * 190ms); }
+.celebration__sparkles i:nth-child(even) { left: auto; right: calc(6% + (var(--i) * 3%)); }
+.celebration__card > :not(.celebration__rays, .celebration__sparkles) { position: relative; z-index: 1; }
+.celebration__kicker { margin: 0; padding: 6px 14px; border: 1px solid rgba(255,255,255,.4); border-radius: 999px; background: rgba(0,0,0,.18); font-size: .7rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+.celebration__big { display: grid; justify-items: center; margin: 6px 0 2px; }
+.celebration__big strong { font: 900 clamp(4.6rem, 22vw, 6.5rem)/.9 var(--font-display); text-shadow: 0 8px 30px rgba(0,0,0,.35); animation: celebration-pop 700ms 180ms var(--ease-spring) both; }
+.celebration__big span { font-size: .82rem; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; opacity: .9; }
+.celebration h2 { margin: 6px 0 0; font: 800 1.5rem/1.15 var(--font-display); }
+.celebration__description { max-width: 32ch; margin: 0; font-size: .86rem; line-height: 1.45; opacity: .92; }
+.celebration__frame { display: grid; justify-items: center; gap: 8px; margin: 12px 0 4px; padding: 14px 18px 10px; border-radius: 22px; background: rgba(0,0,0,.2); }
+.celebration__frame > span:last-child { font-size: .72rem; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+.celebration__actions { display: grid; width: 100%; gap: 8px; margin-top: 12px; }
+.celebration__actions .button { width: 100%; }
+.celebration__actions .button--ghost { color: #fff; }
+.celebration__actions .inline-notice { color: #fff; }
+@keyframes celebration-in { from { opacity: 0; transform: translateY(24px) scale(.92); } }
+@keyframes celebration-pop { from { opacity: 0; transform: scale(.4) rotate(-8deg); } }
+@keyframes celebration-rays { to { transform: translate(-50%, -50%) rotate(1turn); } }
+@keyframes celebration-sparkle { 0%, 100% { opacity: 0; transform: scale(.4); } 50% { opacity: .9; transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) {
+  .celebration__card, .celebration__big strong, .celebration__rays, .celebration__sparkles i { animation: none; }
+  .celebration__sparkles i { opacity: .5; }
+}

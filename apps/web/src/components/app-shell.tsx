@@ -4,6 +4,7 @@ import { levelProgress } from '@quiz-gomes/domain';
 import { useAuth } from '../features/auth-context.js';
 import { useSocial } from '../features/social-context.js';
 import { Avatar } from './avatar.js';
+import { CelebrationHost } from './celebration-host.js';
 import { AvatarFrame } from './avatar-frame.js';
 import { Icon, type IconName } from './icons.js';
 import { Logo } from './logo.js';
@@ -65,6 +66,7 @@ export function AppShell() {
       <main className="app-content" id="conteudo-principal" key={location.pathname}>
         <Outlet />
       </main>
+      <CelebrationHost />
       <nav className={`bottom-nav${activeIndex < 0 ? ' bottom-nav--none' : ''}`} aria-label="Navegação principal" style={navStyle}>
         <span aria-hidden="true" className="bottom-nav__indicator" />
         {destinations.map((destination, index) => (

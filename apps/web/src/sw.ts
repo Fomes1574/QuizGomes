@@ -68,6 +68,16 @@ onBackgroundMessage(messaging, (payload) => {
     });
     return;
   }
+  if (data?.type === 'STREAK_REMINDER') {
+    void self.registration.showNotification(data.title ?? 'Sua ofensiva acaba hoje', {
+      body: data.body ?? 'Uma partida hoje mantém a chama acesa.',
+      data: { url: safeInternalPath(data.url, '/') },
+      icon: '/icons/icon-192.webp',
+      // No máximo um por dia; um novo substitui o anterior.
+      tag: 'quiz-gomes-streak-reminder',
+    });
+    return;
+  }
   if (data?.type === 'FRIEND_IN_QUEUE' || data?.type === 'CHALLENGE_READY') {
     const fallback = data.type === 'CHALLENGE_READY' ? '/social' : '/';
     void self.registration.showNotification(data.title ?? 'QUIZ GOMES', {

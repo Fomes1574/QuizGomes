@@ -95,6 +95,16 @@ describe('PWA + FCM usam um único service worker com shell offline e click Soci
     });
   });
 
+  it('aviso de ofensiva abre o tema e nunca aponta para fora do app', () => {
+    mocks.showNotification.mockClear();
+    mocks.background?.({ data: { body: 'Sua ofensiva de 9 dias…', title: 'Não deixa a chama apagar', type: 'STREAK_REMINDER', url: '/temas/naruto' } });
+    expect(mocks.showNotification).toHaveBeenCalledWith('Não deixa a chama apagar', expect.objectContaining({
+      data: { url: '/temas/naruto' }, tag: 'quiz-gomes-streak-reminder',
+    }));
+    mocks.background?.({ data: { type: 'STREAK_REMINDER', url: 'https://golpe.example/' } });
+    expect(mocks.showNotification).toHaveBeenLastCalledWith('Sua ofensiva acaba hoje', expect.objectContaining({ data: { url: '/' } }));
+  });
+
   it('notification click redireciona a aba existente para Social/Pedidos', async () => {
     const close = vi.fn();
     mocks.click?.({
