@@ -218,7 +218,7 @@ export function MatchmakingDialog({
               <span aria-hidden="true" className="theme-card__live-dot" />
               <span>{waitingOthers === 0
                 ? 'Só você nesta fila por enquanto'
-                : waitingOthers === 1 ? 'Mais 1 pessoa nesta fila, pareando…' : `Mais ${waitingOthers} pessoas nesta fila, pareando…`}</span>
+                : waitingOthers === 1 ? 'Tem mais 1 pessoa nesta fila' : `Tem mais ${waitingOthers} pessoas nesta fila`}</span>
             </p>
           )}
           {neighbor !== undefined && (waitingOthers ?? 0) === 0 && status === 'searching' && (

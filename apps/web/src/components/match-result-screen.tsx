@@ -219,7 +219,7 @@ export function MatchResultScreen({
       {onReport !== undefined && questions !== undefined && questions.length > 0 && (
         <section aria-label="Perguntas desta partida" className="match-result-questions">
           <h2>Perguntas desta partida</h2>
-          <p>Confira o que era certo. Viu algo errado? Reporte agora, enquanto está fresco na memória.</p>
+          <p>Veja o que era certo. Achou alguma pergunta errada? Toque na bandeira.</p>
           <ul>
             {questions.map((question) => (
               <li className={question.outcome === undefined ? '' : question.outcome.selectedOption === question.outcome.correctOption ? 'review--right' : 'review--wrong'} key={question.roundNumber}>

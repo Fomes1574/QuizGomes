@@ -171,7 +171,7 @@ export function ProfilePage() {
   if (firebaseUser === null) {
     return (
       <section className="page page--narrow">
-        <div className="profile-welcome"><span className="profile-welcome__halo"><Avatar name="Visitante" size="large" /></span><span className="eyebrow">Seu espaço</span><h1>Entre no Quiz Gomes</h1><p>Crie seu ID permanente, encontre amigos e construa rankings diferentes em cada tema.</p><Button onClick={() => void signIn()}>Continuar com Google</Button>{error && <p className="form-error">{error}</p>}</div>
+        <div className="profile-welcome"><span className="profile-welcome__halo"><Avatar name="Visitante" size="large" /></span><span className="eyebrow">Seu espaço</span><h1>Entre no QUIZ GOMES</h1><p>Entre com o Google, escolha um nome e comece a duelar.</p><Button onClick={() => void signIn()}>Continuar com Google</Button>{error && <p className="form-error">{error}</p>}</div>
       </section>
     );
   }
@@ -200,8 +200,8 @@ export function ProfilePage() {
       ) : null}
       {editing && <form className="inline-edit" onSubmit={(event) => void submit(event)}><label className="field"><span>Novo nome</span><input maxLength={32} minLength={2} onChange={(event) => setName(event.target.value)} value={name} /></label><Button type="submit">Salvar</Button></form>}
       <div className="profile-grid">
-        <article className="level-card"><span>Nível</span><strong>{progress.level}</strong><div className="progress-track"><span style={{ transform: `scaleX(${progress.progress})` }} /></div><small>{progress.nextLevelXp === null ? 'MAX' : `${progress.currentLevelXp} / ${progress.nextLevelXp} XP`}</small></article>
-        <article className="profile-card"><span className="eyebrow">Melhor tema</span>{bestTheme === null ? <p>Jogue sua primeira Ranqueada para preencher este espaço.</p> : <><h2>{bestTheme.name}</h2><RankBadge knowledge={bestTheme.knowledge} showKnowledge /><p>{bestTheme.rankedMatches} {bestTheme.rankedMatches === 1 ? 'partida Ranqueada' : 'partidas Ranqueadas'}</p></>}</article>
+        <article className="level-card"><span>Nível</span><strong>{progress.level}</strong><div className="progress-track"><span style={{ transform: `scaleX(${progress.progress})` }} /></div><small>{progress.nextLevelXp === null ? 'Nível máximo' : `${progress.currentLevelXp} / ${progress.nextLevelXp} XP`}</small></article>
+        <article className="profile-card"><span className="eyebrow">Melhor tema</span>{bestTheme === null ? <p>Sua primeira Rankeada aparece aqui.</p> : <><h2>{bestTheme.name}</h2><RankBadge knowledge={bestTheme.knowledge} showKnowledge /><p>{bestTheme.rankedMatches} {bestTheme.rankedMatches === 1 ? 'partida Rankeada' : 'partidas Rankeadas'}</p></>}</article>
         <article className="profile-card">
           <span className="eyebrow">Missões de hoje</span>
           <ul className="missions-list">
@@ -216,8 +216,8 @@ export function ProfilePage() {
         </article>
         <article className="profile-card"><span className="eyebrow">Sequência</span>{activeStreak === null ? <p>Jogue uma partida válida em qualquer tema para começar sua sequência.</p> : <><h2 className="streak-title"><Icon name="flame" />{activeStreak.currentStreak} {activeStreak.currentStreak === 1 ? 'dia' : 'dias'}</h2><p>{activeStreak.themeName} · recorde de {activeStreak.bestStreak} {activeStreak.bestStreak === 1 ? 'dia' : 'dias'}</p></>}</article>
         <article className="profile-card">
-          <span className="eyebrow">Partidas Ranqueadas</span>
-          {matchSummary === null || matchSummary.matches === 0 ? <p>Jogue sua primeira Ranqueada para preencher este espaço.</p> : (
+          <span className="eyebrow">Partidas Rankeadas</span>
+          {matchSummary === null || matchSummary.matches === 0 ? <p>Sua primeira Rankeada aparece aqui.</p> : (
             <ul className="match-summary">
               <li><strong>{matchSummary.matches}</strong><span>Partidas</span></li>
               <li><strong>{matchSummary.wins}</strong><span>Vitórias</span></li>
@@ -228,7 +228,7 @@ export function ProfilePage() {
         </article>
         <article className="profile-card">
           <span className="eyebrow">Média por categoria</span>
-          {categoryAverages.length === 0 ? <p>Jogue Ranqueadas em mais de um tema da mesma categoria para ver sua média.</p> : (
+          {categoryAverages.length === 0 ? <p>Jogue Rankeadas em mais de um tema da mesma categoria para ver sua média.</p> : (
             <ul className="category-average-list">
               {categoryAverages.map((entry) => (
                 <li key={entry.categoryId}>
@@ -253,7 +253,7 @@ export function ProfilePage() {
           }} role="switch" type="button"><Icon name="vibrate" /><span>Vibração</span><i aria-hidden="true" /></button>
         </div>
       </section>
-      <section className="settings-card"><div><h2>Aparência</h2><p>A preferência acompanha este dispositivo.</p></div><div className="segmented" role="radiogroup" aria-label="Aparência">{(['light', 'dark', 'system'] as ThemeMode[]).map((value) => <button aria-checked={mode === value} className={mode === value ? 'segmented__active' : ''} key={value} onClick={() => setMode(value)} role="radio" type="button">{{ light: 'Claro', dark: 'Escuro', system: 'Sistema' }[value]}</button>)}</div></section>
+      <section className="settings-card"><div><h2>Aparência</h2><p>Vale só neste aparelho.</p></div><div className="segmented" role="radiogroup" aria-label="Aparência">{(['light', 'dark', 'system'] as ThemeMode[]).map((value) => <button aria-checked={mode === value} className={mode === value ? 'segmented__active' : ''} key={value} onClick={() => setMode(value)} role="radio" type="button">{{ light: 'Claro', dark: 'Escuro', system: 'Sistema' }[value]}</button>)}</div></section>
       <section className="settings-card">
         <div><h2>Notificações</h2><p>Receba pedidos de amizade neste dispositivo.</p></div>
         {notificationState === 'denied' ? (
@@ -274,7 +274,7 @@ export function ProfilePage() {
         )}
       </section>
       <section className="settings-card settings-card--privacy">
-        <div><h2>Privacidade e Segurança</h2><p>Gerencie quem não pode encontrar você.</p></div>
+        <div><h2>Privacidade e Segurança</h2><p>Quem você bloqueou fica aqui.</p></div>
         <Button aria-expanded={privacyOpen} onClick={() => void togglePrivacy()} variant="secondary">
           {privacyOpen ? 'Fechar usuários bloqueados' : 'Usuários bloqueados'}
         </Button>
@@ -304,7 +304,7 @@ export function ProfilePage() {
       </section>
       {settingsError !== null ? <p className="form-message form-message--error" role="alert">{settingsError}</p> : null}
       {role === 'ADMIN' ? <section className="settings-card"><div><h2>Administração</h2><p>Gerencie conteúdo, moderação, usuários e auditoria.</p></div><NavLink className="button button--secondary" to="/admin">Abrir administração</NavLink></section> : null}
-      <section className="settings-card"><div><h2>Créditos</h2><p>Quiz Gomes foi criado por Gomes.</p></div></section>
+      <section className="settings-card"><div><h2>Créditos</h2><p>QUIZ GOMES foi criado por Gomes.</p></div></section>
       <Button onClick={() => void signOut()} variant="ghost">Sair da conta</Button>
       {unblocking !== null ? (
         <SocialConfirmDialog

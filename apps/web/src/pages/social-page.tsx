@@ -58,12 +58,12 @@ function InviteCard({ lonely, profile }: { lonely: boolean; profile: InviteProfi
   }
 
   async function invite() {
-    const text = `Bora duelar no Quiz Gomes? Me adiciona: ${profile.publicId}`;
+    const text = `Bora duelar no QUIZ GOMES? Me adiciona: ${profile.publicId}`;
     const url = window.location.origin;
     const touch = typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches;
     if (touch && typeof navigator.share === 'function') {
       try {
-        await navigator.share({ text, title: 'Quiz Gomes', url });
+        await navigator.share({ text, title: 'QUIZ GOMES', url });
       } catch {
         // Fechar a folha de compartilhamento não é erro.
       }
@@ -593,7 +593,7 @@ export function SocialPage() {
   return (
     <section className="page social-page">
       <div className="page-heading social-page__heading">
-        <div><span className="eyebrow">Sua roda</span><h1>Social</h1><p>Encontre jogadores e mantenha suas amizades por perto.</p></div>
+        <div><span className="eyebrow">Sua roda</span><h1>Social</h1><p>Sua galera e seus desafios.</p></div>
       </div>
       {profile === null ? (
         <EmptyState
@@ -619,7 +619,7 @@ export function SocialPage() {
             <section aria-label="Resultados da busca" className="social-section">
               <div className="section-heading"><h2>Resultados</h2><span>{visibleResults.length}</span></div>
               {searching ? <LoadingState label="Buscando jogadores" /> : null}
-              {!searching && visibleResults.length === 0 ? <p className="social-section__empty">Nenhum jogador disponível encontrado.</p> : null}
+              {!searching && visibleResults.length === 0 ? <p className="social-section__empty">Ninguém com esse nome ou ID.</p> : null}
               {visibleResults.map((user) => (
                 <article className="social-person" key={user.publicId}>
                   <SocialIdentity user={user} />

@@ -186,8 +186,8 @@ export function ThemeDetailPage() {
             <div className="play-deck__copy">
               <strong>{mode === 'RANKED' ? 'Vale Conhecimento' : 'Sem pressão no ranking'}</strong>
               <p>{mode === 'RANKED'
-                ? 'Vitória rende 30 XP e mexe no seu Conhecimento deste tema.'
-                : 'Vitória rende 20 XP. Seu Conhecimento fica intacto.'}</p>
+                ? 'Vitória rende 30 XP e mexe no seu Conhecimento deste tema. Terminou sem vencer? Leva 5 XP.'
+                : 'Vitória rende 20 XP, e terminar a partida já vale 5. Seu Conhecimento fica intacto.'}</p>
               <ul className="play-deck__facts">
                 {modeRecord !== null && <li className="play-deck__record"><Icon name="crown" />Seu recorde: {modeRecord.toLocaleString('pt-BR')}</li>}
                 {waitingHere > 0 && <li className="play-deck__live"><span aria-hidden="true" className="theme-card__live-dot" />{waitingLabel(waitingHere)} agora</li>}
@@ -197,7 +197,7 @@ export function ThemeDetailPage() {
             </div>
           </div>
           {!canPlay && <p className="inline-notice">Este tema ainda precisa de {required} perguntas ativas para uma {mode === 'RANKED' ? 'partida rankeada' : 'partida normal'}.</p>}
-          {!realtimeEnabled && canPlay && <p className="inline-notice">O catálogo está pronto; partidas online serão liberadas após a validação do servidor de rodadas.</p>}
+          {!realtimeEnabled && canPlay && <p className="inline-notice">Partidas online chegam em breve.</p>}
           {friendsInQueue.length > 0 && (
             <p className="friends-in-queue" role="status">
               <span aria-hidden="true" className="theme-card__live-dot" />
@@ -261,13 +261,13 @@ export function ThemeDetailPage() {
               );
             })}
           </div>
-          {data.topFive.length === 0 ? <p className="leaderboard-empty">A primeira Ranqueada ainda está esperando por alguém.</p> : (
+          {data.topFive.length === 0 ? <p className="leaderboard-empty">A primeira Rankeada ainda está esperando por alguém.</p> : (
             <ol>{data.topFive.map((entry) => <li key={entry.publicId}><span className="leaderboard-position">{entry.position}</span><AvatarFrame frameId={entry.frameId}><Avatar customUrl={entry.customAvatarUrl} googleUrl={entry.photoUrl} name={entry.displayName} size="small" /></AvatarFrame><span><strong>{entry.displayName}</strong><small>{entry.publicId}</small></span><RankBadge knowledge={entry.knowledge} /></li>)}</ol>
           )}
         </aside>
       </div>
 
-      <article className="personal-theme-card"><div><span className="eyebrow">Seu cartão</span><h2>{profile?.displayName ?? 'Entre para acompanhar'}</h2><p>{profile ? (data.personal?.rankedMatches ? 'Seu histórico neste tema é calculado apenas pelas partidas Ranqueadas.' : 'Sua história competitiva neste tema começa na primeira Ranqueada.') : 'Ranking, descoberta histórica e Conhecimento ficam reunidos aqui.'}</p></div><div className="personal-theme-card__stats"><RankBadge knowledge={data.personal?.knowledge ?? 0} showKnowledge /><span className="discovery-ring" style={{ '--discovered': Math.min(1, discovered / 100) } as CSSProperties}><strong>{discovered.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%</strong><small>descoberto</small></span><span><strong>{data.personal?.position ? `#${data.personal.position}` : '—'}</strong><small>posição</small></span></div>{profile !== null && <div className="personal-records" aria-label="Recordes pessoais neste tema"><span><Icon name="crown" /><small>Recorde Normal</small><strong>{records?.CASUAL != null ? records.CASUAL.toLocaleString('pt-BR') : '—'}</strong></span><span><Icon name="crown" /><small>Recorde Rankeada</small><strong>{records?.RANKED != null ? records.RANKED.toLocaleString('pt-BR') : '—'}</strong></span></div>}</article>
+      <article className="personal-theme-card"><div><span className="eyebrow">Seu cartão</span><h2>{profile?.displayName ?? 'Entre para acompanhar'}</h2><p>{profile ? (data.personal?.rankedMatches ? 'Seu ranking neste tema conta só as partidas Rankeadas.' : 'Jogue uma Rankeada para entrar no ranking deste tema.') : 'Entre para ver sua posição e seu Conhecimento aqui.'}</p></div><div className="personal-theme-card__stats"><RankBadge knowledge={data.personal?.knowledge ?? 0} showKnowledge /><span className="discovery-ring" style={{ '--discovered': Math.min(1, discovered / 100) } as CSSProperties}><strong>{discovered.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%</strong><small>descoberto</small></span><span><strong>{data.personal?.position ? `#${data.personal.position}` : '—'}</strong><small>posição</small></span></div>{profile !== null && <div className="personal-records" aria-label="Recordes pessoais neste tema"><span><Icon name="crown" /><small>Recorde Normal</small><strong>{records?.CASUAL != null ? records.CASUAL.toLocaleString('pt-BR') : '—'}</strong></span><span><Icon name="crown" /><small>Recorde Rankeada</small><strong>{records?.RANKED != null ? records.RANKED.toLocaleString('pt-BR') : '—'}</strong></span></div>}</article>
 
       {challengePickerOpen && mode === 'CASUAL' && (
         <FriendChallengeDialog

@@ -388,7 +388,7 @@ describe('Milestone 9A — Social Foundation no runtime Workers/D1', () => {
     for (const delivery of deliveries) {
       expect(delivery.message.token).toBeUndefined();
       expect(delivery.message.data).toMatchObject({
-        body: 'Entrega Alice quer adicionar você no Quiz Gomes',
+        body: 'Entrega Alice quer adicionar você no QUIZ GOMES',
         title: 'Novo pedido de amizade',
         type: 'FRIEND_REQUEST',
         url: '/social?section=pedidos',

@@ -61,7 +61,7 @@ onBackgroundMessage(messaging, (payload) => {
   const data = payload.data;
   if (data?.type === 'FRIEND_REQUEST') {
     void self.registration.showNotification(data.title ?? 'Novo pedido de amizade', {
-      body: data.body ?? 'Você recebeu uma solicitação no Quiz Gomes.',
+      body: data.body ?? 'Você recebeu uma solicitação no QUIZ GOMES.',
       data: { url: '/social?section=pedidos' },
       icon: '/icons/icon-192.webp',
       tag: data.requestId ?? 'quiz-gomes-friend-request',

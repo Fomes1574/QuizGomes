@@ -238,7 +238,7 @@ describe('M11 — partidas e média por categoria no Perfil', () => {
     });
     render(<ProfilePage />);
 
-    expect(await screen.findAllByText('Jogue sua primeira Ranqueada para preencher este espaço.')).toHaveLength(2);
-    expect(screen.getByText('Jogue Ranqueadas em mais de um tema da mesma categoria para ver sua média.')).toBeInTheDocument();
+    expect(await screen.findAllByText('Sua primeira Rankeada aparece aqui.')).toHaveLength(2);
+    expect(screen.getByText('Jogue Rankeadas em mais de um tema da mesma categoria para ver sua média.')).toBeInTheDocument();
   });
 });

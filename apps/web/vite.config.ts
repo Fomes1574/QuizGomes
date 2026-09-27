@@ -40,7 +40,7 @@ export default defineConfig({
         name: 'QUIZ GOMES',
         orientation: 'any',
         scope: '/',
-        short_name: 'Quiz Gomes',
+        short_name: 'QUIZ GOMES',
         start_url: '/',
         theme_color: '#D92F36',
       },

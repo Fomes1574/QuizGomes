@@ -123,7 +123,7 @@ export class SocialPushService {
             body: JSON.stringify({
               message: {
                 data: {
-                  body: `${input.senderDisplayName} quer adicionar você no Quiz Gomes`,
+                  body: `${input.senderDisplayName} quer adicionar você no QUIZ GOMES`,
                   requestId: input.requestId,
                   title: 'Novo pedido de amizade',
                   type: 'FRIEND_REQUEST',
