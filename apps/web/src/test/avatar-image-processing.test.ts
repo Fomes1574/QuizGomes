@@ -25,6 +25,7 @@ describe('processamento local do avatar', () => {
 
   it('faz crop quadrado e reencoda em WebP dentro do target', async () => {
     const drawImage = vi.fn();
+    const fillRect = vi.fn();
     const toBlob = vi.fn((callback: BlobCallback, type?: string, quality?: number) => {
       const size = (quality ?? 1) <= 0.82 ? 38 * 1_024 : 45 * 1_024;
       callback(new Blob([new Uint8Array(size)], { type: type ?? 'image/webp' }));
@@ -32,6 +33,7 @@ describe('processamento local do avatar', () => {
     const canvas = {
       getContext: () => ({
         drawImage,
+        fillRect,
         imageSmoothingEnabled: false,
         imageSmoothingQuality: 'low',
       }),
@@ -67,11 +69,14 @@ describe('processamento local do avatar', () => {
     expect(toBlob.mock.calls.map((call) => call[2])).toEqual([0.9, 0.86, 0.82]);
     expect(drawImage).toHaveBeenCalledWith(expect.anything(), 150, 0, 600, 600, 0, 0, 256, 256);
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:fixture');
+    // Fundo opaco pintado antes da foto: PNG transparente não vira preto.
+    expect(fillRect).toHaveBeenCalledWith(0, 0, 256, 256);
+    expect(fillRect.mock.invocationCallOrder[0]).toBeLessThan(drawImage.mock.invocationCallOrder[0] ?? 0);
   });
 
   it('falha quando nem a menor qualidade respeita o hard cap', async () => {
     const canvas = {
-      getContext: () => ({ drawImage: vi.fn(), imageSmoothingEnabled: true, imageSmoothingQuality: 'high' }),
+      getContext: () => ({ drawImage: vi.fn(), fillRect: vi.fn(), imageSmoothingEnabled: true, imageSmoothingQuality: 'high' }),
       height: 0,
       toBlob: (callback: BlobCallback) => callback(new Blob([new Uint8Array(51 * 1_024)], { type: 'image/webp' })),
       width: 0,

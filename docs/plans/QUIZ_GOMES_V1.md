@@ -1583,6 +1583,14 @@ Pedidos do proprietário nesta rodada: limpeza a cada 15 dias (admin 6 meses), X
 - Prévias em 360/390 retrato, 740/844 paisagem, tablet e computador, claro e escuro, com enunciado longo, foto, acerto, erro e tempo urgente.
 - Não verificado em aparelho real: rede móvel instável com dois aparelhos simultâneos.
 
+### 2026-09-28 — garantia de formato das fotos (avatar, tema, pergunta)
+
+- Duas camadas: o navegador sempre gera um WebP novo (nunca envia o arquivo original) e o Worker recusa qualquer coisa fora do contrato (WebP íntegro, sem EXIF/XMP/animação, dimensões e bytes no limite).
+- Contratos: avatar 256×256 até 50 KB (alvo 40 KB); arte de tema quadrada 256–512 px até 60 KB (alvo 55 KB); foto de pergunta lado maior até 960 px, proporção até 3:1, até 100 KB (alvo 60 KB). Se a qualidade não basta, a resolução desce sozinha.
+- Correções: PNG/WebP com fundo transparente virava quadrado preto no avatar e na arte do tema (agora fundo branco, como já era na pergunta); tipos informados como `image/jpg`, `image/pjpeg` ou vazio (alguns Android) passam a ser aceitos pela extensão; decodificação unificada em `lib/image-input.ts`.
+- Teste real no Chromium com o código do app e os validadores do Worker: foto 4000×3000, retrato, panorâmica 3:1 e 4:1, 80×80, PNG/WebP transparentes, tipo vazio e ruído puro (pior caso de compressão). Toda saída foi aceita pelo servidor; 4:1 é recusada na pergunta com mensagem de recorte.
+- Não verificado em aparelho real: HEIC direto em navegador que não seja Safari (a leitura falha e pede JPEG; o iPhone costuma converter sozinho ao escolher da galeria).
+
 ## Critério de saída desta execução
 
 - Milestones 8 e 8.5 aprovados fisicamente e congelados;

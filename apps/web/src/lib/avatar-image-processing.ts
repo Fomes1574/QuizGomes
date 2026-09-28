@@ -1,10 +1,12 @@
+import { decodeImage, effectiveImageType, isSvgFile, paintOpaqueBackground } from './image-input.js';
+
 export const AVATAR_TARGET_BYTES = 40 * 1_024;
 export const AVATAR_HARD_CAP_BYTES = 50 * 1_024;
 export const AVATAR_DIMENSION = 256;
 
 const MAX_SOURCE_BYTES = 15 * 1_024 * 1_024;
 const WEBP_QUALITIES = [0.9, 0.86, 0.82, 0.78, 0.74, 0.68, 0.62, 0.56, 0.5] as const;
-const INPUT_TYPES = new Set(['image/avif', 'image/jpeg', 'image/png', 'image/webp']);
+const INPUT_TYPES = new Set(['image/avif', 'image/gif', 'image/heic', 'image/jpeg', 'image/png', 'image/webp']);
 
 export interface AvatarCrop {
   offsetX: number;
@@ -13,10 +15,8 @@ export interface AvatarCrop {
 }
 
 export function validateAvatarFile(file: File): string | null {
-  if (file.type === 'image/svg+xml' || file.name.toLocaleLowerCase('pt-BR').endsWith('.svg')) {
-    return 'SVG não é aceito para avatar.';
-  }
-  if (!INPUT_TYPES.has(file.type)) return 'Escolha uma imagem PNG, JPEG, WebP ou AVIF.';
+  if (isSvgFile(file)) return 'SVG não é aceito para avatar.';
+  if (!INPUT_TYPES.has(effectiveImageType(file) ?? '')) return 'Escolha uma imagem PNG, JPEG, WebP ou AVIF.';
   if (file.size > MAX_SOURCE_BYTES) return 'A imagem selecionada é grande demais para ser processada com segurança.';
   return null;
 }
@@ -31,22 +31,6 @@ function canvasBlob(canvas: HTMLCanvasElement, quality: number): Promise<Blob> {
   }, 'image/webp', quality));
 }
 
-async function decode(file: File): Promise<HTMLImageElement> {
-  const url = URL.createObjectURL(file);
-  const image = new Image();
-  image.src = url;
-  try {
-    if (typeof image.decode === 'function') await image.decode();
-    else await new Promise<void>((resolve, reject) => {
-      image.onload = () => resolve();
-      image.onerror = () => reject(new Error('Não foi possível ler a imagem selecionada.'));
-    });
-    if (image.naturalWidth < 1 || image.naturalHeight < 1) throw new Error('A imagem selecionada está vazia.');
-    return image;
-  } finally {
-    URL.revokeObjectURL(url);
-  }
-}
 
 function cropBounds(image: HTMLImageElement, crop: AvatarCrop): { size: number; x: number; y: number } {
   const zoom = Math.min(3, Math.max(1, crop.zoom));
@@ -63,7 +47,7 @@ function cropBounds(image: HTMLImageElement, crop: AvatarCrop): { size: number; 
 export async function processAvatar(file: File, crop: AvatarCrop): Promise<Blob> {
   const validation = validateAvatarFile(file);
   if (validation !== null) throw new Error(validation);
-  const image = await decode(file);
+  const image = await decodeImage(file);
   const bounds = cropBounds(image, crop);
   const canvas = document.createElement('canvas');
   canvas.width = AVATAR_DIMENSION;
@@ -72,6 +56,7 @@ export async function processAvatar(file: File, crop: AvatarCrop): Promise<Blob>
   if (context === null) throw new Error('Não foi possível preparar o editor de avatar.');
   context.imageSmoothingEnabled = true;
   context.imageSmoothingQuality = 'high';
+  paintOpaqueBackground(context, AVATAR_DIMENSION, AVATAR_DIMENSION);
   context.drawImage(
     image,
     bounds.x,

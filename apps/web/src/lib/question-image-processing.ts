@@ -5,6 +5,8 @@
  * folgado no limite de 100 KB validado pelo Worker. A orientação EXIF da foto
  * de celular já vem aplicada pelo decodificador do navegador.
  */
+import { decodeImage, effectiveImageType, isSvgFile, paintOpaqueBackground } from './image-input.js';
+
 export const QUESTION_IMAGE_TARGET_BYTES = 60 * 1_024;
 export const QUESTION_IMAGE_HARD_CAP_BYTES = 100 * 1_024 - 1;
 export const QUESTION_IMAGE_MAX_DIMENSION = 960;
@@ -23,9 +25,8 @@ export interface ProcessedQuestionImage {
 }
 
 export function validateQuestionImageFile(file: Blob & { name?: string }): string | null {
-  const name = (file.name ?? '').toLocaleLowerCase('pt-BR');
-  if (file.type === 'image/svg+xml' || name.endsWith('.svg')) return 'SVG não é aceito como foto de pergunta.';
-  if (!INPUT_TYPES.has(file.type)) return 'Use uma foto PNG, JPEG, WebP, AVIF ou GIF.';
+  if (isSvgFile(file)) return 'SVG não é aceito como foto de pergunta.';
+  if (!INPUT_TYPES.has(effectiveImageType(file) ?? '')) return 'Use uma foto PNG, JPEG, WebP, AVIF ou GIF.';
   if (file.size > MAX_SOURCE_BYTES) return 'A foto é grande demais para processar com segurança (máx. 25 MB).';
   return null;
 }
@@ -61,29 +62,11 @@ function canvasBlob(canvas: HTMLCanvasElement, quality: number): Promise<Blob> {
   }, 'image/webp', quality));
 }
 
-async function decode(file: Blob): Promise<HTMLImageElement> {
-  const url = URL.createObjectURL(file);
-  const image = new Image();
-  image.decoding = 'async';
-  image.src = url;
-  try {
-    if (typeof image.decode === 'function') await image.decode();
-    else await new Promise<void>((resolve, reject) => {
-      image.onload = () => resolve();
-      image.onerror = () => reject(new Error('Não foi possível ler a foto.'));
-    });
-    return image;
-  } catch {
-    throw new Error('Não foi possível ler a foto. Se for HEIC do iPhone, exporte como JPEG.');
-  } finally {
-    URL.revokeObjectURL(url);
-  }
-}
 
 export async function processQuestionImage(file: Blob & { name?: string }): Promise<ProcessedQuestionImage> {
   const validation = validateQuestionImageFile(file);
   if (validation !== null) throw new Error(validation);
-  const image = await decode(file);
+  const image = await decodeImage(file);
   const sourceWidth = image.naturalWidth;
   const sourceHeight = image.naturalHeight;
   if (Math.min(sourceWidth, sourceHeight) < MIN_SOURCE_DIMENSION) throw new Error('A foto é pequena demais (mín. 64 px).');
@@ -103,8 +86,7 @@ export async function processQuestionImage(file: Blob & { name?: string }): Prom
     context.imageSmoothingEnabled = true;
     context.imageSmoothingQuality = 'high';
     // Fundo neutro: PNG com transparência não vira preto no WebP sem alfa.
-    context.fillStyle = '#ffffff';
-    context.fillRect(0, 0, size.width, size.height);
+    paintOpaqueBackground(context, size.width, size.height);
     context.drawImage(image, 0, 0, size.width, size.height);
     for (const quality of WEBP_QUALITIES) {
       const blob = await canvasBlob(canvas, quality);

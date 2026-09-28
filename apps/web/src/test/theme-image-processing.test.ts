@@ -16,7 +16,7 @@ describe('preparação local de imagem do tema', () => {
   it('bloqueia SVG e tipos fora da lista antes de qualquer upload', () => {
     expect(validateThemeImageFile(new File(['<svg/>'], 'tema.svg', { type: 'image/svg+xml' })))
       .toBe('SVG enviado pelo usuário não é aceito.');
-    expect(validateThemeImageFile(new File(['gif'], 'tema.gif', { type: 'image/gif' })))
+    expect(validateThemeImageFile(new File(['%PDF'], 'tema.pdf', { type: 'application/pdf' })))
       .toBe('Escolha uma imagem PNG, JPEG, WebP ou AVIF.');
   });
 
@@ -34,7 +34,7 @@ describe('preparação local de imagem do tema', () => {
     });
     const canvas = {
       getContext: () => ({
-        clearRect: vi.fn(),
+        fillRect: vi.fn(),
         drawImage,
         imageSmoothingEnabled: false,
         imageSmoothingQuality: 'low',
@@ -74,7 +74,7 @@ describe('preparação local de imagem do tema', () => {
   it('continua reduzindo dimensões quando 512 px só atende ao hard cap', async () => {
     const canvas = {
       getContext: () => ({
-        clearRect: vi.fn(),
+        fillRect: vi.fn(),
         drawImage: vi.fn(),
         imageSmoothingEnabled: false,
         imageSmoothingQuality: 'low',

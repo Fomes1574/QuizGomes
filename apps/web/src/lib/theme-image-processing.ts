@@ -1,3 +1,5 @@
+import { decodeImage, effectiveImageType, isSvgFile, paintOpaqueBackground } from './image-input.js';
+
 export const THEME_IMAGE_TARGET_BYTES = 55 * 1_024;
 export const THEME_IMAGE_HARD_CAP_BYTES = 60 * 1_024;
 export const THEME_IMAGE_TARGET_DIMENSION = 512;
@@ -5,7 +7,7 @@ export const THEME_IMAGE_TARGET_DIMENSION = 512;
 const MAX_SOURCE_BYTES = 20 * 1_024 * 1_024;
 const OUTPUT_DIMENSIONS = [512, 448, 384, 320, 256] as const;
 const WEBP_QUALITIES = [0.92, 0.88, 0.84, 0.8, 0.76, 0.7, 0.64, 0.58, 0.52] as const;
-const INPUT_TYPES = new Set(['image/avif', 'image/jpeg', 'image/png', 'image/webp']);
+const INPUT_TYPES = new Set(['image/avif', 'image/gif', 'image/heic', 'image/jpeg', 'image/png', 'image/webp']);
 
 export interface ThemeImageCrop {
   offsetX: number;
@@ -20,10 +22,8 @@ export interface ProcessedThemeImage {
 }
 
 export function validateThemeImageFile(file: File): string | null {
-  if (file.type === 'image/svg+xml' || file.name.toLocaleLowerCase('pt-BR').endsWith('.svg')) {
-    return 'SVG enviado pelo usuário não é aceito.';
-  }
-  if (!INPUT_TYPES.has(file.type)) return 'Escolha uma imagem PNG, JPEG, WebP ou AVIF.';
+  if (isSvgFile(file)) return 'SVG enviado pelo usuário não é aceito.';
+  if (!INPUT_TYPES.has(effectiveImageType(file) ?? '')) return 'Escolha uma imagem PNG, JPEG, WebP ou AVIF.';
   if (file.size > MAX_SOURCE_BYTES) return 'A imagem selecionada é grande demais para ser processada com segurança.';
   return null;
 }
@@ -38,22 +38,6 @@ function canvasBlob(canvas: HTMLCanvasElement, quality: number): Promise<Blob> {
   }, 'image/webp', quality));
 }
 
-async function decode(file: File): Promise<HTMLImageElement> {
-  const url = URL.createObjectURL(file);
-  const image = new Image();
-  image.src = url;
-  try {
-    if (typeof image.decode === 'function') await image.decode();
-    else await new Promise<void>((resolve, reject) => {
-      image.onload = () => resolve();
-      image.onerror = () => reject(new Error('Não foi possível ler a imagem selecionada.'));
-    });
-    if (image.naturalWidth < 1 || image.naturalHeight < 1) throw new Error('A imagem selecionada está vazia.');
-    return image;
-  } finally {
-    URL.revokeObjectURL(url);
-  }
-}
 
 function cropBounds(image: HTMLImageElement, crop: ThemeImageCrop): {
   size: number;
@@ -72,7 +56,7 @@ function cropBounds(image: HTMLImageElement, crop: ThemeImageCrop): {
 export async function processThemeImage(file: File, crop: ThemeImageCrop): Promise<ProcessedThemeImage> {
   const validation = validateThemeImageFile(file);
   if (validation !== null) throw new Error(validation);
-  const image = await decode(file);
+  const image = await decodeImage(file);
   const bounds = cropBounds(image, crop);
   const canvas = document.createElement('canvas');
   const context = canvas.getContext('2d', { alpha: false });
@@ -84,7 +68,7 @@ export async function processThemeImage(file: File, crop: ThemeImageCrop): Promi
     canvas.height = dimension;
     context.imageSmoothingEnabled = true;
     context.imageSmoothingQuality = 'high';
-    context.clearRect(0, 0, dimension, dimension);
+    paintOpaqueBackground(context, dimension, dimension);
     context.drawImage(
       image,
       bounds.x,
