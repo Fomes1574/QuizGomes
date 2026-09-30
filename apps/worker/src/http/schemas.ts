@@ -32,6 +32,20 @@ export const categoryUpdateSchema = z.object({
   status: z.enum(['ACTIVE', 'DISABLED']),
 }).strict();
 
+export const themeCategoryMoveSchema = z.object({
+  categoryId: z.string().trim().min(1).max(128),
+  expectedRevision: z.number().int().min(1),
+}).strict();
+
+/** Exclusão de conta exige digitar EXCLUIR: nenhuma chamada acidental apaga ninguém. */
+export const accountDeletionSchema = z.object({
+  confirmation: z.literal('EXCLUIR'),
+}).strict();
+
+export const visibilitySchema = z.object({
+  hidden: z.boolean(),
+}).strict();
+
 export const themeRejectionSchema = z.object({
   expectedRevision: z.number().int().min(1),
   note: z.string().trim().max(280).optional(),

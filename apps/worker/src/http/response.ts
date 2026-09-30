@@ -20,6 +20,29 @@ const BASE_SECURITY_HEADERS: Record<string, string> = {
   'X-Frame-Options': 'DENY',
 };
 
+/**
+ * Mesma proteção do `_headers` do app, para as páginas que o Worker monta
+ * (prévia de link em "/" e "/temas/*"): sem moldura de outro site, sem
+ * adivinhar tipo, sem plugin. Mínima de propósito para não afetar o login.
+ */
+const DOCUMENT_SECURITY_HEADERS: Record<string, string> = {
+  'Content-Security-Policy': "frame-ancestors 'none'; object-src 'none'; base-uri 'self'",
+  'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=()',
+  'Referrer-Policy': 'strict-origin-when-cross-origin',
+  'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+};
+
+export function withDocumentSecurityHeaders(response: Response): Response {
+  if (response.status === 101) return response;
+  const headers = new Headers(response.headers);
+  for (const [name, value] of Object.entries(DOCUMENT_SECURITY_HEADERS)) {
+    if (!headers.has(name)) headers.set(name, value);
+  }
+  return rebuild(response, headers);
+}
+
 export function json(data: unknown, init: ResponseInit = {}): Response {
   const headers = new Headers(init.headers);
   headers.set('Content-Type', 'application/json; charset=utf-8');

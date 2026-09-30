@@ -77,3 +77,10 @@
   .profile-card--streak-risk .streak-title svg { animation: none; }
   .frame-picker__item { transition: none; }
 }
+
+/* Excluir conta: separado do resto, sem chamar atenção antes da hora. */
+.settings-card__danger { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; grid-column: 1 / -1; margin-top: 4px; padding-top: 14px; border-top: 1px solid var(--border); }
+.settings-card__danger h3 { margin: 0; font-size: .9rem; }
+.settings-card__danger p { margin: 4px 0 0; color: var(--text-secondary); font-size: .78rem; }
+.delete-account-dialog p { line-height: 1.5; }
+.settings-card__danger-button { color: var(--incorrect); }

@@ -20,6 +20,8 @@ export interface ThemeSummary {
 
 export interface AdminThemeSummary extends ThemeSummary {
   createdByUserId: string | null;
+  /** Oculto some de todas as listas e só aparece na aba Ocultos. */
+  hidden?: boolean;
   origin: 'OFFICIAL' | 'USER';
   rejectionNote: string | null;
   revision: number;
@@ -27,6 +29,7 @@ export interface AdminThemeSummary extends ThemeSummary {
 }
 
 export interface CategoryAdmin {
+  hidden?: boolean;
   id: string;
   name: string;
   revision: number;

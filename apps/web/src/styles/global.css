@@ -427,6 +427,12 @@ input, select, textarea { font-size: max(16px, 1em); }
 .field textarea { padding: 13px 14px; resize: vertical; line-height: 1.5; }
 .field input:focus, .field select:focus, .field textarea:focus { border-color: var(--brand); box-shadow: 0 0 0 4px color-mix(in srgb, var(--brand) 12%, transparent); }
 .field small { color: var(--text-secondary); font-size: .7rem; text-align: right; }
+/* Arquivo: o botão nativo ficava colado no topo da caixa de 48 px. Agora a
+ * caixa acompanha o botão, centralizado, no estilo dos demais campos. */
+.field input[type='file'] { height: auto; min-height: 48px; padding: 5px 12px 5px 5px; color: var(--text-secondary); font-size: .8rem; line-height: 36px; cursor: pointer; }
+.field input[type='file']::file-selector-button { height: 36px; margin-right: 12px; padding: 0 14px; border: 0; border-radius: 10px; color: var(--text-on-brand); background: var(--brand); font-family: inherit; font-size: .78rem; font-weight: 750; line-height: 36px; vertical-align: middle; cursor: pointer; transition: filter 160ms ease; }
+.field input[type='file']:hover::file-selector-button { filter: brightness(1.06); }
+.field input[type='file']:disabled { cursor: not-allowed; opacity: .6; }
 .form-error { margin: 0; color: var(--incorrect); font-size: .82rem; font-weight: 650; line-height: 1.45; }
 .form-message { margin: 0; padding: 12px 14px; border-radius: 13px; font-size: .82rem; line-height: 1.5; }
 .form-message--success { color: var(--correct); background: var(--correct-soft); }
@@ -788,6 +794,10 @@ input, select, textarea { font-size: max(16px, 1em); }
 .avatar-editor__controls small { color: var(--text-secondary); font-size: .68rem; line-height: 1.5; }
 
 .dialog-backdrop { position: fixed; z-index: 100; inset: 0; display: grid; overflow-y: auto; place-items: center; padding: 20px; background: rgb(13 7 9 / .64); backdrop-filter: blur(9px); animation: fade-in 180ms ease both; }
+/* <dialog> nativo traz borda preta, margem e limite de tamanho do navegador:
+ * a camada escura precisa cobrir a tela inteira, sem moldura. */
+dialog.dialog-backdrop { width: 100%; max-width: none; height: 100%; max-height: none; margin: 0; border: 0; color: inherit; }
+dialog.dialog-backdrop::backdrop { background: transparent; }
 .matchmaking-modal { width: 100%; max-width: none; height: 100dvh; max-height: none; margin: 0; border: 0; color: var(--text-primary); }
 .matchmaking-modal::backdrop { background: transparent; }
 .matchmaking-modal:focus { outline: 0; }

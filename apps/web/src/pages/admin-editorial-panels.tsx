@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { Button } from '../components/button.js';
 import { ConfirmDialog } from '../components/confirm-dialog.js';
 import { QuestionImageField } from '../components/question-image-field.js';
+import { ThemePicker } from '../components/theme-picker.js';
+import { withRateLimitRetry } from '../lib/rate-limit-retry.js';
 import { ClientApiError, apiDownload, apiRequest, apiUpload } from '../lib/api.js';
 import {
   chunkCsv,
@@ -29,6 +31,7 @@ export function AdminCategoriesPanel({ getToken, onCatalogChanged }: { getToken:
   const [sortOrder, setSortOrder] = useState(0);
   const [creating, setCreating] = useState(false);
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [pendingHide, setPendingHide] = useState<CategoryAdmin | null>(null);
 
   function load() {
     setLoading(true);
@@ -84,6 +87,24 @@ export function AdminCategoriesPanel({ getToken, onCatalogChanged }: { getToken:
     }
   }
 
+  async function hide(category: CategoryAdmin) {
+    setSavingId(category.id);
+    setMessage(null);
+    try {
+      await apiRequest(`/api/admin/categories/${encodeURIComponent(category.id)}/visibility`, {
+        body: { hidden: true }, getToken, method: 'POST',
+      });
+      setCategories((current) => current.filter((item) => item.id !== category.id));
+      setMessage({ kind: 'success', text: `“${category.name}” foi ocultada. Ela e os temas dela estão na aba Ocultos.` });
+      onCatalogChanged?.();
+    } catch (hideError) {
+      setMessage({ kind: 'error', text: errorText(hideError, 'Não foi possível ocultar a categoria.') });
+    } finally {
+      setSavingId(null);
+      setPendingHide(null);
+    }
+  }
+
   return (
     <section className="admin-panel" aria-labelledby="admin-categories-title">
       <div className="section-heading"><div><span className="eyebrow">Administração</span><h2 id="admin-categories-title">Categorias</h2></div></div>
@@ -99,7 +120,7 @@ export function AdminCategoriesPanel({ getToken, onCatalogChanged }: { getToken:
       {loading ? <p className="inline-notice">Carregando categorias…</p> : null}
       <ul className="admin-list">
         {categories.map((category) => (
-          <li className="admin-list__row" key={category.id}>
+          <li className="admin-list__row admin-list__row--category" key={category.id}>
             <div>
               <input
                 aria-label={`Nome da categoria ${category.name}`}
@@ -127,9 +148,20 @@ export function AdminCategoriesPanel({ getToken, onCatalogChanged }: { getToken:
               <option value="ACTIVE">Ativa</option>
               <option value="DISABLED">Desativada</option>
             </select>
+            <Button disabled={savingId === category.id} onClick={() => setPendingHide(category)} type="button" variant="ghost">Ocultar</Button>
           </li>
         ))}
       </ul>
+      {pendingHide !== null && (
+        <ConfirmDialog
+          body={`“${pendingHide.name}” e todos os temas dela somem das listas do app e do admin, e deixam de aceitar partidas. Nada é apagado: você traz de volta pela aba Ocultos, em Moderação de temas.`}
+          busy={savingId === pendingHide.id}
+          confirmLabel="Ocultar categoria"
+          onCancel={() => setPendingHide(null)}
+          onConfirm={() => void hide(pendingHide)}
+          title={`Ocultar “${pendingHide.name}”?`}
+        />
+      )}
     </section>
   );
 }
@@ -138,6 +170,7 @@ const THEME_STATUS_LABEL: Record<AdminThemeSummary['status'], string> = {
   ACTIVE: 'Ativo', DISABLED: 'Desativado', PENDING: 'Pendente', REJECTED: 'Rejeitado',
 };
 const THEME_STATUS_TABS: AdminThemeSummary['status'][] = ['PENDING', 'ACTIVE', 'REJECTED', 'DISABLED'];
+type ThemeModerationTab = AdminThemeSummary['status'] | 'HIDDEN';
 
 export function AdminThemeModerationPanel({
   getToken,
@@ -148,19 +181,34 @@ export function AdminThemeModerationPanel({
   onCatalogChanged?: () => void;
   refreshKey?: number;
 }) {
-  const [status, setStatus] = useState<AdminThemeSummary['status']>('PENDING');
+  const [status, setStatus] = useState<ThemeModerationTab>('PENDING');
   const [themes, setThemes] = useState<AdminThemeSummary[]>([]);
+  const [categories, setCategories] = useState<CategoryAdmin[]>([]);
+  const [hiddenThemes, setHiddenThemes] = useState<AdminThemeSummary[]>([]);
+  const [hiddenCategories, setHiddenCategories] = useState<CategoryAdmin[]>([]);
+  const [moveTarget, setMoveTarget] = useState<Record<string, string>>({});
+  const [notice, setNotice] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [note, setNote] = useState<Record<string, string>>({});
-  const [pendingAction, setPendingAction] = useState<{ action: 'deactivate' | 'reject'; theme: AdminThemeSummary } | null>(null);
+  const [pendingAction, setPendingAction] = useState<{ action: 'deactivate' | 'hide' | 'reject'; theme: AdminThemeSummary } | null>(null);
 
   function load() {
     setLoading(true);
     setMessage(null);
-    void apiRequest<{ themes: AdminThemeSummary[] }>('/api/admin/themes', { getToken })
-      .then((result) => setThemes(result.themes))
+    void Promise.all([
+      apiRequest<{ themes: AdminThemeSummary[] }>('/api/admin/themes', { getToken }),
+      apiRequest<{ categories: CategoryAdmin[] }>('/api/admin/categories', { getToken }),
+      apiRequest<{ themes: AdminThemeSummary[] }>('/api/admin/themes?hidden=1', { getToken }),
+      apiRequest<{ categories: CategoryAdmin[] }>('/api/admin/categories?hidden=1', { getToken }),
+    ])
+      .then(([visible, visibleCategories, hidden, hiddenCategoryList]) => {
+        setThemes(visible.themes ?? []);
+        setCategories(visibleCategories.categories ?? []);
+        setHiddenThemes(hidden.themes ?? []);
+        setHiddenCategories(hiddenCategoryList.categories ?? []);
+      })
       .catch((loadError: unknown) => setMessage(errorText(loadError, 'Não foi possível abrir os temas.')))
       .finally(() => setLoading(false));
   }
@@ -189,7 +237,46 @@ export function AdminThemeModerationPanel({
     }
   }
 
-  const visible = themes.filter((theme) => theme.status === status);
+  async function setVisibility(kind: 'categories' | 'themes', id: string, hidden: boolean, name: string) {
+    setBusyId(id);
+    setMessage(null);
+    setNotice(null);
+    try {
+      await apiRequest(`/api/admin/${kind}/${encodeURIComponent(id)}/visibility`, { body: { hidden }, getToken, method: 'POST' });
+      setNotice(hidden ? `“${name}” foi ocultado.` : `“${name}” voltou a aparecer.`);
+      load();
+      onCatalogChanged?.();
+    } catch (visibilityError) {
+      setMessage(errorText(visibilityError, 'Não foi possível mudar a visibilidade.'));
+    } finally {
+      setBusyId(null);
+      setPendingAction(null);
+    }
+  }
+
+  async function moveCategory(theme: AdminThemeSummary) {
+    const categoryId = moveTarget[theme.id];
+    if (categoryId === undefined || categoryId === theme.categoryId) return;
+    setBusyId(theme.id);
+    setMessage(null);
+    setNotice(null);
+    try {
+      const result = await apiRequest<{ theme: AdminThemeSummary }>(`/api/admin/themes/${encodeURIComponent(theme.id)}/category`, {
+        body: { categoryId, expectedRevision: theme.revision }, getToken, method: 'POST',
+      });
+      setThemes((current) => current.map((item) => item.id === result.theme.id ? result.theme : item));
+      setMoveTarget((current) => { const next = { ...current }; delete next[theme.id]; return next; });
+      setNotice(`“${result.theme.name}” agora está em ${result.theme.categoryName}.`);
+      onCatalogChanged?.();
+    } catch (moveError) {
+      setMessage(errorText(moveError, 'Não foi possível trocar a categoria.'));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  const movableCategories = categories.filter((category) => category.status === 'ACTIVE');
+  const visible = status === 'HIDDEN' ? [] : themes.filter((theme) => theme.status === status);
 
   return (
     <section className="admin-panel" aria-labelledby="admin-theme-moderation-title">
@@ -200,10 +287,49 @@ export function AdminThemeModerationPanel({
             {THEME_STATUS_LABEL[value]}
           </button>
         ))}
+        <button aria-selected={status === 'HIDDEN'} className={status === 'HIDDEN' ? 'segmented__active' : ''} onClick={() => setStatus('HIDDEN')} role="tab" type="button">
+          Ocultos{hiddenThemes.length + hiddenCategories.length > 0 ? ` (${hiddenThemes.length + hiddenCategories.length})` : ''}
+        </button>
       </div>
       {message !== null && <p className="form-message form-message--error" role="status">{message}</p>}
+      {notice !== null && <p className="form-message form-message--success" role="status">{notice}</p>}
       {loading ? <p className="inline-notice">Carregando temas…</p> : null}
-      {!loading && visible.length === 0 && message === null ? <p className="inline-notice">Nenhum tema {THEME_STATUS_LABEL[status].toLowerCase()}.</p> : null}
+      {!loading && status !== 'HIDDEN' && visible.length === 0 && message === null ? <p className="inline-notice">Nenhum tema {THEME_STATUS_LABEL[status].toLowerCase()}.</p> : null}
+      {status === 'HIDDEN' && !loading ? (
+        <div className="admin-card-list">
+          <p className="inline-notice">Ocultos não aparecem em nenhuma lista do app nem do admin e não aceitam partidas. Nada foi apagado.</p>
+          <div className="admin-hidden-group">
+            <h3>Categorias ocultas</h3>
+            {hiddenCategories.length === 0 ? <p className="inline-notice">Nenhuma categoria oculta.</p> : (
+              <ul className="admin-list">
+                {hiddenCategories.map((category) => (
+                  <li className="admin-list__row admin-list__row--hidden" key={category.id}>
+                    <div><strong>{category.name}</strong><small> · os temas dela voltam junto</small></div>
+                    <Button disabled={busyId !== null} onClick={() => void setVisibility('categories', category.id, false, category.name)} type="button" variant="ghost">
+                      {busyId === category.id ? 'Aguarde…' : 'Mostrar de novo'}
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <div className="admin-hidden-group">
+            <h3>Temas ocultos</h3>
+            {hiddenThemes.length === 0 ? <p className="inline-notice">Nenhum tema oculto.</p> : (
+              <ul className="admin-list">
+                {hiddenThemes.map((theme) => (
+                  <li className="admin-list__row admin-list__row--hidden" key={theme.id}>
+                    <div><strong>{theme.name}</strong><small> · {theme.categoryName} · {THEME_STATUS_LABEL[theme.status]}</small></div>
+                    <Button disabled={busyId !== null} onClick={() => void setVisibility('themes', theme.id, false, theme.name)} type="button" variant="ghost">
+                      {busyId === theme.id ? 'Aguarde…' : 'Mostrar de novo'}
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      ) : null}
       <div className="admin-card-list">
         {visible.map((theme) => (
           <article className="admin-card" key={theme.id}>
@@ -219,9 +345,35 @@ export function AdminThemeModerationPanel({
                 </div>
               </>
             ) : null}
-            {status === 'ACTIVE' ? (
+            {status !== 'PENDING' ? (
+              <div className="admin-card__move">
+                <label className="field">
+                  <span>Categoria</span>
+                  <select
+                    disabled={busyId !== null}
+                    onChange={(event) => setMoveTarget((current) => ({ ...current, [theme.id]: event.target.value }))}
+                    value={moveTarget[theme.id] ?? theme.categoryId}
+                  >
+                    {movableCategories.some((category) => category.id === theme.categoryId)
+                      ? null
+                      : <option value={theme.categoryId}>{theme.categoryName}</option>}
+                    {movableCategories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+                  </select>
+                </label>
+                <Button
+                  disabled={busyId !== null || (moveTarget[theme.id] ?? theme.categoryId) === theme.categoryId}
+                  onClick={() => void moveCategory(theme)}
+                  type="button"
+                  variant="ghost"
+                >{busyId === theme.id ? 'Aguarde…' : 'Mover'}</Button>
+              </div>
+            ) : null}
+            {status !== 'PENDING' ? (
               <div className="admin-card__actions">
-                <Button disabled={busyId !== null} onClick={() => setPendingAction({ action: 'deactivate', theme })} type="button" variant="ghost">{busyId === theme.id ? 'Aguarde…' : 'Desativar'}</Button>
+                {status === 'ACTIVE' ? (
+                  <Button disabled={busyId !== null} onClick={() => setPendingAction({ action: 'deactivate', theme })} type="button" variant="ghost">{busyId === theme.id ? 'Aguarde…' : 'Desativar'}</Button>
+                ) : null}
+                <Button disabled={busyId !== null} onClick={() => setPendingAction({ action: 'hide', theme })} type="button" variant="ghost">{busyId === theme.id ? 'Aguarde…' : 'Ocultar'}</Button>
               </div>
             ) : null}
           </article>
@@ -229,14 +381,20 @@ export function AdminThemeModerationPanel({
       </div>
       {pendingAction !== null && (
         <ConfirmDialog
-          body={pendingAction.action === 'deactivate'
-            ? `“${pendingAction.theme.name}” some do catálogo e do sorteio de partidas.`
-            : `“${pendingAction.theme.name}” volta para quem propôs como rejeitado.`}
+          body={pendingAction.action === 'hide'
+            ? `“${pendingAction.theme.name}” some de todas as listas do app e do admin e deixa de aceitar partidas. Nada é apagado: ele volta pela aba Ocultos.`
+            : pendingAction.action === 'deactivate'
+              ? `“${pendingAction.theme.name}” some do catálogo e do sorteio de partidas.`
+              : `“${pendingAction.theme.name}” volta para quem propôs como rejeitado.`}
           busy={busyId === pendingAction.theme.id}
-          confirmLabel={pendingAction.action === 'deactivate' ? 'Desativar tema' : 'Rejeitar tema'}
+          confirmLabel={pendingAction.action === 'hide' ? 'Ocultar tema' : pendingAction.action === 'deactivate' ? 'Desativar tema' : 'Rejeitar tema'}
           onCancel={() => setPendingAction(null)}
-          onConfirm={() => void act(pendingAction.theme, pendingAction.action)}
-          title={pendingAction.action === 'deactivate' ? `Desativar “${pendingAction.theme.name}”?` : `Rejeitar “${pendingAction.theme.name}”?`}
+          onConfirm={() => {
+            const { action, theme } = pendingAction;
+            if (action === 'hide') void setVisibility('themes', theme.id, true, theme.name);
+            else void act(theme, action);
+          }}
+          title={`${pendingAction.action === 'hide' ? 'Ocultar' : pendingAction.action === 'deactivate' ? 'Desativar' : 'Rejeitar'} “${pendingAction.theme.name}”?`}
         />
       )}
     </section>
@@ -307,7 +465,6 @@ function emptyDraft(): {
 }
 
 export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getToken: GetToken; refreshKey?: number }) {
-  const [themeSearch, setThemeSearch] = useState('');
   const [themeOptions, setThemeOptions] = useState<AdminThemeSummary[]>([]);
   const [themeId, setThemeId] = useState('');
   const [status, setStatus] = useState<EditorialQuestion['status']>('IN_REVIEW');
@@ -338,16 +495,21 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
   const [exporting, setExporting] = useState<'csv' | 'json' | null>(null);
 
   useEffect(() => {
+    // Catálogo inteiro (sem ocultos) uma vez: a busca acontece no seletor.
     const delay = window.setTimeout(() => {
-      void apiRequest<{ themes: AdminThemeSummary[] }>(`/api/admin/themes?search=${encodeURIComponent(themeSearch.trim())}`, { getToken })
-        .then((result) => setThemeOptions(result.themes))
+      void apiRequest<{ themes: AdminThemeSummary[] }>('/api/admin/themes', { getToken })
+        .then((result) => {
+          setThemeOptions(result.themes);
+          // Tema escolhido que foi ocultado deixa de ser uma opção.
+          setThemeId((current) => result.themes.some((theme) => theme.id === current) ? current : '');
+        })
         .catch((searchError: unknown) => {
           setThemeOptions([]);
           setMessage({ kind: 'error', text: errorText(searchError, 'Não foi possível buscar temas.') });
         });
     }, 180);
     return () => window.clearTimeout(delay);
-  }, [getToken, refreshKey, themeSearch]);
+  }, [getToken, refreshKey]);
 
   function loadQuestions(themeId_: string, status_: EditorialQuestion['status'], cursor: string | null, replace: boolean) {
     if (themeId_ === '') return;
@@ -607,13 +769,13 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
         try {
           if (csvChunk !== undefined) {
             if (new Blob([csvChunk.text]).size > IMPORT_CHUNK_MAX_BYTES) throw new Error('CHUNK_TOO_BIG');
-            result = await apiUpload(importPath, {
+            result = await withRateLimitRetry(() => apiUpload(importPath, {
               body: new Blob([csvChunk.text], { type: 'text/csv' }), getToken, headers, method: 'POST',
-            });
+            }));
           } else {
-            result = await apiRequest(importPath, {
+            result = await withRateLimitRetry(() => apiRequest(importPath, {
               body: { questions: jsonChunks?.[index] ?? [] }, getToken, headers, method: 'POST',
-            });
+            }));
           }
         } catch (chunkError) {
           // Diagnóstico de linha da parte vira a linha do arquivo inteiro.
@@ -686,8 +848,14 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
   return (
     <section className="admin-panel" aria-labelledby="admin-question-editorial-title">
       <div className="section-heading"><div><span className="eyebrow">Administração</span><h2 id="admin-question-editorial-title">Perguntas por tema</h2></div></div>
-      <label className="search-field"><span className="sr-only">Buscar tema</span><input onChange={(event) => setThemeSearch(event.target.value)} placeholder="Buscar tema" type="search" value={themeSearch} /></label>
-      <label className="field"><span>Tema</span><select onChange={(event) => setThemeId(event.target.value)} value={themeId}><option value="">Selecione um tema</option>{themeOptions.map((theme) => <option key={theme.id} value={theme.id}>{theme.name}</option>)}</select></label>
+      <ThemePicker
+        onChange={setThemeId}
+        options={themeOptions.map((theme) => ({
+          categoryName: theme.categoryName, id: theme.id, name: theme.name,
+          ...(theme.status === 'ACTIVE' ? {} : { note: THEME_STATUS_LABEL[theme.status] }),
+        }))}
+        value={themeId}
+      />
       {themeId !== '' ? (
         <>
           <div className="segmented" role="tablist" aria-label="Status da pergunta">

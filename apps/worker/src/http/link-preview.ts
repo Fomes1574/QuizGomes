@@ -1,3 +1,4 @@
+import { PLAYABLE_THEME_SQL } from '../repositories/theme-repository.js';
 import type { Env } from '../env.js';
 
 const THEME_PATH = /^\/temas\/([a-z0-9_-]{1,128})\/?$/i;
@@ -30,8 +31,9 @@ export async function themeLinkPreview(request: Request, env: Env, url: URL): Pr
   let theme: PreviewTheme | null;
   try {
     theme = await env.CORE_DB.prepare(
-      `SELECT id, name, description, artwork_kind, artwork_version
-         FROM themes WHERE slug = ?1 AND status = 'ACTIVE'`,
+      `SELECT t.id, t.name, t.description, t.artwork_kind, t.artwork_version
+         FROM themes t JOIN categories c ON c.id = t.category_id
+        WHERE t.slug = ?1 AND ${PLAYABLE_THEME_SQL}`,
     ).bind(slug.toLowerCase()).first<PreviewTheme>();
   } catch {
     return page;

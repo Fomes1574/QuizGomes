@@ -1,3 +1,4 @@
+import { playableThemeExists } from './theme-repository.js';
 import {
   CHALLENGE_MODE,
   DAILY_MISSION_DEFINITIONS,
@@ -364,7 +365,7 @@ export class ChallengeRepository {
            (id, pair_low_id, pair_high_id, first_player_user_id, second_player_user_id,
             theme_id, difficulty, kind, status, expires_at, created_at, updated_at)
          SELECT ?1, ?2, ?3, ?4, ?5, ?6, 'MEDIUM', ?7, ?8, ?9, ?10, ?10
-          WHERE EXISTS (SELECT 1 FROM themes WHERE id = ?6 AND status = 'ACTIVE')`,
+          WHERE ${playableThemeExists('?6')}`,
       ).bind(id, low, high, input.actorUserId, input.targetUserId, input.themeId,
         input.kind, status, expiresAt, now).run();
       if ((inserted.meta.changes ?? 0) !== 1) {

@@ -1,4 +1,5 @@
 import {
+  deleteUser,
   onAuthStateChanged,
   signInWithPopup,
   signInWithRedirect,
@@ -40,6 +41,8 @@ export type ProfileStatus = 'disabled' | 'error' | 'idle' | 'loading' | 'missing
 
 interface AuthValue {
   createProfile: (displayName: string) => Promise<void>;
+  /** Exclui a conta no servidor e encerra a sessão. */
+  deleteAccount: () => Promise<void>;
   profileStatus: ProfileStatus;
   retryProfile: () => Promise<void>;
   error: string | null;
@@ -192,6 +195,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     signOut: async () => {
       clearAuthIntent();
       await firebaseSignOut(firebaseAuth);
+    },
+    deleteAccount: async () => {
+      await apiRequest('/api/profile/account', { body: { confirmation: 'EXCLUIR' }, getToken, method: 'DELETE' });
+      clearAuthIntent();
+      // O servidor já desfez o vínculo. Apagar também o registro do Google
+      // no Firebase pode exigir login recente; se recusar, só sai da sessão.
+      const current = firebaseAuth.currentUser;
+      if (current !== null) await deleteUser(current).catch(() => undefined);
+      await firebaseSignOut(firebaseAuth).catch(() => undefined);
     },
     updateDisplayName: (displayName) => saveProfile(displayName, 'PATCH'),
     uploadCustomAvatar: (avatar) => saveAvatar(avatar),

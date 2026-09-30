@@ -23,7 +23,7 @@ describe('M11 — categorias e moderação de temas', () => {
       expectedRevision: 1, id: created.id, name: 'Categoria Renomeada', sortOrder: 9, status: 'DISABLED',
     });
     expect(updated).toEqual({
-      id: created.id, name: 'Categoria Renomeada', revision: 2, slug: 'categoria-editorial-a',
+      hidden: false, id: created.id, name: 'Categoria Renomeada', revision: 2, slug: 'categoria-editorial-a',
       sortOrder: 9, status: 'DISABLED',
     });
 

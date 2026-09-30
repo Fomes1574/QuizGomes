@@ -6,6 +6,7 @@ import { Avatar } from '../components/avatar.js';
 import { AvatarFrame } from '../components/avatar-frame.js';
 import { LoadingState } from '../components/async-state.js';
 import { Button } from '../components/button.js';
+import { DeleteAccountDialog } from '../components/delete-account-dialog.js';
 import { Icon } from '../components/icons.js';
 import {
   AchievementsCard,
@@ -57,6 +58,7 @@ export function ProfilePage() {
     firebaseUser,
     getToken,
     profile,
+    deleteAccount,
     removeCustomAvatar,
     retryProfile,
     role,
@@ -71,6 +73,7 @@ export function ProfilePage() {
   const [editingAvatar, setEditingAvatar] = useState(false);
   const [name, setName] = useState(profile?.displayName ?? '');
   const [privacyOpen, setPrivacyOpen] = useState(false);
+  const [deletingAccount, setDeletingAccount] = useState(false);
   const [blockedUsers, setBlockedUsers] = useState<SocialUser[]>([]);
   const [blockedUsersCursor, setBlockedUsersCursor] = useState<string | null>(null);
   const [privacyLoading, setPrivacyLoading] = useState(false);
@@ -327,6 +330,13 @@ export function ProfilePage() {
             ) : null}
           </div>
         ) : null}
+        <div className="settings-card__danger">
+          <div><h3>Excluir conta</h3><p>{role === 'ADMIN' ? 'Contas de administração não são excluídas por aqui.' : 'Apaga seus dados pessoais do QUIZ GOMES.'}</p></div>
+          {role === 'ADMIN' ? null : (
+            <Button className="settings-card__danger-button" onClick={() => setDeletingAccount(true)} variant="ghost">Excluir conta</Button>
+          )}
+        </div>
+        {deletingAccount ? <DeleteAccountDialog onCancel={() => setDeletingAccount(false)} onConfirm={deleteAccount} /> : null}
       </section>
       {settingsError !== null ? <p className="form-message form-message--error" role="alert">{settingsError}</p> : null}
       {role === 'ADMIN' ? <section className="settings-card"><div><h2>Administração</h2><p>Gerencie conteúdo, moderação, usuários e auditoria.</p></div><NavLink className="button button--secondary" to="/admin">Abrir administração</NavLink></section> : null}

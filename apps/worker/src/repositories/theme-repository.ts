@@ -11,6 +11,19 @@ import { d1BlobToArrayBuffer } from '../storage/d1-blob.js';
 export const THEME_SUBMISSION_RATE_LIMIT = 5;
 export const THEME_SUBMISSION_RATE_WINDOW_MS = 60 * 60_000;
 
+/**
+ * Tema jogável e listável: ativo, não oculto, em categoria ativa e não
+ * oculta. Exige o JOIN `themes t` + `categories c`. Toda consulta que lista,
+ * abre ou inicia partida num tema usa esta regra (ou `playableThemeExists`).
+ */
+export const PLAYABLE_THEME_SQL = `t.status = 'ACTIVE' AND t.hidden_at IS NULL AND c.status = 'ACTIVE' AND c.hidden_at IS NULL`;
+
+/** Mesma regra como subconsulta, para quem não faz o JOIN (ex.: `?1`, `m.theme_id`). */
+export function playableThemeExists(themeIdExpression: string): string {
+  return `EXISTS (SELECT 1 FROM themes t JOIN categories c ON c.id = t.category_id
+                   WHERE t.id = ${themeIdExpression} AND ${PLAYABLE_THEME_SQL})`;
+}
+
 export interface CategoryRecord {
   id: string;
   name: string;
@@ -18,6 +31,7 @@ export interface CategoryRecord {
 }
 
 export interface CategoryAdminRecord extends CategoryRecord {
+  hidden: boolean;
   revision: number;
   sortOrder: number;
   status: 'ACTIVE' | 'DISABLED';
@@ -37,6 +51,7 @@ export interface ThemeSummaryRecord {
 
 export interface AdminThemeSummaryRecord extends ThemeSummaryRecord {
   createdByUserId: string | null;
+  hidden: boolean;
   origin: 'OFFICIAL' | 'USER';
   rejectionNote: string | null;
   revision: number;
@@ -53,7 +68,12 @@ export interface ThemeArtworkBlobRecord {
 }
 
 interface CategoryRow { id: string; name: string; slug: string }
-interface CategoryAdminRow extends CategoryRow { revision: number; sort_order: number; status: 'ACTIVE' | 'DISABLED' }
+interface CategoryAdminRow extends CategoryRow {
+  hidden_at: string | null;
+  revision: number;
+  sort_order: number;
+  status: 'ACTIVE' | 'DISABLED';
+}
 interface ThemeRow {
   active_question_count: number;
   artwork_icon_key: string | null;
@@ -64,6 +84,7 @@ interface ThemeRow {
   cover_image_key: string | null;
   created_by_user_id?: string | null;
   description: string;
+  hidden_at?: string | null;
   id: string;
   name: string;
   origin?: 'OFFICIAL' | 'USER';
@@ -77,7 +98,17 @@ const THEME_COLUMNS = `t.id, t.slug, t.name, t.description, t.cover_image_key,
   t.artwork_kind, t.artwork_icon_key, t.artwork_version, t.active_question_count,
   c.id AS category_id, c.name AS category_name`;
 
-const ADMIN_THEME_COLUMNS = `${THEME_COLUMNS}, t.status, t.revision, t.origin, t.created_by_user_id, t.rejection_note`;
+const ADMIN_THEME_COLUMNS = `${THEME_COLUMNS}, t.status, t.revision, t.origin, t.created_by_user_id, t.rejection_note,
+  t.hidden_at`;
+
+const CATEGORY_ADMIN_COLUMNS = 'id, slug, name, sort_order, status, revision, hidden_at';
+
+function mapAdminCategory(row: CategoryAdminRow): CategoryAdminRecord {
+  return {
+    hidden: row.hidden_at !== null, id: row.id, name: row.name, revision: row.revision, slug: row.slug,
+    sortOrder: row.sort_order, status: row.status,
+  };
+}
 
 function artworkUrl(themeId: string, version: number): string {
   return `/api/theme-artwork/${encodeURIComponent(themeId)}/v${version}.webp`;
@@ -114,6 +145,7 @@ function mapAdminTheme(row: ThemeRow): AdminThemeSummaryRecord {
   return {
     ...mapTheme(row),
     createdByUserId: row.created_by_user_id ?? null,
+    hidden: (row.hidden_at ?? null) !== null,
     origin: row.origin,
     rejectionNote: row.rejection_note ?? null,
     revision: row.revision,
@@ -130,19 +162,33 @@ export class ThemeRepository {
 
   async listCategories(): Promise<CategoryRecord[]> {
     const result = await this.db.prepare(
-      "SELECT id, slug, name FROM categories WHERE status = 'ACTIVE' ORDER BY sort_order, name LIMIT 100",
+      "SELECT id, slug, name FROM categories WHERE status = 'ACTIVE' AND hidden_at IS NULL ORDER BY sort_order, name LIMIT 100",
     ).all<CategoryRow>();
     return result.results;
   }
 
-  async listCategoriesForAdmin(): Promise<CategoryAdminRecord[]> {
+  /** Admin vê as visíveis; as ocultas só aparecem com `hidden: true` (aba Ocultos). */
+  async listCategoriesForAdmin(options: { hidden?: boolean } = {}): Promise<CategoryAdminRecord[]> {
     const result = await this.db.prepare(
-      'SELECT id, slug, name, sort_order, status, revision FROM categories ORDER BY sort_order, name LIMIT 200',
+      `SELECT ${CATEGORY_ADMIN_COLUMNS} FROM categories
+        WHERE ${options.hidden === true ? 'hidden_at IS NOT NULL' : 'hidden_at IS NULL'}
+        ORDER BY sort_order, name LIMIT 200`,
     ).all<CategoryAdminRow>();
-    return result.results.map((row) => ({
-      id: row.id, name: row.name, revision: row.revision, slug: row.slug,
-      sortOrder: row.sort_order, status: row.status,
-    }));
+    return result.results.map(mapAdminCategory);
+  }
+
+  async setCategoryHidden(input: { hidden: boolean; id: string }): Promise<CategoryAdminRecord> {
+    const result = await this.db.prepare(
+      `UPDATE categories
+          SET hidden_at = CASE WHEN ?1 = 1 THEN COALESCE(hidden_at, CURRENT_TIMESTAMP) ELSE NULL END,
+              revision = revision + 1, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?2`,
+    ).bind(input.hidden ? 1 : 0, input.id).run();
+    if ((result.meta.changes ?? 0) !== 1) throw new ApiError(404, 'CATEGORY_NOT_FOUND', 'Categoria não encontrada.');
+    const row = await this.db.prepare(`SELECT ${CATEGORY_ADMIN_COLUMNS} FROM categories WHERE id = ?1`)
+      .bind(input.id).first<CategoryAdminRow>();
+    if (row === null) throw new ApiError(404, 'CATEGORY_NOT_FOUND', 'Categoria não encontrada.');
+    return mapAdminCategory(row);
   }
 
   async createCategory(input: { name: string; slug: string; sortOrder: number }): Promise<CategoryAdminRecord> {
@@ -157,7 +203,7 @@ export class ThemeRepository {
       }
       throw error;
     }
-    return { id, name: input.name, revision: 1, slug: input.slug, sortOrder: input.sortOrder, status: 'ACTIVE' };
+    return { hidden: false, id, name: input.name, revision: 1, slug: input.slug, sortOrder: input.sortOrder, status: 'ACTIVE' };
   }
 
   async updateCategory(input: {
@@ -184,20 +230,17 @@ export class ThemeRepository {
       if (exists === null) throw new ApiError(404, 'CATEGORY_NOT_FOUND', 'Categoria não encontrada.');
       throw new ApiError(409, 'CATEGORY_CONFLICT', 'Esta categoria mudou de estado. Atualize a tela.');
     }
-    const updated = await this.db.prepare('SELECT id, slug, name, sort_order, status, revision FROM categories WHERE id = ?1')
+    const updated = await this.db.prepare(`SELECT ${CATEGORY_ADMIN_COLUMNS} FROM categories WHERE id = ?1`)
       .bind(input.id).first<CategoryAdminRow>();
     if (updated === null) throw new ApiError(404, 'CATEGORY_NOT_FOUND', 'Categoria não encontrada.');
-    return {
-      id: updated.id, name: updated.name, revision: updated.revision, slug: updated.slug,
-      sortOrder: updated.sort_order, status: updated.status,
-    };
+    return mapAdminCategory(updated);
   }
 
   async listThemes(search = '', categoryId: string | null = null, limit = 60): Promise<ThemeSummaryRecord[]> {
     const query = `SELECT ${THEME_COLUMNS}
                      FROM themes t
                      JOIN categories c ON c.id = t.category_id
-                    WHERE t.status = 'ACTIVE' AND c.status = 'ACTIVE'
+                    WHERE ${PLAYABLE_THEME_SQL}
                       AND (?1 = '' OR t.name LIKE ?2 ESCAPE '\\' COLLATE NOCASE)
                       AND (?3 IS NULL OR t.category_id = ?3)
                     ORDER BY c.sort_order, t.name
@@ -214,12 +257,18 @@ export class ThemeRepository {
    * Sem cursor: uma fila de moderação com centenas de propostas simultâneas
    * pede paginação de verdade, não coberta aqui — ver auditoria de M12.
    */
-  async listThemesForAdmin(search = '', limit = 500): Promise<AdminThemeSummaryRecord[]> {
+  async listThemesForAdmin(search = '', limit = 500, options: { hidden?: boolean } = {}): Promise<AdminThemeSummaryRecord[]> {
+    // Visíveis: nem o tema nem a categoria estão ocultos. Aba Ocultos: só os
+    // temas ocultados um a um (os de categoria oculta voltam com ela).
+    const visibility = options.hidden === true
+      ? 't.hidden_at IS NOT NULL'
+      : 't.hidden_at IS NULL AND c.hidden_at IS NULL';
     const result = await this.db.prepare(
       `SELECT ${ADMIN_THEME_COLUMNS}
          FROM themes t
          JOIN categories c ON c.id = t.category_id
-        WHERE (?1 = '' OR t.name LIKE ?2 ESCAPE '\\' COLLATE NOCASE)
+        WHERE ${visibility}
+          AND (?1 = '' OR t.name LIKE ?2 ESCAPE '\\' COLLATE NOCASE)
         ORDER BY CASE t.status WHEN 'PENDING' THEN 0 WHEN 'ACTIVE' THEN 1 ELSE 2 END,
                  t.updated_at DESC, t.name
         LIMIT ?3`,
@@ -232,7 +281,7 @@ export class ThemeRepository {
       `SELECT ${THEME_COLUMNS}
          FROM themes t
          JOIN categories c ON c.id = t.category_id
-        WHERE (t.id = ?1 OR t.slug = ?1) AND t.status = 'ACTIVE' AND c.status = 'ACTIVE'
+        WHERE (t.id = ?1 OR t.slug = ?1) AND ${PLAYABLE_THEME_SQL}
         LIMIT 1`,
     ).bind(idOrSlug).first<ThemeRow>();
     return row === null ? null : mapTheme(row);
@@ -422,7 +471,7 @@ export class ThemeRepository {
   }): Promise<ThemeSummaryRecord> {
     await this.assertSubmissionRate(input.userId);
     const category = await this.db.prepare(
-      "SELECT id, name FROM categories WHERE id = ?1 AND status = 'ACTIVE'",
+      "SELECT id, name FROM categories WHERE id = ?1 AND status = 'ACTIVE' AND hidden_at IS NULL",
     ).bind(input.categoryId).first<{ id: string; name: string }>();
     if (category === null) throw new Error('CATEGORY_NOT_FOUND');
     const baseSlug = input.name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('pt-BR')
@@ -509,7 +558,7 @@ export class ThemeRepository {
     name: string;
     themeId: string;
   }): Promise<AdminThemeSummaryRecord> {
-    const category = await this.db.prepare("SELECT id FROM categories WHERE id = ?1 AND status = 'ACTIVE'")
+    const category = await this.db.prepare("SELECT id FROM categories WHERE id = ?1 AND status = 'ACTIVE' AND hidden_at IS NULL")
       .bind(input.categoryId).first<{ id: string }>();
     if (category === null) throw new ApiError(400, 'CATEGORY_NOT_FOUND', 'Categoria inválida.');
     let result;
@@ -528,6 +577,40 @@ export class ThemeRepository {
     const updated = await this.findThemeForAdmin(input.themeId);
     if (updated === null) throw new ApiError(404, 'THEME_NOT_FOUND', 'Tema não encontrado.');
     return updated;
+  }
+
+  /** Troca a categoria do tema (CAS por revisão). Ranking, perguntas e Conhecimento são por tema e seguem intactos. */
+  async moveThemeToCategory(input: { categoryId: string; expectedRevision: number; themeId: string }): Promise<AdminThemeSummaryRecord> {
+    const category = await this.db.prepare("SELECT id FROM categories WHERE id = ?1 AND status = 'ACTIVE' AND hidden_at IS NULL")
+      .bind(input.categoryId).first<{ id: string }>();
+    if (category === null) throw new ApiError(400, 'CATEGORY_NOT_FOUND', 'Categoria inválida.');
+    const result = await this.db.prepare(
+      `UPDATE themes SET category_id = ?1, revision = revision + 1, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?2 AND revision = ?3`,
+    ).bind(input.categoryId, input.themeId, input.expectedRevision).run();
+    if ((result.meta.changes ?? 0) !== 1) await this.assertThemeConflictOrMissing(input.themeId);
+    const updated = await this.findThemeForAdmin(input.themeId);
+    if (updated === null) throw new ApiError(404, 'THEME_NOT_FOUND', 'Tema não encontrado.');
+    return updated;
+  }
+
+  async setThemeHidden(input: { hidden: boolean; themeId: string }): Promise<AdminThemeSummaryRecord> {
+    const result = await this.db.prepare(
+      `UPDATE themes
+          SET hidden_at = CASE WHEN ?1 = 1 THEN COALESCE(hidden_at, CURRENT_TIMESTAMP) ELSE NULL END,
+              revision = revision + 1, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?2`,
+    ).bind(input.hidden ? 1 : 0, input.themeId).run();
+    if ((result.meta.changes ?? 0) !== 1) throw new ApiError(404, 'THEME_NOT_FOUND', 'Tema não encontrado.');
+    const updated = await this.findThemeForAdmin(input.themeId);
+    if (updated === null) throw new ApiError(404, 'THEME_NOT_FOUND', 'Tema não encontrado.');
+    return updated;
+  }
+
+  /** O tema pode receber fila/partida agora? */
+  async isPlayable(themeId: string): Promise<boolean> {
+    const row = await this.db.prepare(`SELECT ${playableThemeExists('?1')} AS ok`).bind(themeId).first<{ ok: number }>();
+    return row?.ok === 1;
   }
 
   async deactivateTheme(input: { expectedRevision: number; themeId: string }): Promise<AdminThemeSummaryRecord> {

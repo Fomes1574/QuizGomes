@@ -32,6 +32,12 @@
   "triggers": {
     "crons": ["17 * * * *", "5,20,35,50 23 * * *"]
   },
+  // Freio por IP contra rajadas automatizadas (binding de rate limiting do
+  // Workers, sem recurso novo a provisionar). Folgado para uso humano.
+  "ratelimits": [
+    { "name": "API_RATE_LIMITER", "namespace_id": "1001", "simple": { "limit": 600, "period": 60 } },
+    { "name": "WRITE_RATE_LIMITER", "namespace_id": "1002", "simple": { "limit": 180, "period": 60 } }
+  ],
   "r2_buckets": [
     {
       "binding": "QUESTION_IMAGES",

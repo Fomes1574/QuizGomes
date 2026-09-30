@@ -1,3 +1,4 @@
+import { PLAYABLE_THEME_SQL } from './theme-repository.js';
 import {
   clampKnowledge,
   createLiveMatchState,
@@ -169,9 +170,9 @@ export class LiveMatchRepository {
     }
 
     const configuration = await this.coreDb.prepare(
-      `SELECT question_shard_id, status
-         FROM themes
-        WHERE id = ?1`,
+      `SELECT t.question_shard_id, CASE WHEN ${PLAYABLE_THEME_SQL} THEN 'ACTIVE' ELSE 'UNAVAILABLE' END AS status
+         FROM themes t JOIN categories c ON c.id = t.category_id
+        WHERE t.id = ?1`,
     ).bind(parsed.themeId).first<MatchConfigurationRow>();
     if (configuration === null || configuration.status !== 'ACTIVE') {
       throw new ApiError(409, 'THEME_UNAVAILABLE', 'Este tema não está disponível para partida.');

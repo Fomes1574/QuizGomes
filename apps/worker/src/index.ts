@@ -10,12 +10,14 @@ import { TicketBroker } from './durable-objects/ticket-broker.js';
 import type { Env } from './env.js';
 import { ApiError } from './http/api-error.js';
 import { readBytes, readJson, readText } from './http/body.js';
+import { rateLimitedResponse } from './http/rate-limit.js';
 import {
   apiErrorResponse,
   applyCors,
   corsHeaders,
   isRequestOriginAllowed,
   json,
+  withDocumentSecurityHeaders,
   withSecurityHeaders,
 } from './http/response.js';
 import {
@@ -31,6 +33,9 @@ import {
   reportResolutionSchema,
   themeArtworkChoiceSchema,
   themeEditSchema,
+  accountDeletionSchema,
+  themeCategoryMoveSchema,
+  visibilitySchema,
   themeModerationCasSchema,
   themeRejectionSchema,
   themeSubmissionSchema,
@@ -44,7 +49,7 @@ import { QuestionRepository } from './repositories/question-repository.js';
 import { PoolStateRepository } from './repositories/pool-state-repository.js';
 import { ReportRepository, type ReportRecord } from './repositories/report-repository.js';
 import { StreakRepository } from './repositories/streak-repository.js';
-import { ThemeRepository } from './repositories/theme-repository.js';
+import { PLAYABLE_THEME_SQL, ThemeRepository } from './repositories/theme-repository.js';
 import { UserRepository } from './repositories/user-repository.js';
 import { LiveMatchRepository, parseMatchResource } from './repositories/live-match-repository.js';
 import { ChallengeRepository } from './repositories/challenge-repository.js';
@@ -145,8 +150,13 @@ async function createRealtimeTicket(request: Request, env: Env): Promise<Respons
   if (!parsed.success) throw validationError(parsed.error);
   const matches = new LiveMatchRepository(env.CORE_DB, env.QUESTIONS_DB);
   if (parsed.data.scope === 'matchmaking') {
-    if (parseMatchResource(parsed.data.resource) === null) {
+    const queue = parseMatchResource(parsed.data.resource);
+    if (queue === null) {
       throw new ApiError(400, 'INVALID_QUEUE', 'A fila escolhida é inválida.');
+    }
+    // Tema oculto/desativado não abre fila: a partida recusaria de qualquer forma.
+    if (!await new ThemeRepository(env.CORE_DB).isPlayable(queue.themeId)) {
+      throw new ApiError(409, 'THEME_UNAVAILABLE', 'Este tema não está disponível.');
     }
     if (await matches.activeMatchForFirebaseUid(user.uid) !== null) {
       throw new ApiError(409, 'PLAYER_BUSY', 'Você já está em outra partida.');
@@ -228,8 +238,8 @@ async function alertFriendsInQueue(env: Env, input: {
   const mode = input.resource.endsWith(':RANKED') ? 'RANKED' : 'CASUAL';
   const details = await env.CORE_DB.prepare(
     `SELECT t.slug, t.name, p.display_name
-       FROM themes t, user_profiles p
-      WHERE t.id = ?1 AND t.status = 'ACTIVE' AND p.user_id = ?2`,
+       FROM themes t JOIN categories c ON c.id = t.category_id, user_profiles p
+      WHERE t.id = ?1 AND ${PLAYABLE_THEME_SQL} AND p.user_id = ?2`,
   ).bind(input.themeId, input.userId).first<{ display_name: string; name: string; slug: string }>();
   if (details === null) return;
   await new SocialPushService(env, new SocialRepository(env.CORE_DB)).sendFriendInQueue({
@@ -540,6 +550,23 @@ async function profileStreakReminderRoute(request: Request, env: Env): Promise<R
   throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Método não permitido.');
 }
 
+async function profileAccountRoute(request: Request, env: Env): Promise<Response> {
+  if (request.method !== 'DELETE') throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Método não permitido.');
+  const identity = await requireUser(request, env);
+  const parsed = accountDeletionSchema.safeParse(await readJson(request));
+  if (!parsed.success) throw new ApiError(400, 'CONFIRMATION_REQUIRED', 'Digite EXCLUIR para confirmar.');
+  if (await hasAdminAccess(identity, env)) {
+    throw new ApiError(409, 'ADMIN_ACCOUNT', 'Contas de administração não podem ser excluídas por aqui. Remova o papel de ADMIN antes.');
+  }
+  const outcome = await new UserRepository(env.CORE_DB).deleteAccount(identity.uid, env.QUESTION_IMAGES);
+  if (outcome === 'NOT_FOUND') throw new ApiError(404, 'PROFILE_NOT_FOUND', 'Conta não encontrada.');
+  if (outcome === 'IS_ADMIN') {
+    throw new ApiError(409, 'ADMIN_ACCOUNT', 'Contas de administração não podem ser excluídas por aqui. Remova o papel de ADMIN antes.');
+  }
+  if (outcome === 'PLAYING') throw new ApiError(409, 'PLAYER_BUSY', 'Termine a partida ou o desafio em andamento antes de excluir a conta.');
+  return json({ deleted: true });
+}
+
 async function profileAvatarRoute(request: Request, env: Env): Promise<Response> {
   const identity = await requireUser(request, env);
   const repository = new UserRepository(env.CORE_DB);
@@ -791,7 +818,51 @@ async function adminThemesRoute(request: Request, env: Env, url: URL): Promise<R
   await requireAdmin(identity, env);
   if (request.method !== 'GET') throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Método não permitido.');
   const search = (url.searchParams.get('search') ?? '').trim().slice(0, 80);
-  return json({ themes: await new ThemeRepository(env.CORE_DB).listThemesForAdmin(search) });
+  const hidden = url.searchParams.get('hidden') === '1';
+  return json({ themes: await new ThemeRepository(env.CORE_DB).listThemesForAdmin(search, 500, { hidden }) });
+}
+
+/** Move o tema para outra categoria ativa e visível (só ADMIN). */
+async function adminThemeCategoryRoute(request: Request, env: Env, themeId: string): Promise<Response> {
+  if (request.method !== 'POST') throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Método não permitido.');
+  const identity = await requireUser(request, env);
+  await requireAdmin(identity, env);
+  const profile = await new UserRepository(env.CORE_DB).findByFirebaseUid(identity.uid);
+  if (profile === null) throw new ApiError(409, 'PROFILE_REQUIRED', 'Conclua seu perfil.');
+  const parsed = themeCategoryMoveSchema.safeParse(await readJson(request));
+  if (!parsed.success) throw validationError(parsed.error);
+  const theme = await new ThemeRepository(env.CORE_DB).moveThemeToCategory({ ...parsed.data, themeId });
+  await auditLog(env, profile.userId, 'MOVE_THEME_CATEGORY', 'theme', themeId, { categoryId: theme.categoryId, name: theme.name });
+  return json({ theme });
+}
+
+/**
+ * Ocultar/desocultar tema ou categoria (só ADMIN). Oculto some de todas as
+ * listas e opções e deixa de aceitar partida; volta pela aba Ocultos.
+ */
+async function adminVisibilityRoute(
+  request: Request,
+  env: Env,
+  kind: 'category' | 'theme',
+  id: string,
+): Promise<Response> {
+  if (request.method !== 'POST') throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Método não permitido.');
+  const identity = await requireUser(request, env);
+  await requireAdmin(identity, env);
+  const profile = await new UserRepository(env.CORE_DB).findByFirebaseUid(identity.uid);
+  if (profile === null) throw new ApiError(409, 'PROFILE_REQUIRED', 'Conclua seu perfil.');
+  const parsed = visibilitySchema.safeParse(await readJson(request));
+  if (!parsed.success) throw validationError(parsed.error);
+  const repository = new ThemeRepository(env.CORE_DB);
+  const action = parsed.data.hidden ? 'HIDE' : 'UNHIDE';
+  if (kind === 'theme') {
+    const theme = await repository.setThemeHidden({ hidden: parsed.data.hidden, themeId: id });
+    await auditLog(env, profile.userId, `${action}_THEME`, 'theme', id, { name: theme.name });
+    return json({ theme });
+  }
+  const category = await repository.setCategoryHidden({ hidden: parsed.data.hidden, id });
+  await auditLog(env, profile.userId, `${action}_CATEGORY`, 'category', id, { name: category.name });
+  return json({ category });
 }
 
 async function auditLog(
@@ -808,13 +879,15 @@ async function auditLog(
   ).bind(crypto.randomUUID(), actorUserId, action, entityType, entityId, JSON.stringify(metadata)).run();
 }
 
-async function adminCategoriesRoute(request: Request, env: Env): Promise<Response> {
+async function adminCategoriesRoute(request: Request, env: Env, url: URL): Promise<Response> {
   const identity = await requireUser(request, env);
   await requireAdmin(identity, env);
   const profile = await new UserRepository(env.CORE_DB).findByFirebaseUid(identity.uid);
   if (profile === null) throw new ApiError(409, 'PROFILE_REQUIRED', 'Conclua seu perfil.');
   const themes = new ThemeRepository(env.CORE_DB);
-  if (request.method === 'GET') return json({ categories: await themes.listCategoriesForAdmin() });
+  if (request.method === 'GET') {
+    return json({ categories: await themes.listCategoriesForAdmin({ hidden: url.searchParams.get('hidden') === '1' }) });
+  }
   if (request.method === 'POST') {
     const parsed = categoryCreationSchema.safeParse(await readJson(request));
     if (!parsed.success) throw validationError(parsed.error);
@@ -1455,7 +1528,8 @@ async function rematchTarget(env: Env, userId: string, matchId: string, nowMs = 
        FROM matches m
        JOIN match_players me ON me.match_id = m.id AND me.user_id = ?2
        JOIN match_players them ON them.match_id = m.id AND them.user_id <> me.user_id
-       JOIN themes t ON t.id = m.theme_id AND t.status = 'ACTIVE'
+       JOIN themes t ON t.id = m.theme_id
+       JOIN categories c ON c.id = t.category_id AND ${PLAYABLE_THEME_SQL}
       WHERE m.id = ?1 AND m.status = 'FINISHED' AND m.kind IN ('MATCHMAKING', 'DIRECT_LIVE')`,
   ).bind(matchId, userId).first<{
     finished_at: string | null;
@@ -1630,7 +1704,8 @@ async function challengeRoute(request: Request, env: Env, url: URL, context: Exe
     // Libera uma reserva terminal antes de consultar o índice único da dupla.
     await reconcileChallengeLifecycle(env, context, challenges, profile.userId);
     const theme = await env.CORE_DB.prepare(
-      "SELECT id FROM themes WHERE slug = ?1 COLLATE NOCASE AND status = 'ACTIVE'",
+      `SELECT t.id FROM themes t JOIN categories c ON c.id = t.category_id
+        WHERE t.slug = ?1 COLLATE NOCASE AND ${PLAYABLE_THEME_SQL}`,
     ).bind(parsed.data.themeSlug).first<{ id: string }>();
     if (theme === null) throw new ApiError(404, 'THEME_UNAVAILABLE', 'Este tema não está disponível.');
     const created = await challenges.create({
@@ -2095,6 +2170,7 @@ async function apiRoute(request: Request, env: Env, url: URL, context: Execution
   if (url.pathname === '/api/profile/frame') return profileFrameRoute(request, env);
   if (url.pathname === '/api/profile/streak-reminder') return profileStreakReminderRoute(request, env);
   if (url.pathname === '/api/profile/avatar') return profileAvatarRoute(request, env);
+  if (url.pathname === '/api/profile/account') return profileAccountRoute(request, env);
   if (url.pathname === '/api/social' || url.pathname.startsWith('/api/social/')) {
     return socialRoute(request, env, url, context);
   }
@@ -2113,7 +2189,7 @@ async function apiRoute(request: Request, env: Env, url: URL, context: Execution
     return themeSuggestionsRoute(request, env, url);
   }
   if (url.pathname === '/api/admin/reports') return adminReportsRoute(request, env, url);
-  if (url.pathname === '/api/admin/categories') return adminCategoriesRoute(request, env);
+  if (url.pathname === '/api/admin/categories') return adminCategoriesRoute(request, env, url);
   if (url.pathname === '/api/admin/users') return adminUsersRoute(request, env, url);
   if (url.pathname === '/api/admin/audit-logs') return adminAuditLogRoute(request, env, url);
 
@@ -2123,6 +2199,17 @@ async function apiRoute(request: Request, env: Env, url: URL, context: Execution
   const adminReportResolveMatch = /^\/api\/admin\/reports\/([a-f0-9-]{36})\/resolve$/i.exec(url.pathname);
   if (adminReportResolveMatch?.[1] !== undefined) {
     return adminReportResolveRoute(request, env, adminReportResolveMatch[1]);
+  }
+
+  const adminThemeCategoryMatch = /^\/api\/admin\/themes\/([a-z0-9_-]{1,128})\/category$/i.exec(url.pathname);
+  if (adminThemeCategoryMatch?.[1] !== undefined) {
+    return adminThemeCategoryRoute(request, env, decodeURIComponent(adminThemeCategoryMatch[1]));
+  }
+
+  const adminVisibilityMatch = /^\/api\/admin\/(categories|themes)\/([a-z0-9_-]{1,128})\/visibility$/i.exec(url.pathname);
+  if (adminVisibilityMatch?.[1] !== undefined && adminVisibilityMatch[2] !== undefined) {
+    const kind = adminVisibilityMatch[1].toLowerCase() === 'themes' ? 'theme' : 'category';
+    return adminVisibilityRoute(request, env, kind, decodeURIComponent(adminVisibilityMatch[2]));
   }
 
   const adminCategoryMatch = /^\/api\/admin\/categories\/([a-z0-9_-]{1,128})$/i.exec(url.pathname);
@@ -2267,6 +2354,8 @@ async function apiRoute(request: Request, env: Env, url: URL, context: Execution
 async function handle(request: Request, env: Env, context: ExecutionContext): Promise<Response> {
   const url = new URL(request.url);
   if (url.pathname.startsWith('/api/')) {
+    const limited = await rateLimitedResponse(request, env, url);
+    if (limited !== null) return applyCors(limited, request, env.ALLOWED_ORIGINS);
     try {
       return applyCors(await apiRoute(request, env, url, context), request, env.ALLOWED_ORIGINS);
     } catch (error) {
@@ -2304,6 +2393,8 @@ export default {
     // Páginas da SPA (inclusive /temas/* com prévia de link) mantêm os mesmos
     // cabeçalhos dos arquivos estáticos; a CSP estrita é da API e bloquearia
     // o login do Google e as prévias locais de imagem se valesse no documento.
-    return new URL(request.url).pathname.startsWith('/api/') ? withSecurityHeaders(response) : response;
+    return new URL(request.url).pathname.startsWith('/api/')
+      ? withSecurityHeaders(response)
+      : withDocumentSecurityHeaders(response);
   },
 } satisfies ExportedHandler<Env>;

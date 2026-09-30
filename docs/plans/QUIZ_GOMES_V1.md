@@ -1591,6 +1591,19 @@ Pedidos do proprietário nesta rodada: limpeza a cada 15 dias (admin 6 meses), X
 - Teste real no Chromium com o código do app e os validadores do Worker: foto 4000×3000, retrato, panorâmica 3:1 e 4:1, 80×80, PNG/WebP transparentes, tipo vazio e ruído puro (pior caso de compressão). Toda saída foi aceita pelo servidor; 4:1 é recusada na pergunta com mensagem de recorte.
 - Não verificado em aparelho real: HEIC direto em navegador que não seja Safari (a leitura falha e pede JPEG; o iPhone costuma converter sozinho ao escolher da galeria).
 
+### 2026-09-30 — ocultar catálogo, seletor de tema e auditoria de segurança
+
+- Ocultar (decisão do proprietário): tema ou categoria oculto some de todas as listas e opções do jogador e do ADMIN, não aceita fila, desafio, revanche nem prévia de link, e só aparece na aba "Ocultos" da Moderação de temas, onde volta com "Mostrar de novo". Categoria oculta leva junto todos os temas dela. Nada é apagado. Migration Core 0021 (`hidden_at` opcional em `themes` e `categories`); regra única `PLAYABLE_THEME_SQL` aplicada em catálogo, página do tema, fila, desafio, revanche, prévia, aviso de amigo na fila e recordes do perfil (também passou a exigir categoria ativa, antes nem toda rota checava).
+- Mover tema de categoria: campo "Categoria" + "Mover" em cada tema da Moderação (rota própria com CAS por revisão; ranking, perguntas e Conhecimento são por tema e seguem intactos). Não aceita categoria desativada ou oculta.
+- Seletor de tema com busca: substitui o `<select>` que crescia com o catálogo (Arte dos temas e Perguntas por tema). Filtra por nome ou categoria sem diferenciar acento, agrupa por categoria, altura fixa com rolagem, teclado (↑/↓/Enter/Esc) e ARIA de combobox.
+- Campo de arquivo alinhado (botão no estilo do app). Diálogos nativos perdiam a camada escura e ganhavam borda preta do navegador: corrigido para todos.
+- Segurança:
+  - Freio por IP (binding de rate limiting do Workers): 600 chamadas/min na API e 180 escritas/min; 429 com `Retry-After`. Sem IP (teste/local), sem binding ou com o limitador fora do ar, não bloqueia. A importação em partes do admin espera e repete a mesma parte (mesma chave de idempotência). Decisão pendente: confirmar no painel da Cloudflare que o binding segue sem custo no plano gratuito; e, para proteger a cota diária de requisições (que conta mesmo as bloqueadas pelo Worker), criar a regra gratuita de rate limiting do WAF no painel.
+  - Cabeçalhos nas páginas do app (`_headers` e páginas montadas pelo Worker): `frame-ancestors 'none'`/`X-Frame-Options: DENY` contra clickjacking, `nosniff`, `object-src 'none'`, `base-uri 'self'`, `Referrer-Policy`, `Permissions-Policy` e HSTS. CSP de script completa fica só na API para não arriscar o login do Google.
+  - Excluir conta (LGPD): Perfil → Privacidade e Segurança, exige digitar EXCLUIR. Apaga nome, foto, código, amizades, pedidos, bloqueios, silenciamentos, aparelhos de notificação, avisos, rankings e recordes; partidas e desafios jogados ficam como "Jogador removido"; desafios pendentes são cancelados; o vínculo com o Google é desfeito (entrar de novo cria conta nova). Recusa ADMIN e quem está jogando.
+- Pendente do proprietário: política de privacidade e termos (precisam de nome do responsável e canal de contato) antes de qualquer assinatura.
+- Validação: lint, typecheck, 426 unitários, 237 web, 251 Worker, validador de migrations (Core 0021 com upgrade 0020→0021), build e dry-run; prévias em celular e computador, claro e escuro.
+
 ## Critério de saída desta execução
 
 - Milestones 8 e 8.5 aprovados fisicamente e congelados;

@@ -19,6 +19,7 @@ describe('onboarding', () => {
   function authWith(overrides: Partial<ReturnType<typeof useAuth>>): ReturnType<typeof useAuth> {
     return {
       createProfile: vi.fn().mockResolvedValue(undefined),
+      deleteAccount: vi.fn().mockResolvedValue(undefined),
       error: null,
       firebaseUser: { displayName: 'Matheus', uid: 'firebase-fixture-uid' } as User,
       getToken: vi.fn().mockResolvedValue('token'),

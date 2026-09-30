@@ -273,6 +273,71 @@ export class UserRepository {
     return this.findByFirebaseUid(uid);
   }
 
+  /**
+   * Exclusão de conta a pedido da pessoa (LGPD, art. 18). Apaga o que
+   * identifica ou contata: foto, nome, código público, amizades, pedidos,
+   * bloqueios, silenciamentos, aparelhos de notificação, avisos e posição nos
+   * rankings. Partidas, placares e desafios já jogados ficam só com o nome
+   * "Jogador removido", para o histórico do adversário continuar correto. O
+   * vínculo com o Google é desfeito: entrar de novo cria uma conta nova.
+   * Recusa ADMIN (o papel precisa ser removido antes) e quem está jogando.
+   */
+  async deleteAccount(uid: string, bucket: R2Bucket): Promise<'DELETED' | 'IS_ADMIN' | 'NOT_FOUND' | 'PLAYING'> {
+    const user = await this.db.prepare('SELECT id FROM users WHERE firebase_uid = ?1 AND disabled_at IS NULL')
+      .bind(uid).first<{ id: string }>();
+    if (user === null) return 'NOT_FOUND';
+    const admin = await this.db.prepare("SELECT 1 AS found FROM user_roles WHERE user_id = ?1 AND role = 'ADMIN'")
+      .bind(user.id).first();
+    if (admin !== null) return 'IS_ADMIN';
+    const playing = await this.db.prepare(
+      `SELECT 1 AS found FROM active_match_players WHERE user_id = ?1
+       UNION ALL
+       SELECT 1 FROM challenges
+        WHERE (first_player_user_id = ?1 OR second_player_user_id = ?1)
+          AND status IN ('PREPARING', 'ACTIVE', 'FIRST_PLAYER_ACTIVE', 'SECOND_PLAYER_ACTIVE')
+       LIMIT 1`,
+    ).bind(user.id).first();
+    if (playing !== null) return 'PLAYING';
+
+    const avatar = await this.db.prepare('SELECT object_key FROM user_custom_avatars WHERE user_id = ?1')
+      .bind(user.id).first<{ object_key: string | null }>();
+    const now = new Date().toISOString();
+    const id = user.id;
+    const statements = [
+      // Desafios que ainda esperam alguém são cancelados; os jogados ficam.
+      this.db.prepare(
+        `UPDATE challenges SET status = 'CANCELLED', updated_at = ?2, revision = revision + 1
+          WHERE (first_player_user_id = ?1 OR second_player_user_id = ?1)
+            AND status IN ('PENDING_DIRECT', 'WAITING_FOR_SECOND')`,
+      ).bind(id, now),
+      this.db.prepare('DELETE FROM friendships WHERE user_low_id = ?1 OR user_high_id = ?1').bind(id),
+      this.db.prepare('DELETE FROM friend_requests WHERE sender_user_id = ?1 OR recipient_user_id = ?1').bind(id),
+      this.db.prepare('DELETE FROM friend_request_pair_state WHERE requester_user_id = ?1 OR target_user_id = ?1').bind(id),
+      this.db.prepare('DELETE FROM user_blocks WHERE blocker_user_id = ?1 OR blocked_user_id = ?1').bind(id),
+      this.db.prepare('DELETE FROM friendship_mutes WHERE muter_user_id = ?1 OR muted_user_id = ?1').bind(id),
+      this.db.prepare('DELETE FROM friend_queue_alerts WHERE recipient_user_id = ?1 OR sender_user_id = ?1').bind(id),
+      this.db.prepare('DELETE FROM friend_queue_alert_preferences WHERE user_id = ?1').bind(id),
+      this.db.prepare('DELETE FROM push_installations WHERE user_id = ?1').bind(id),
+      this.db.prepare('DELETE FROM streak_reminder_preferences WHERE user_id = ?1').bind(id),
+      this.db.prepare('DELETE FROM theme_rankings WHERE user_id = ?1').bind(id),
+      this.db.prepare('DELETE FROM theme_personal_records WHERE user_id = ?1').bind(id),
+      this.db.prepare('DELETE FROM user_custom_avatars WHERE user_id = ?1').bind(id),
+      this.db.prepare(
+        `UPDATE user_profiles
+            SET display_name = 'Jogador removido', photo_url = NULL, public_id = ?2,
+                equipped_frame_id = NULL, equipped_title_id = NULL,
+                profile_version = profile_version + 1, updated_at = CURRENT_TIMESTAMP
+          WHERE user_id = ?1`,
+      ).bind(id, `#DEL${crypto.randomUUID().replaceAll('-', '').slice(0, 12).toUpperCase()}`),
+      this.db.prepare(
+        `UPDATE users SET firebase_uid = ?2, disabled_at = CURRENT_TIMESTAMP WHERE id = ?1`,
+      ).bind(id, `deleted:${id}`),
+    ];
+    await this.db.batch(statements);
+    if (avatar?.object_key != null) await bucket.delete(avatar.object_key).catch(() => undefined);
+    return 'DELETED';
+  }
+
   async removeCustomAvatar(uid: string, bucket: R2Bucket): Promise<UserProfileRecord | null> {
     const current = await this.db.prepare(
       `SELECT a.object_key FROM user_custom_avatars a

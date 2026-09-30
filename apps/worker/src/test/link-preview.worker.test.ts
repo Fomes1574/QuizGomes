@@ -43,6 +43,20 @@ describe('prévia de link do tema', () => {
     expect(response!.headers.get('ETag')).toBeNull();
   });
 
+  it('tema oculto não ganha prévia', async () => {
+    const prefix = `lph-${crypto.randomUUID().slice(0, 6)}`;
+    await env.CORE_DB.batch([
+      env.CORE_DB.prepare('INSERT INTO categories (id, slug, name, sort_order) VALUES (?1, ?1, ?2, 999)').bind(`${prefix}-cat`, `Cat ${prefix}`),
+      env.CORE_DB.prepare(
+        `INSERT INTO themes (id, category_id, slug, name, description, status, origin, question_shard_id, hidden_at)
+         VALUES (?1, ?2, ?1, ?3, 'Tema oculto sintético.', 'ACTIVE', 'OFFICIAL', 'questions-01', CURRENT_TIMESTAMP)`,
+      ).bind(prefix, `${prefix}-cat`, `Oculto ${prefix}`),
+    ]);
+    const url = new URL(`https://quiz.test/temas/${prefix}`);
+    const response = await themeLinkPreview(new Request(url), withShell(), url);
+    expect(await response!.text()).toContain('<title>QUIZ GOMES</title>');
+  });
+
   it('tema inexistente ou rota que não é de tema devolvem a página intacta', async () => {
     const missing = new URL('https://quiz.test/temas/nao-existe-mesmo');
     const response = await themeLinkPreview(new Request(missing), withShell(), missing);

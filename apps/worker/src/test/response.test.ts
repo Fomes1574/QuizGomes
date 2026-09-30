@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { corsHeaders, isRequestOriginAllowed } from '../http/response.js';
+import { corsHeaders, isRequestOriginAllowed, withDocumentSecurityHeaders } from '../http/response.js';
 
 describe('política de origem da API', () => {
   it('aceita automaticamente a própria origem do Worker', () => {
@@ -36,5 +36,18 @@ describe('política de origem da API', () => {
 
     expect(isRequestOriginAllowed(request)).toBe(true);
     expect(corsHeaders(request).has('Access-Control-Allow-Origin')).toBe(false);
+  });
+});
+
+describe('cabeçalhos das páginas do app', () => {
+  it('impedem moldura de outro site sem apagar o que a página já trazia', () => {
+    const page = new Response('<!doctype html>', {
+      headers: { 'Cache-Control': 'no-cache', 'Content-Type': 'text/html; charset=utf-8', 'X-Content-Type-Options': 'nosniff' },
+    });
+    const protectedPage = withDocumentSecurityHeaders(page);
+    expect(protectedPage.headers.get('X-Frame-Options')).toBe('DENY');
+    expect(protectedPage.headers.get('Content-Security-Policy')).toContain("frame-ancestors 'none'");
+    expect(protectedPage.headers.get('Cache-Control')).toBe('no-cache');
+    expect(protectedPage.headers.get('Content-Type')).toBe('text/html; charset=utf-8');
   });
 });

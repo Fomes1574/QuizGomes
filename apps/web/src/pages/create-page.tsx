@@ -2,6 +2,7 @@ import '../styles/admin.css';
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import type { ReportStatus, ThemeArtwork } from '@quiz-gomes/domain';
 import { Button } from '../components/button.js';
+import { ThemePicker } from '../components/theme-picker.js';
 import { ThemeArtwork as ThemeArtworkPreview } from '../components/theme-artwork.js';
 import { useAuth } from '../features/auth-context.js';
 import { apiRequest, apiUpload } from '../lib/api.js';
@@ -221,7 +222,6 @@ function AdminThemeArtworkManager({
   refreshKey: number;
 }) {
   const [themes, setThemes] = useState<AdminThemeSummary[]>([]);
-  const [search, setSearch] = useState('');
   const [selectedId, setSelectedId] = useState('');
   const [draft, setDraft] = useState<ThemeArtworkDraft>({ kind: 'NONE' });
   const [loading, setLoading] = useState(true);
@@ -239,11 +239,10 @@ function AdminThemeArtworkManager({
     const delay = window.setTimeout(() => {
       setLoading(true);
       setMessage(null);
-      const params = new URLSearchParams();
-      if (search.trim() !== '') params.set('search', search.trim());
+      // Catálogo inteiro (sem ocultos) uma vez: a busca acontece no seletor.
       void getToken().then((token) => {
         if (token === null) throw new Error('Sua sessão expirou. Entre novamente.');
-        return apiRequest<{ themes: AdminThemeSummary[] }>(`/api/admin/themes?${params}`, {
+        return apiRequest<{ themes: AdminThemeSummary[] }>('/api/admin/themes', {
           getToken,
           signal: controller.signal,
           token,
@@ -265,7 +264,7 @@ function AdminThemeArtworkManager({
       controller.abort();
       window.clearTimeout(delay);
     };
-  }, [getToken, refreshKey, search]);
+  }, [getToken, refreshKey]);
 
   function selectTheme(themeId: string) {
     setSelectedId(themeId);
@@ -285,6 +284,7 @@ function AdminThemeArtworkManager({
       const withStatus: AdminThemeSummary = {
         ...updated,
         createdByUserId: selected.createdByUserId,
+        hidden: selected.hidden ?? false,
         origin: selected.origin,
         rejectionNote: selected.rejectionNote,
         revision: selected.revision,
@@ -304,15 +304,19 @@ function AdminThemeArtworkManager({
     <section className="admin-theme-artwork" aria-labelledby="admin-theme-artwork-title">
       <div className="section-heading"><div><span className="eyebrow">Administração</span><h2 id="admin-theme-artwork-title">Arte dos temas</h2></div></div>
       <p>Escolha um tema existente e defina uma única apresentação ativa. A imagem anterior é substituída.</p>
-      <label className="search-field admin-theme-artwork__search">
-        <span className="sr-only">Buscar tema para editar a arte</span>
-        <input onChange={(event) => setSearch(event.target.value)} placeholder="Buscar tema para editar" type="search" value={search} />
-      </label>
       {loading ? <p className="inline-notice">Carregando temas…</p> : null}
       {!loading && themes.length === 0 ? <p className="inline-notice">Nenhum tema disponível.</p> : null}
       {themes.length > 0 ? (
         <>
-          <label className="field"><span>Tema</span><select disabled={loading} onChange={(event) => selectTheme(event.target.value)} value={selectedId}>{themes.map((theme) => <option key={theme.id} value={theme.id}>{theme.name} · {themeStatusLabel[theme.status]}</option>)}</select></label>
+          <ThemePicker
+            disabled={loading}
+            onChange={selectTheme}
+            options={themes.map((theme) => ({
+              categoryName: theme.categoryName, id: theme.id, name: theme.name,
+              ...(theme.status === 'ACTIVE' ? {} : { note: themeStatusLabel[theme.status] }),
+            }))}
+            value={selectedId}
+          />
           {selected !== null ? (
             <div className="admin-theme-artwork__selected">
               <ThemeArtworkPreview artwork={selected.artwork} decorative={false} eager name={selected.name} />

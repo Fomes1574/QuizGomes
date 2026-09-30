@@ -69,6 +69,97 @@ describe('AdminThemeModerationPanel', () => {
   });
 });
 
+/** Abre o seletor de tema, filtra pelo nome e escolhe a opção. */
+async function chooseTheme(name: string) {
+  const input = await screen.findByRole('combobox', { name: 'Tema' });
+  fireEvent.focus(input);
+  fireEvent.change(input, { target: { value: name } });
+  fireEvent.click(await screen.findByRole('option', { name }));
+}
+
+describe('Ocultar e mover no catálogo', () => {
+  beforeEach(() => { mocks.apiRequest.mockReset(); });
+  afterEach(cleanup);
+
+  const activeTheme = {
+    activeQuestionCount: 9, artwork: { kind: 'NONE' as const, version: 0 }, categoryId: 'cat-1', categoryName: 'Jogos',
+    createdByUserId: null, coverImageKey: null, description: 'Um tema ativo.', id: 'theme-9', name: 'Tema Ativo',
+    origin: 'OFFICIAL' as const, rejectionNote: null, revision: 4, slug: 'tema-ativo', status: 'ACTIVE' as const,
+  };
+  const categories = [
+    { id: 'cat-1', name: 'Jogos', revision: 1, slug: 'jogos', sortOrder: 0, status: 'ACTIVE' },
+    { id: 'cat-2', name: 'Escola', revision: 1, slug: 'escola', sortOrder: 1, status: 'ACTIVE' },
+  ];
+
+  it('oculta tema com confirmação e mostra de novo pela aba Ocultos', async () => {
+    let hidden = false;
+    mocks.apiRequest.mockImplementation((path: string, options?: { body?: { hidden?: boolean }; method?: string }) => {
+      if (path === '/api/admin/themes') return Promise.resolve({ themes: hidden ? [] : [activeTheme] });
+      if (path === '/api/admin/themes?hidden=1') return Promise.resolve({ themes: hidden ? [{ ...activeTheme, hidden: true }] : [] });
+      if (path === '/api/admin/categories') return Promise.resolve({ categories });
+      if (path === '/api/admin/categories?hidden=1') return Promise.resolve({ categories: [] });
+      if (path === '/api/admin/themes/theme-9/visibility' && options?.method === 'POST') {
+        hidden = options.body?.hidden === true;
+        return Promise.resolve({ theme: activeTheme });
+      }
+      return Promise.resolve({ ok: true });
+    });
+    render(<AdminThemeModerationPanel getToken={mocks.getToken} />);
+    fireEvent.click(await screen.findByRole('tab', { name: 'Ativo' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Ocultar' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Ocultar tema' }));
+    await waitFor(() => expect(mocks.apiRequest).toHaveBeenCalledWith('/api/admin/themes/theme-9/visibility', expect.objectContaining({
+      body: { hidden: true }, method: 'POST',
+    })));
+    await waitFor(() => expect(screen.queryByText('Tema Ativo')).not.toBeInTheDocument());
+
+    fireEvent.click(await screen.findByRole('tab', { name: 'Ocultos (1)' }));
+    expect(await screen.findByText('Tema Ativo')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Mostrar de novo' }));
+    await waitFor(() => expect(mocks.apiRequest).toHaveBeenCalledWith('/api/admin/themes/theme-9/visibility', expect.objectContaining({
+      body: { hidden: false }, method: 'POST',
+    })));
+  });
+
+  it('move o tema para outra categoria com a revisão esperada', async () => {
+    mocks.apiRequest.mockImplementation((path: string) => {
+      if (path === '/api/admin/themes') return Promise.resolve({ themes: [activeTheme] });
+      if (path === '/api/admin/themes?hidden=1') return Promise.resolve({ themes: [] });
+      if (path === '/api/admin/categories') return Promise.resolve({ categories });
+      if (path === '/api/admin/categories?hidden=1') return Promise.resolve({ categories: [] });
+      if (path === '/api/admin/themes/theme-9/category') {
+        return Promise.resolve({ theme: { ...activeTheme, categoryId: 'cat-2', categoryName: 'Escola', revision: 5 } });
+      }
+      return Promise.resolve({ ok: true });
+    });
+    render(<AdminThemeModerationPanel getToken={mocks.getToken} />);
+    fireEvent.click(await screen.findByRole('tab', { name: 'Ativo' }));
+    const select = await screen.findByRole('combobox', { name: 'Categoria' });
+    expect(screen.getByRole('button', { name: 'Mover' })).toBeDisabled();
+    fireEvent.change(select, { target: { value: 'cat-2' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Mover' }));
+    await waitFor(() => expect(mocks.apiRequest).toHaveBeenCalledWith('/api/admin/themes/theme-9/category', expect.objectContaining({
+      body: { categoryId: 'cat-2', expectedRevision: 4 }, method: 'POST',
+    })));
+    expect(await screen.findByText('“Tema Ativo” agora está em Escola.')).toBeInTheDocument();
+  });
+
+  it('oculta categoria com confirmação e tira da lista', async () => {
+    mocks.apiRequest.mockImplementation((path: string) => {
+      if (path === '/api/admin/categories') return Promise.resolve({ categories });
+      return Promise.resolve({ ok: true });
+    });
+    render(<AdminCategoriesPanel getToken={mocks.getToken} />);
+    expect(await screen.findByDisplayValue('Escola')).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole('button', { name: 'Ocultar' })[1]!);
+    fireEvent.click(await screen.findByRole('button', { name: 'Ocultar categoria' }));
+    await waitFor(() => expect(mocks.apiRequest).toHaveBeenCalledWith('/api/admin/categories/cat-2/visibility', expect.objectContaining({
+      body: { hidden: true }, method: 'POST',
+    })));
+    await waitFor(() => expect(screen.queryByDisplayValue('Escola')).not.toBeInTheDocument());
+  });
+});
+
 describe('AdminQuestionEditorialPanel', () => {
   beforeEach(() => { mocks.apiRequest.mockReset(); mocks.apiUpload.mockReset(); });
   afterEach(cleanup);
@@ -86,16 +177,14 @@ describe('AdminQuestionEditorialPanel', () => {
 
   it('busca tema, lista perguntas em revisão e aprova', async () => {
     mocks.apiRequest.mockImplementation((path: string) => {
-      if (path.startsWith('/api/admin/themes?')) return Promise.resolve({ themes: [theme] });
+      if (path.startsWith('/api/admin/themes')) return Promise.resolve({ themes: [theme] });
       if (path.startsWith('/api/editorial/themes/theme-1/questions')) return Promise.resolve({ nextCursor: null, questions: [question] });
       if (path === '/api/editorial/questions/question-1/approve') return Promise.resolve({ ok: true });
       return Promise.resolve({ ok: true });
     });
     render(<AdminQuestionEditorialPanel getToken={mocks.getToken} />);
 
-    fireEvent.change(screen.getByPlaceholderText('Buscar tema'), { target: { value: 'Tema' } });
-    await screen.findByRole('option', { name: 'Tema Um' });
-    fireEvent.change(screen.getByRole('combobox', { name: 'Tema' }), { target: { value: 'theme-1' } });
+    await chooseTheme('Tema Um');
 
     expect(await screen.findByText('Pergunta em revisão?')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Aprovar' }));
@@ -106,16 +195,14 @@ describe('AdminQuestionEditorialPanel', () => {
 
   it('seleciona a página revisada e aprova o lote por uma única rota', async () => {
     mocks.apiRequest.mockImplementation((path: string) => {
-      if (path.startsWith('/api/admin/themes?')) return Promise.resolve({ themes: [theme] });
+      if (path.startsWith('/api/admin/themes')) return Promise.resolve({ themes: [theme] });
       if (path.startsWith('/api/editorial/themes/theme-1/questions?')) return Promise.resolve({ nextCursor: null, questions: [question] });
       if (path === '/api/editorial/themes/theme-1/questions/approve') return Promise.resolve({ approvedQuestionIds: ['question-1'], failed: [] });
       return Promise.resolve({ ok: true });
     });
     render(<AdminQuestionEditorialPanel getToken={mocks.getToken} />);
 
-    fireEvent.change(screen.getByPlaceholderText('Buscar tema'), { target: { value: 'Tema' } });
-    await screen.findByRole('option', { name: 'Tema Um' });
-    fireEvent.change(screen.getByRole('combobox', { name: 'Tema' }), { target: { value: 'theme-1' } });
+    await chooseTheme('Tema Um');
     await screen.findByText('Pergunta em revisão?');
     fireEvent.click(screen.getByLabelText('Selecionar todas as perguntas desta página'));
     fireEvent.click(screen.getByRole('button', { name: 'Aprovar selecionadas (1)' }));
@@ -130,16 +217,14 @@ describe('AdminQuestionEditorialPanel', () => {
 
   it('abre uma pergunta em revisão para correção e salva o mesmo rascunho', async () => {
     mocks.apiRequest.mockImplementation((path: string) => {
-      if (path.startsWith('/api/admin/themes?')) return Promise.resolve({ themes: [theme] });
+      if (path.startsWith('/api/admin/themes')) return Promise.resolve({ themes: [theme] });
       if (path.startsWith('/api/editorial/themes/theme-1/questions?')) return Promise.resolve({ nextCursor: null, questions: [question] });
       if (path === '/api/editorial/questions/question-1') return Promise.resolve({ question: { ...question, prompt: 'Pergunta corrigida?' } });
       return Promise.resolve({ ok: true });
     });
     render(<AdminQuestionEditorialPanel getToken={mocks.getToken} />);
 
-    fireEvent.change(screen.getByPlaceholderText('Buscar tema'), { target: { value: 'Tema' } });
-    await screen.findByRole('option', { name: 'Tema Um' });
-    fireEvent.change(screen.getByRole('combobox', { name: 'Tema' }), { target: { value: 'theme-1' } });
+    await chooseTheme('Tema Um');
     await screen.findByText('Pergunta em revisão?');
     fireEvent.click(screen.getByRole('button', { name: 'Revisar e editar' }));
     fireEvent.change(screen.getByLabelText('Enunciado da revisão'), { target: { value: 'Pergunta corrigida?' } });
@@ -153,16 +238,14 @@ describe('AdminQuestionEditorialPanel', () => {
 
   it('importa CSV para o tema selecionado com chave de idempotência', async () => {
     mocks.apiRequest.mockImplementation((path: string) => {
-      if (path.startsWith('/api/admin/themes?')) return Promise.resolve({ themes: [theme] });
+      if (path.startsWith('/api/admin/themes')) return Promise.resolve({ themes: [theme] });
       if (path.startsWith('/api/editorial/themes/theme-1/questions')) return Promise.resolve({ nextCursor: null, questions: [] });
       return Promise.resolve({ ok: true });
     });
     mocks.apiUpload.mockResolvedValue({ imported: 1, status: 'APPLIED' });
     render(<AdminQuestionEditorialPanel getToken={mocks.getToken} />);
 
-    fireEvent.change(screen.getByPlaceholderText('Buscar tema'), { target: { value: 'Tema' } });
-    await screen.findByRole('option', { name: 'Tema Um' });
-    fireEvent.change(screen.getByRole('combobox', { name: 'Tema' }), { target: { value: 'theme-1' } });
+    await chooseTheme('Tema Um');
     await screen.findByText('Importar perguntas');
 
     const file = new File(['difficulty,prompt,optionA,optionB,optionC,optionD,correctOption\nEASY,Pergunta?,A,B,C,D,0'], 'lote.csv', { type: 'text/csv' });
@@ -178,7 +261,7 @@ describe('AdminQuestionEditorialPanel', () => {
 
   it('arquivo grande sobe em partes de 100, com chave por parte, e soma puladas', async () => {
     mocks.apiRequest.mockImplementation((path: string) => {
-      if (path.startsWith('/api/admin/themes?')) return Promise.resolve({ themes: [theme] });
+      if (path.startsWith('/api/admin/themes')) return Promise.resolve({ themes: [theme] });
       if (path.startsWith('/api/editorial/themes/theme-1/questions')) return Promise.resolve({ nextCursor: null, questions: [] });
       return Promise.resolve({ ok: true });
     });
@@ -187,9 +270,7 @@ describe('AdminQuestionEditorialPanel', () => {
       .mockResolvedValueOnce({ imported: 100, skipped: 0, status: 'APPLIED' })
       .mockResolvedValueOnce({ imported: 50, skipped: 0, status: 'APPLIED' });
     render(<AdminQuestionEditorialPanel getToken={mocks.getToken} />);
-    fireEvent.change(screen.getByPlaceholderText('Buscar tema'), { target: { value: 'Tema' } });
-    await screen.findByRole('option', { name: 'Tema Um' });
-    fireEvent.change(screen.getByRole('combobox', { name: 'Tema' }), { target: { value: 'theme-1' } });
+    await chooseTheme('Tema Um');
     await screen.findByText('Importar perguntas');
 
     const rows = Array.from({ length: 250 }, (_, index) => `"Pergunta ${index}?",A,B,C,D,0`);
@@ -208,7 +289,7 @@ describe('AdminQuestionEditorialPanel', () => {
     const pending = Array.from({ length: 60 }, (_, index) => ({ ...question, id: `q-${index}`, prompt: `Pendente ${index}?` }));
     const approveCalls: string[][] = [];
     mocks.apiRequest.mockImplementation((path: string, options?: { body?: { questionIds?: string[] } }) => {
-      if (path.startsWith('/api/admin/themes?')) return Promise.resolve({ themes: [theme] });
+      if (path.startsWith('/api/admin/themes')) return Promise.resolve({ themes: [theme] });
       if (path.endsWith('/questions/approve')) {
         const ids = options?.body?.questionIds ?? [];
         approveCalls.push(ids);
@@ -221,9 +302,7 @@ describe('AdminQuestionEditorialPanel', () => {
       return Promise.resolve({ ok: true });
     });
     render(<AdminQuestionEditorialPanel getToken={mocks.getToken} />);
-    fireEvent.change(screen.getByPlaceholderText('Buscar tema'), { target: { value: 'Tema' } });
-    await screen.findByRole('option', { name: 'Tema Um' });
-    fireEvent.change(screen.getByRole('combobox', { name: 'Tema' }), { target: { value: 'theme-1' } });
+    await chooseTheme('Tema Um');
     await screen.findByText('Pendente 0?');
 
     fireEvent.click(screen.getByRole('button', { name: 'Aprovar todas em revisão deste tema' }));

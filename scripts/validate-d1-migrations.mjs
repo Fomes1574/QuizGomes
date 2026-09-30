@@ -260,9 +260,10 @@ function assertFinalSchema(scenario) {
 
   const appliedMigrations = query(scenario, 'SELECT name FROM d1_migrations ORDER BY id');
   assert(
-    appliedMigrations.at(-1)?.name === '0020_retention_and_achievements.sql',
-    `${scenario.name}: 0020 de limpeza e conquistas não foi registrada como última migration`,
+    appliedMigrations.at(-1)?.name === '0021_hidden_themes_and_categories.sql',
+    `${scenario.name}: 0021 de temas e categorias ocultos não foi registrada como última migration`,
   );
+  assertHiddenCatalogSchema(scenario);
   assertAvatarObjectStorageSchema(scenario);
   assertRetentionAndAchievementsSchema(scenario);
   assertPersonalRecordsAndVotesSchema(scenario);
@@ -958,6 +959,14 @@ function assertRetentionAndAchievementsSchema(scenario) {
 }
 
 /** @param {MigrationScenario} scenario */
+function assertHiddenCatalogSchema(scenario) {
+  for (const table of ['themes', 'categories']) {
+    const hiddenColumn = query(scenario, `PRAGMA table_info(${table})`).find(({ name }) => name === 'hidden_at');
+    assert(hiddenColumn !== undefined, `${scenario.name}: ${table}.hidden_at ausente`);
+    assert(hiddenColumn.notnull === 0 && hiddenColumn.dflt_value === null, `${scenario.name}: ${table}.hidden_at precisa ser opcional e nascer vazio`);
+  }
+}
+
 function assertFriendQueueAlertsSchema(scenario) {
   const alertColumns = query(scenario, 'PRAGMA table_info(friend_queue_alerts)').map(({ name }) => name);
   assert(
@@ -1344,6 +1353,10 @@ try {
     migrationNames.includes('0020_retention_and_achievements.sql'),
     'Migration Core 0020 de limpeza e conquistas ausente',
   );
+  assert(
+    migrationNames.includes('0021_hidden_themes_and_categories.sql'),
+    'Migration Core 0021 de temas e categorias ocultos ausente',
+  );
   assert(questionMigrationNames.includes('0003_expand_synthetic_smoke_test.sql'), 'Migration Questions 0003 ausente');
   assert(
     questionMigrationNames.includes('0004_question_editorial_versioning.sql'),
@@ -1410,6 +1423,7 @@ try {
       '0018_friend_queue_alerts.sql',
       '0019_avatar_object_storage.sql',
       '0020_retention_and_achievements.sql',
+      '0021_hidden_themes_and_categories.sql',
     ].includes(name)),
   );
   console.log('Validando upgrade D1 exato de 0003 para 0004...');
@@ -1567,6 +1581,17 @@ try {
     join(upgradeDatabase.migrationsDirectory, '0020_retention_and_achievements.sql'),
   );
   applyMigrations(upgradeDatabase);
+  console.log('Validando upgrade D1 atual exato de 0020 para 0021 temas e categorias ocultos...');
+  const visibleBefore = query(upgradeDatabase, 'SELECT COUNT(*) AS total FROM themes')[0]?.total ?? 0;
+  await copyFile(
+    join(coreSourceMigrationsDirectory, '0021_hidden_themes_and_categories.sql'),
+    join(upgradeDatabase.migrationsDirectory, '0021_hidden_themes_and_categories.sql'),
+  );
+  applyMigrations(upgradeDatabase);
+  assert(
+    (query(upgradeDatabase, 'SELECT COUNT(*) AS total FROM themes WHERE hidden_at IS NULL')[0]?.total ?? -1) === visibleBefore,
+    'upgrade-0021: temas existentes precisam continuar visíveis',
+  );
   assertFinalSchema(upgradeDatabase);
   console.log('Validando rollback transacional de migration com erro...');
   await assertRollback(upgradeDatabase);
@@ -1679,7 +1704,7 @@ try {
   applyMigrations(upgradeQuestions);
   assertQuestionImageKeyIndex(upgradeQuestions);
 
-  console.log('Migrations D1 aprovadas: parser Wrangler, bancos vazios, upgrades Core 0003→0004→0005→0006→0007→0008→0009→0010→0011→0012→0013→0014→0015→0016→0017→0018→0019→0020 e Questions 0002→0003→0004→0005→0006→0007→0008→0009→0010, invariantes sociais, de desafio, de ledger de conclusão, de denúncia, editoriais, pool único por tema, índices de exportação, de foto e de limpeza, rollback e schemas finais.');
+  console.log('Migrations D1 aprovadas: parser Wrangler, bancos vazios, upgrades Core 0003→0004→0005→0006→0007→0008→0009→0010→0011→0012→0013→0014→0015→0016→0017→0018→0019→0020→0021 e Questions 0002→0003→0004→0005→0006→0007→0008→0009→0010, invariantes sociais, de desafio, de ledger de conclusão, de denúncia, editoriais, pool único por tema, índices de exportação, de foto e de limpeza, rollback e schemas finais.');
 } finally {
   await rm(temporaryRoot, { force: true, recursive: true });
 }

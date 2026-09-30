@@ -1,3 +1,4 @@
+import { PLAYABLE_THEME_SQL } from './theme-repository.js';
 import type { MatchMode } from '@quiz-gomes/domain';
 import type { MatchSummaryRecord } from './user-repository.js';
 
@@ -85,7 +86,8 @@ export class ProfileHistoryRepository {
       `SELECT r.mode, r.best_score, t.name AS theme_name, t.slug AS theme_slug
          FROM theme_personal_records r
          JOIN themes t ON t.id = r.theme_id
-        WHERE r.user_id = ?1 AND t.status = 'ACTIVE'
+         JOIN categories c ON c.id = t.category_id
+        WHERE r.user_id = ?1 AND ${PLAYABLE_THEME_SQL}
         ORDER BY r.best_score DESC, t.name COLLATE NOCASE
         LIMIT ?2`,
     ).bind(userId, Math.min(40, Math.max(1, limit))).all<{

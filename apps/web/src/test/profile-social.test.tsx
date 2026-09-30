@@ -8,6 +8,7 @@ import { ProfilePage } from '../pages/profile-page.js';
 const mocks = vi.hoisted(() => ({
   activate: vi.fn(() => Promise.resolve<'denied' | 'granted'>('granted')),
   apiRequest: vi.fn(),
+  deleteAccount: vi.fn(() => Promise.resolve()),
   getToken: vi.fn(() => Promise.resolve('fixture-auth')),
   notificationState: 'prompt',
   profile: {
@@ -25,6 +26,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('../features/auth-context.js', () => ({
   useAuth: () => ({
+    deleteAccount: mocks.deleteAccount,
     error: null,
     firebaseUser: { displayName: 'Perfil Real', photoURL: null },
     getToken: mocks.getToken,
@@ -75,6 +77,25 @@ describe('Perfil — privacidade e notificações opcionais', () => {
   afterEach(() => {
     mocks.role = 'PLAYER';
     cleanup();
+  });
+
+  it('excluir conta só libera depois de digitar EXCLUIR', async () => {
+    render(<MemoryRouter><ProfilePage /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('button', { name: 'Excluir conta' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Excluir sua conta?' });
+    const confirm = within(dialog).getByRole('button', { name: 'Excluir conta' });
+    expect(confirm).toBeDisabled();
+    fireEvent.change(within(dialog).getByLabelText('Digite EXCLUIR para confirmar'), { target: { value: 'excluir' } });
+    expect(confirm).toBeEnabled();
+    fireEvent.click(confirm);
+    await waitFor(() => expect(mocks.deleteAccount).toHaveBeenCalledTimes(1));
+  });
+
+  it('ADMIN não vê o botão de excluir conta', async () => {
+    mocks.role = 'ADMIN';
+    render(<MemoryRouter><ProfilePage /></MemoryRouter>);
+    expect(await screen.findByText('Contas de administração não são excluídas por aqui.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Excluir conta' })).not.toBeInTheDocument();
   });
 
   it('carrega bloqueados somente ao abrir Privacidade e Segurança e confirma o desbloqueio', async () => {
