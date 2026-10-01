@@ -6,13 +6,19 @@ import type { MatchMode } from '../types.js';
 
 export const LIVE_PREPARATION_MS = 3_000;
 export const LIVE_ROUND_RESULT_MS = 2_900;
-export const LIVE_ROUND_TRANSITION_MS = 450;
+/**
+ * Leitura: a pergunta (e a foto) ficam sozinhas na tela antes das
+ * alternativas. O relógio de resposta só começa depois, então a leitura
+ * nunca conta para a pontuação. Mesmo valor para os dois jogadores.
+ */
+export const LIVE_READING_MS = 1_500;
 
 export type LiveSeat = 1 | 2;
 export type LiveMatchPhase =
   | 'LOBBY'
   | 'PREPARING'
   | 'ROUND_READY'
+  | 'READING'
   | 'ANSWERING'
   | 'ROUND_RESULT'
   | 'PAUSED'
@@ -20,7 +26,7 @@ export type LiveMatchPhase =
   | 'FINISHED'
   | 'VOID';
 
-type PausablePhase = 'PREPARING' | 'ROUND_READY' | 'ANSWERING' | 'ROUND_RESULT';
+type PausablePhase = 'PREPARING' | 'ROUND_READY' | 'READING' | 'ANSWERING' | 'ROUND_RESULT';
 
 export interface LiveQuestion extends SecretQuestion {
   slot: number;
@@ -109,6 +115,7 @@ export type LiveMatchEvent =
   | { seat: LiveSeat; type: 'LOBBY_READY' }
   | { type: 'PREPARING' }
   | { type: 'QUESTION_AVAILABLE' }
+  | { type: 'READING_STARTED' }
   | { type: 'ROUND_STARTED' }
   | { seat: LiveSeat; type: 'ANSWER_ACCEPTED' }
   | { type: 'ROUND_RESOLVED' }
@@ -267,6 +274,11 @@ function alarm(state: LiveMatchState, nowMs: number): LiveTransition {
     if (unready.length !== 1) return beginVoid(state, 'SYSTEM_FAILURE', null);
     return beginVoid(state, 'READINESS_TIMEOUT', unready[0]?.seat ?? null);
   }
+  if (state.phase === 'READING') {
+    state.phase = 'ANSWERING';
+    state.phaseDeadlineMs = nowMs + QUESTION_DURATION_MS;
+    return { event: { type: 'ROUND_STARTED' }, state };
+  }
   if (state.phase === 'ANSWERING') return resolveRound(state, nowMs);
   if (state.phase === 'ROUND_RESULT') {
     if (state.roundIndex + 1 >= state.questions.length) {
@@ -390,7 +402,7 @@ export function transitionLiveMatch(
         ? beginVoid(state, 'SYSTEM_FAILURE', null)
         : { event: { type: 'PAUSED' }, state };
     }
-    if (!['PREPARING', 'ROUND_READY', 'ANSWERING', 'ROUND_RESULT'].includes(state.phase)) {
+    if (!['PREPARING', 'ROUND_READY', 'READING', 'ANSWERING', 'ROUND_RESULT'].includes(state.phase)) {
       return { event: { type: 'NOOP' }, state };
     }
     const phase = state.phase;
@@ -441,9 +453,9 @@ export function transitionLiveMatch(
     if (player.roundReady) return { event: { type: 'NOOP' }, state };
     player.roundReady = true;
     if (state.players.every((entry) => entry.connected && entry.roundReady)) {
-      state.phase = 'ANSWERING';
-      state.phaseDeadlineMs = nowMs + QUESTION_DURATION_MS;
-      return { event: { type: 'ROUND_STARTED' }, state };
+      state.phase = 'READING';
+      state.phaseDeadlineMs = nowMs + LIVE_READING_MS;
+      return { event: { type: 'READING_STARTED' }, state };
     }
     return { event: { type: 'NOOP' }, state };
   }
@@ -565,14 +577,22 @@ export function projectLiveMatchPresentationForSeat(
       knowledge: opponent.knowledgeBefore,
       photoUrl: opponent.photoUrl,
     },
-    preload: { firstQuestion: publicQuestion(firstQuestion) },
+    // Só a foto e o enunciado: as alternativas nunca saem antes da rodada.
+    preload: { firstQuestion: publicQuestion(firstQuestion, false) },
   };
 }
 
 function phaseHasCurrentQuestion(state: LiveMatchState): boolean {
-  if (['ROUND_READY', 'ANSWERING', 'ROUND_RESULT'].includes(state.phase)) return true;
+  if (['ROUND_READY', 'READING', 'ANSWERING', 'ROUND_RESULT'].includes(state.phase)) return true;
   const pause = pauseOf(state);
   return state.phase === 'PAUSED' && pause !== null && pause.phase !== 'PREPARING';
+}
+
+/** Alternativas só existem na projeção depois que o relógio da rodada começa. */
+function phaseRevealsOptions(state: LiveMatchState): boolean {
+  if (state.phase === 'ANSWERING' || state.phase === 'ROUND_RESULT') return true;
+  const pause = pauseOf(state);
+  return state.phase === 'PAUSED' && (pause?.phase === 'ANSWERING' || pause?.phase === 'ROUND_RESULT');
 }
 
 function phaseHasResolvedCurrentRound(state: LiveMatchState): boolean {
@@ -615,7 +635,7 @@ export function projectLiveMatchForSeat(
   };
   if (phaseHasCurrentQuestion(state)) {
     const question = currentQuestion(state);
-    projection.question = publicQuestion(question);
+    projection.question = publicQuestion(question, phaseRevealsOptions(state));
     projection.round = { number: state.roundIndex + 1, total: state.questions.length };
   }
   if (state.phaseDeadlineMs !== null) projection.remainingMs = remainingAt(nowMs, state.phaseDeadlineMs);

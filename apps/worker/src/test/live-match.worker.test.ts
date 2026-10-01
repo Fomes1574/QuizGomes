@@ -250,9 +250,17 @@ async function startRoomAtAnswering(
   ]);
   const questionId = firstQuestion.match?.question?.id;
   if (questionId === undefined) throw new Error('Pergunta pública inicial ausente.');
+  // A pergunta chega sem alternativas; elas só vêm quando o relógio começa.
+  expect(firstQuestion.match?.question?.options).toBeUndefined();
   first.socket.send(JSON.stringify({ roundNumber: 1, type: 'ROUND_READY' }));
   second.socket.send(JSON.stringify({ roundNumber: 1, type: 'ROUND_READY' }));
-  await Promise.all([first.waitFor('ROUND_STARTED'), second.waitFor('ROUND_STARTED')]);
+  const [reading] = await Promise.all([first.waitFor('ROUND_READING'), second.waitFor('ROUND_READING')]);
+  expect(reading.match?.phase).toBe('READING');
+  expect(reading.match?.question?.prompt).toBeTypeOf('string');
+  expect(reading.match?.question?.options).toBeUndefined();
+  await expireAlarm(stub);
+  const [started] = await Promise.all([first.waitFor('ROUND_STARTED'), second.waitFor('ROUND_STARTED')]);
+  expect(started.match?.question?.options).toHaveLength(4);
   return { first, questionId, second };
 }
 
@@ -267,7 +275,9 @@ function startStoredMatch(initial: LiveMatchState): LiveMatchState {
   state = apply(state, { seat: 2, type: 'LOBBY_READY' }, initial.createdAtMs + 4);
   state = apply(state, { type: 'ALARM' }, state.phaseDeadlineMs ?? initial.createdAtMs + 5);
   state = apply(state, { roundNumber: 1, seat: 1, type: 'ROUND_READY' }, (state.phaseDeadlineMs ?? 0) - 2);
-  return apply(state, { roundNumber: 1, seat: 2, type: 'ROUND_READY' }, (state.phaseDeadlineMs ?? 0) - 1);
+  state = apply(state, { roundNumber: 1, seat: 2, type: 'ROUND_READY' }, (state.phaseDeadlineMs ?? 0) - 1);
+  // Fim dos 1,5 s de leitura: começa o relógio da resposta.
+  return apply(state, { type: 'ALARM' }, state.phaseDeadlineMs ?? 0);
 }
 
 function finishStoredMatch(initial: LiveMatchState, winnerSeat: 1 | null): LiveMatchState {
@@ -299,6 +309,7 @@ function finishStoredMatch(initial: LiveMatchState, winnerSeat: 1 | null): LiveM
     if (round < totalRounds) {
       state = apply(state, { roundNumber: round + 1, seat: 1, type: 'ROUND_READY' }, (state.phaseDeadlineMs ?? 0) - 2);
       state = apply(state, { roundNumber: round + 1, seat: 2, type: 'ROUND_READY' }, (state.phaseDeadlineMs ?? 0) - 1);
+      state = apply(state, { type: 'ALARM' }, state.phaseDeadlineMs ?? 0);
     }
   }
   return state;

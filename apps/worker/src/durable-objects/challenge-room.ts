@@ -1,7 +1,6 @@
 import {
   AsyncHalfCommandError,
   createAsyncHalfState,
-  LIVE_ROUND_TRANSITION_MS,
   markAsyncHalfFinalized,
   projectAsyncHalf,
   sealedAnswersOf,
@@ -423,19 +422,16 @@ export class ChallengeRoom {
     origin?: WebSocket,
   ): void {
     const match = projectAsyncHalf(state, nowMs);
-    const type = event.type === 'QUESTION_AVAILABLE'
-      ? 'ROUND_QUESTION'
-      : event.type === 'ROUND_STARTED'
-        ? 'ROUND_STARTED'
-        : event.type === 'ROUND_RESOLVED'
-          ? 'ROUND_RESOLVED'
-          : event.type === 'PAUSED'
-            ? 'PAUSED_FOR_RECONNECT'
-            : event.type === 'RESUMED'
-              ? 'RESUMED'
-              : 'ROOM_STATE';
+    const messageTypes: Partial<Record<AsyncHalfEvent['type'], string>> = {
+      PAUSED: 'PAUSED_FOR_RECONNECT',
+      QUESTION_AVAILABLE: 'ROUND_QUESTION',
+      READING_STARTED: 'ROUND_READING',
+      RESUMED: 'RESUMED',
+      ROUND_RESOLVED: 'ROUND_RESOLVED',
+      ROUND_STARTED: 'ROUND_STARTED',
+    };
+    const type = messageTypes[event.type] ?? 'ROOM_STATE';
     const payload: Record<string, unknown> = { match, type };
-    if (event.type === 'QUESTION_AVAILABLE') payload.transitionMs = LIVE_ROUND_TRANSITION_MS;
     const message = JSON.stringify(payload);
     for (const socket of this.ctx.getWebSockets()) this.safeSend(socket, message);
     if (origin !== undefined && !this.ctx.getWebSockets().includes(origin)) {

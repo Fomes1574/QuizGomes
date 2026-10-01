@@ -1604,6 +1604,14 @@ Pedidos do proprietário nesta rodada: limpeza a cada 15 dias (admin 6 meses), X
 - Pendente do proprietário: política de privacidade e termos (precisam de nome do responsável e canal de contato) antes de qualquer assinatura.
 - Validação: lint, typecheck, 426 unitários, 237 web, 251 Worker, validador de migrations (Core 0021 com upgrade 0020→0021), build e dry-run; prévias em celular e computador, claro e escuro.
 
+### 2026-10-01 — leitura de 1,5 s antes das alternativas (regra nova)
+
+- Decisão do proprietário: toda rodada (Normal, Rankeada e desafios) começa com 1,5 s fixos de leitura. A pergunta e a foto aparecem juntas, o anel do relógio carrega de vazio a cheio (a barra também), e só então chegam as alternativas e começa o relógio de 10 s. Pontuação inalterada (10 + segundos restantes, contados a partir das alternativas).
+- Servidor: nova fase `READING` (`LIVE_READING_MS = 1_500`) entre "os dois prontos" e `ANSWERING`, na partida ao vivo e na metade do desafio. As alternativas só entram na projeção a partir de `ANSWERING` (antes disso, nem na pré-carga do "adversário encontrado"); resposta durante a leitura é recusada; queda durante a leitura pausa e devolve o tempo restante, como nas outras fases. Mensagem nova da sala: `ROUND_READING`.
+- App: o cartão "Pergunta X de Y" (1,9 s) foi substituído pela leitura, para teste do proprietário — o "4/7" continua no placar. O pronto da rodada sai assim que a foto está pronta (teto de 4 s). O espaço das alternativas fica reservado (invisível) durante a leitura: a pergunta não pula; quando as alternativas são longas, desliza no máximo ~55 px em 0,28 s (só transform). Alternativas entram juntas em 0,24 s, todas tocáveis de imediato, com um toque curto de som/vibração (respeita o Perfil). Leitores de tela ouvem "Leia a pergunta" e "Alternativas liberadas". Movimento reduzido: sem deslizes, anel já cheio. O tamanho da letra do enunciado não depende mais das alternativas (não muda no meio da leitura).
+- Correção junto: em telas baixas com foto + enunciado longo + alternativas longas, o enunciado podia ser espremido e cortado; a linha dele agora nunca fica menor que o texto (se não couber, a área rola). Verificado sem sobreposição em 9 tamanhos × 4 tipos de pergunta × leitura e resposta.
+- Duração: cada rodada fica ~0,4 s mais curta que antes (1,5 s de leitura no lugar de 1,9 s de cartão).
+
 ## Critério de saída desta execução
 
 - Milestones 8 e 8.5 aprovados fisicamente e congelados;

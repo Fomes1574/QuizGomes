@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CHALLENGE_MODE,
   createAsyncHalfState,
+  LIVE_READING_MS,
   LIVE_ROUND_RESULT_MS,
   markAsyncHalfFinalized,
   projectAsyncHalf,
@@ -56,6 +57,16 @@ function run(state: AsyncHalfState, command: AsyncHalfCommand, nowMs: number): A
   return transitionAsyncHalf(state, command, nowMs).state;
 }
 
+/**
+ * READY + leitura: a resposta passa a valer exatamente em `answeringAt`
+ * (o READY acontece 1,5 s antes), preservando as contas de tempo dos testes.
+ */
+function startRound(state: AsyncHalfState, roundNumber: number, answeringAt: number): AsyncHalfState {
+  const reading = run(state, { roundNumber, type: 'ROUND_READY' }, answeringAt - LIVE_READING_MS);
+  expect(reading.phase).toBe('READING');
+  return run(reading, { type: 'ALARM' }, answeringAt);
+}
+
 function sealed(scores: number[]): SealedRoundAnswer[] {
   return scores.map((score, index) => ({
     correct: score > 0,
@@ -88,9 +99,34 @@ describe('metade selada do desafio assíncrono', () => {
     })).toThrow(/exige a metade selada/);
   });
 
-  it('pontua com a mesma regra da partida simultânea', () => {
+  it('lê 1,5 s antes: sem alternativas, sem resposta e com pausa preservada', () => {
     let state = run(halfState('FIRST'), { type: 'CONNECT' }, NOW);
     state = run(state, { roundNumber: 1, type: 'ROUND_READY' }, NOW);
+    expect(state.phase).toBe('READING');
+    expect(state.phaseDeadlineMs).toBe(NOW + LIVE_READING_MS);
+    const reading = projectAsyncHalf(state, NOW + 100);
+    expect(reading.question?.prompt).toBeDefined();
+    expect(reading.question?.options).toBeUndefined();
+    expect(() => transitionAsyncHalf(state, {
+      questionId: 'q-1', roundNumber: 1, selectedOption: 0, type: 'ANSWER',
+    }, NOW + 100)).toThrow(/não aceita respostas/);
+
+    const paused = run(state, { type: 'DISCONNECT' }, NOW + 500);
+    expect(paused.pause).toMatchObject({ phase: 'READING', phaseRemainingMs: LIVE_READING_MS - 500 });
+    expect(projectAsyncHalf(paused, NOW + 600).question?.options).toBeUndefined();
+    const resumed = run(paused, { type: 'CONNECT' }, NOW + 2_000);
+    expect(resumed.phase).toBe('READING');
+    expect(resumed.phaseDeadlineMs).toBe(NOW + 2_000 + LIVE_READING_MS - 500);
+
+    const answering = run(resumed, { type: 'ALARM' }, resumed.phaseDeadlineMs ?? 0);
+    expect(answering.phase).toBe('ANSWERING');
+    expect(answering.phaseDeadlineMs).toBe((resumed.phaseDeadlineMs ?? 0) + QUESTION_DURATION_MS);
+    expect(projectAsyncHalf(answering, resumed.phaseDeadlineMs ?? 0).question?.options).toHaveLength(4);
+  });
+
+  it('pontua com a mesma regra da partida simultânea', () => {
+    let state = run(halfState('FIRST'), { type: 'CONNECT' }, NOW);
+    state = startRound(state, 1, NOW);
     expect(state.phase).toBe('ANSWERING');
 
     // Acerto com 7 s restantes vale 10 + 7.
@@ -104,14 +140,14 @@ describe('metade selada do desafio assíncrono', () => {
 
   it('erro e timeout valem zero e o timeout não fica marcado como enviado', () => {
     let state = run(halfState('FIRST'), { type: 'CONNECT' }, NOW);
-    state = run(state, { roundNumber: 1, type: 'ROUND_READY' }, NOW);
+    state = startRound(state, 1, NOW);
     state = run(state, {
       questionId: 'q-1', roundNumber: 1, selectedOption: 3, type: 'ANSWER',
     }, NOW + 1_000);
     expect(state.score).toBe(0);
 
     let timedOut = run(halfState('FIRST'), { type: 'CONNECT' }, NOW);
-    timedOut = run(timedOut, { roundNumber: 1, type: 'ROUND_READY' }, NOW);
+    timedOut = startRound(timedOut, 1, NOW);
     timedOut = run(timedOut, { type: 'ALARM' }, NOW + QUESTION_DURATION_MS);
     expect(timedOut.score).toBe(0);
     expect(timedOut.answers[0]).toMatchObject({ selectedOption: null, submitted: false });
@@ -121,7 +157,7 @@ describe('metade selada do desafio assíncrono', () => {
     let state = run(halfState('FIRST'), { type: 'CONNECT' }, NOW);
     let now = NOW;
     for (let round = 1; round <= CHALLENGE_QUESTION_COUNT; round += 1) {
-      state = run(state, { roundNumber: round, type: 'ROUND_READY' }, now);
+      state = startRound(state, round, now);
       state = run(state, { type: 'ALARM' }, now + QUESTION_DURATION_MS);
       now += QUESTION_DURATION_MS;
       expect(state.phase).toBe('ROUND_RESULT');
@@ -136,7 +172,7 @@ describe('metade selada do desafio assíncrono', () => {
   it('aplica a graça exata: 9999 retoma, 10000 e 10001 anulam', () => {
     const base = (() => {
       let state = run(halfState('FIRST'), { type: 'CONNECT' }, NOW);
-      state = run(state, { roundNumber: 1, type: 'ROUND_READY' }, NOW);
+      state = startRound(state, 1, NOW);
       return run(state, { type: 'DISCONNECT' }, NOW + 2_000);
     })();
     expect(base.phase).toBe('PAUSED');
@@ -155,7 +191,7 @@ describe('metade selada do desafio assíncrono', () => {
 
   it('rejeita resposta fora da pergunta atual, repetida ou desconectada', () => {
     let state = run(halfState('FIRST'), { type: 'CONNECT' }, NOW);
-    state = run(state, { roundNumber: 1, type: 'ROUND_READY' }, NOW);
+    state = startRound(state, 1, NOW);
     expect(() => transitionAsyncHalf(state, {
       questionId: 'q-2', roundNumber: 1, selectedOption: 0, type: 'ANSWER',
     }, NOW + 1_000)).toThrow(/não pertence à pergunta atual/);
@@ -176,7 +212,7 @@ describe('sigilo e revelação progressiva', () => {
     let state = run(halfState('SECOND', sealed(OPPONENT_SCORES)), { type: 'CONNECT' }, NOW);
     let now = NOW;
     for (let current = 1; current <= round; current += 1) {
-      state = run(state, { roundNumber: current, type: 'ROUND_READY' }, now);
+      state = startRound(state, current, now);
       state = run(state, {
         questionId: `q-${current}`, roundNumber: current, selectedOption: (current - 1) % 4, type: 'ANSWER',
       }, now + 2_000);
@@ -191,7 +227,7 @@ describe('sigilo e revelação progressiva', () => {
 
   it('na primeira metade nada do adversário existe e o placar dele não é inventado', () => {
     let state = run(halfState('FIRST'), { type: 'CONNECT' }, NOW);
-    state = run(state, { roundNumber: 1, type: 'ROUND_READY' }, NOW);
+    state = startRound(state, 1, NOW);
     state = run(state, {
       questionId: 'q-1', roundNumber: 1, selectedOption: 0, type: 'ANSWER',
     }, NOW + 2_000);
@@ -207,7 +243,7 @@ describe('sigilo e revelação progressiva', () => {
 
   it('não revela a rodada do primeiro jogador enquanto o segundo não responde', () => {
     let state = run(halfState('SECOND', sealed(OPPONENT_SCORES)), { type: 'CONNECT' }, NOW);
-    state = run(state, { roundNumber: 1, type: 'ROUND_READY' }, NOW);
+    state = startRound(state, 1, NOW);
 
     const projection = projectAsyncHalf(state, NOW + 1_000);
     expect(projection.opponentPending).toBeUndefined();

@@ -72,7 +72,9 @@ describe('layout da pergunta sem cortar texto', () => {
     expect(questionLayout({
       options: ['Transmitir diretamente a sarna humana', 'B', 'C', 'D'],
       prompt: 'Qual é a principal importância médica do ácaro-do-pó-doméstico, apesar de não ser um parasita externo?',
-    })).toEqual({ answerLayout: 'list', promptLength: 'long' });
+    })).toEqual({ answerLayout: 'list', promptLength: 'medium' });
+    // O tamanho do enunciado não depende das alternativas: não muda quando elas chegam.
+    expect(questionLayout({ prompt: 'Quem?' })).toEqual({ answerLayout: 'grid', promptLength: 'short' });
     // Com foto o limite é menor: sobra menos altura na tela.
     expect(questionLayout({ imageUrl: '/x.webp', options: ['Monte Everest', 'B', 'C', 'Kilimanjaro, Tanzânia'], prompt: 'Onde fica?' }).answerLayout).toBe('list');
   });

@@ -1,6 +1,5 @@
 import {
   LiveMatchCommandError,
-  LIVE_ROUND_TRANSITION_MS,
   markLiveMatchFinalized,
   projectLiveMatchForSeat,
   projectLiveMatchPresentationForSeat,
@@ -367,7 +366,7 @@ export class MatchRoom {
         if (transition.event.type === 'CONNECTED' && transition.state.phase === 'LOBBY') {
           await this.setPlayersActivity('preparing');
         }
-        if (transition.event.type === 'CONNECTED' && ['ROUND_READY', 'ANSWERING', 'ROUND_RESULT'].includes(transition.state.phase)) {
+        if (transition.event.type === 'CONNECTED' && ['ROUND_READY', 'READING', 'ANSWERING', 'ROUND_RESULT'].includes(transition.state.phase)) {
           await this.recordRoundDelivery(transition.state, [server]);
         }
         this.sendState(server, 'ROOM_STATE', transition.state);
@@ -425,7 +424,12 @@ export class MatchRoom {
     if (event.type === 'QUESTION_AVAILABLE') {
       await this.setPlayersActivity('playing');
       await this.recordRoundDelivery(state);
-      this.broadcastState('ROUND_QUESTION', state, undefined, { transitionMs: LIVE_ROUND_TRANSITION_MS });
+      this.broadcastState('ROUND_QUESTION', state);
+      return;
+    }
+    if (event.type === 'READING_STARTED') {
+      // Os dois prontos: 1,5 s de leitura com a pergunta e a foto, sem alternativas.
+      this.broadcastState('ROUND_READING', state);
       return;
     }
     if (event.type === 'ROUND_STARTED') {

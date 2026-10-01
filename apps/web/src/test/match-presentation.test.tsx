@@ -3,29 +3,9 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MatchResultScreen } from '../components/match-result-screen.js';
-import {
-  MATCH_ROUND_TRANSITION_MS,
-  MatchRoundTransition,
-  roundPresentationDelay,
-} from '../components/match-round-transition.js';
 
 describe('apresentação da partida', () => {
   afterEach(() => cleanup());
-
-  it('mantém a apresentação completa em 1.900 ms, respeita o piso do servidor e não repete o título', () => {
-    expect(MATCH_ROUND_TRANSITION_MS).toBe(1_900);
-    expect(roundPresentationDelay(450)).toBe(1_900);
-    expect(roundPresentationDelay(1_100)).toBe(1_900);
-    expect(roundPresentationDelay(2_100)).toBe(2_100);
-
-    render(<MatchRoundTransition number={3} total={5} />);
-    expect(screen.getByRole('status', { name: 'Pergunta 3 de 5' })).toHaveStyle({
-      '--match-question-entrance-duration': '300ms',
-      '--round-transition-duration': '1900ms',
-    });
-    expect(screen.getAllByText('PERGUNTA')).toHaveLength(1);
-    expect(screen.queryByText('PERGUNTA 3 / 5')).not.toBeInTheDocument();
-  });
 
   it('mostra os dois perfis, o vencedor, os scores e a progressão autoritativa', () => {
     const onBack = vi.fn();

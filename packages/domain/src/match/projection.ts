@@ -9,7 +9,11 @@ export interface SecretQuestion {
 export interface PublicQuestion {
   id: string;
   imageUrl: string | null;
-  options: readonly [string, string, string, string];
+  /**
+   * Ausente durante a leitura (antes de o relógio da rodada começar): o
+   * servidor só libera as alternativas quando a resposta passa a valer.
+   */
+  options?: readonly [string, string, string, string];
   prompt: string;
 }
 
@@ -36,13 +40,14 @@ export interface RoundProjection {
   };
 }
 
-export function publicQuestion(question: SecretQuestion): PublicQuestion {
-  return {
+export function publicQuestion(question: SecretQuestion, withOptions = true): PublicQuestion {
+  const visible: PublicQuestion = {
     id: question.id,
     imageUrl: question.imageUrl,
-    options: question.options,
     prompt: question.prompt,
   };
+  if (withOptions) visible.options = question.options;
+  return visible;
 }
 
 export function projectRoundForViewer(

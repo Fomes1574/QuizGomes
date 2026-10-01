@@ -1,5 +1,5 @@
 import { LIVE_ROUND_RESULT_MS, QUESTION_DURATION_MS, displayedSeconds, remainingAt } from '@quiz-gomes/domain';
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { feedback } from '../lib/feedback.js';
 import { playDuelFlip, takeDuelOrigin, type DuelSeat } from '../lib/match-handoff.js';
 import { Avatar } from './avatar.js';
@@ -11,6 +11,12 @@ const STREAK_VISIBLE_FROM = 2;
 const DUEL_SEATS: readonly DuelSeat[] = ['viewer', 'opponent'];
 const ROUND_OPPONENT_REVEAL_MS = 250;
 const ROUND_SCORE_REVEAL_MS = 550;
+/** A pergunta desliza até o lugar final quando as alternativas chegam. */
+const QUESTION_SETTLE_MS = 280;
+
+function prefersReducedMotion(): boolean {
+  return typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
 
 /**
  * Moldura de altura fixa: o layout não pula quando a foto chega e as
@@ -29,7 +35,7 @@ function QuestionMedia({ url }: { url: string }) {
   if (failed) return null;
   return (
     <>
-      <button aria-label="Ampliar a foto da pergunta" className="question-media" onClick={() => setZoomed(true)} type="button">
+      <button aria-label="Ampliar a foto da pergunta" className="question-media" data-settle onClick={() => setZoomed(true)} type="button">
         <img alt="Foto da pergunta" decoding="async" draggable={false} onError={() => setFailed(true)} src={url} />
       </button>
       {zoomed && (
@@ -45,15 +51,17 @@ function QuestionMedia({ url }: { url: string }) {
 /**
  * Nada é cortado: alternativas longas trocam a grade 2×2 por uma lista de
  * linhas inteiras, e enunciados longos (ou com foto) usam uma fonte menor.
+ * O tamanho do enunciado depende só dele e da foto: durante a leitura as
+ * alternativas ainda não existem, e a letra não pode mudar no meio da leitura.
  */
-export function questionLayout(question: { imageUrl?: string | null; options: readonly string[]; prompt: string }): {
+export function questionLayout(question: { imageUrl?: string | null; options?: readonly string[] | undefined; prompt: string }): {
   answerLayout: 'grid' | 'list';
   promptLength: 'long' | 'medium' | 'short';
 } {
-  const longest = Math.max(...question.options.map((option) => option.trim().length));
+  const longest = Math.max(0, ...(question.options ?? []).map((option) => option.trim().length));
   const hasImage = typeof question.imageUrl === 'string' && question.imageUrl !== '';
   const answerLayout = longest > (hasImage ? 16 : 22) ? 'list' : 'grid';
-  const size = question.prompt.trim().length + (hasImage ? 40 : 0) + (answerLayout === 'list' ? 20 : 0);
+  const size = question.prompt.trim().length + (hasImage ? 40 : 0);
   return { answerLayout, promptLength: size > 120 ? 'long' : size > 70 ? 'medium' : 'short' };
 }
 
@@ -79,7 +87,8 @@ interface MatchScreenStyle extends CSSProperties {
 
 export interface MatchQuestionView {
   imageUrl?: string | null;
-  options: readonly [string, string, string, string];
+  /** Ausente durante a leitura: o servidor só manda quando o relógio começa. */
+  options?: readonly [string, string, string, string] | undefined;
   prompt: string;
 }
 
@@ -167,6 +176,22 @@ function MatchTimer({
   );
 }
 
+/**
+ * Leitura: o anel (e a barra) se enchem de vazio a cheio no tempo da leitura.
+ * Quando completam, as alternativas chegam e o mesmo anel começa a esvaziar.
+ */
+function ChargingTimer({ durationMs }: { durationMs: number }) {
+  const style = { '--charge-duration': `${Math.max(1, Math.round(durationMs))}ms` } as CSSProperties;
+  return (
+    <span aria-hidden="true" className="timer-ring timer-ring--charging" style={style}>
+      <svg viewBox="0 0 64 64">
+        <circle className="timer-ring__track" cx="32" cy="32" r="28" />
+        <circle className="timer-ring__fill" cx="32" cy="32" pathLength="100" r="28" />
+      </svg>
+    </span>
+  );
+}
+
 /** Anel de contagem acima da pergunta: mesma deadline do timer, sem decidir expiração. */
 function MatchTimerRing({ deadlineMs, initialRemainingMs, resolved, verdict }: {
   deadlineMs: number;
@@ -219,7 +244,7 @@ export function MatchScreen({
   playerScore,
   preparing = false,
   question,
-  questionPresentationDelayMs = 0,
+  readingMs = null,
   remainingMs,
   resolution,
   round,
@@ -237,9 +262,11 @@ export function MatchScreen({
   opponentScore: number;
   player: MatchParticipantView;
   playerScore: number;
+  /** Rodada esperando os dois aparelhos: a pergunta ainda não aparece. */
   preparing?: boolean;
   question: MatchQuestionView;
-  questionPresentationDelayMs?: number;
+  /** Leitura em andamento: tempo até as alternativas (anel carregando). */
+  readingMs?: number | null;
   remainingMs: number;
   resolution?: MatchResolutionView | undefined;
   round?: { number: number; total: number } | undefined;
@@ -253,15 +280,18 @@ export function MatchScreen({
     opponent: opponentScore,
     player: playerScore,
   }));
-  const [questionEntranceDelayMs] = useState(questionPresentationDelayMs);
   const scoreboardRef = useRef<HTMLElement>(null);
+  const stageRef = useRef<HTMLElement>(null);
+  const settledTops = useRef<Map<HTMLElement, number> | null>(null);
+  const hasOptions = question.options !== undefined;
+  const reading = !preparing && !hasOptions;
   const resolved = resolution !== undefined;
   const roundNumber = round?.number;
   const selected = resolved ? resolution.viewer.selectedOption : selectedOption ?? localSelected;
   const visuallyExpired = expiredDeadline === deadlineMs || remainingMs <= 0;
   const opponentSelected = resolution?.opponent.selectedOption ?? null;
   const handleExpire = useCallback(() => setExpiredDeadline(deadlineMs), [deadlineMs]);
-  const answersLocked = preparing || selected !== null || visuallyExpired || resolved;
+  const answersLocked = preparing || reading || selected !== null || visuallyExpired || resolved;
   const choose = useCallback((index: number) => {
     feedback('tap');
     setLocalSelected(index);
@@ -288,7 +318,7 @@ export function MatchScreen({
     feedback(viewerCorrect === true ? 'correct' : 'wrong');
   }, [resolved, viewerAnsweredThisRound, viewerCorrect]);
   const screenStyle: MatchScreenStyle = {
-    '--match-question-delay': `${questionEntranceDelayMs}ms`,
+    '--match-question-delay': '0ms',
     '--match-result-duration': `${LIVE_ROUND_RESULT_MS}ms`,
     '--round-opponent-reveal-delay': `${ROUND_OPPONENT_REVEAL_MS}ms`,
     '--round-score-reveal-delay': `${ROUND_SCORE_REVEAL_MS}ms`,
@@ -306,10 +336,45 @@ export function MatchScreen({
           takeDuelOrigin(duelRoomId, 'lobby', seat),
         );
       }
-      // A apresentação da rodada cobre a tela até aqui; antes disso o movimento seria invisível.
-    }, Math.max(0, questionEntranceDelayMs));
+    }, 0);
     return () => window.clearTimeout(timer);
-  }, [duelRoomId, questionEntranceDelayMs, roundNumber]);
+  }, [duelRoomId, roundNumber]);
+
+  /*
+   * Fim da leitura: a pergunta (e a foto) estavam centralizadas sozinhas;
+   * com as alternativas o lugar delas muda. Em vez de pular, deslizam até o
+   * lugar novo (FLIP só com transform). offsetTop ignora a animação de entrada.
+   */
+  useLayoutEffect(() => {
+    const stage = stageRef.current;
+    if (stage === null) return;
+    const targets = [...stage.querySelectorAll<HTMLElement>('[data-settle]')];
+    if (!hasOptions) {
+      settledTops.current = new Map(targets.map((target) => [target, target.offsetTop]));
+      return;
+    }
+    const previous = settledTops.current;
+    settledTops.current = null;
+    if (previous === null || prefersReducedMotion()) return;
+    for (const target of targets) {
+      const before = previous.get(target);
+      if (before === undefined || typeof target.animate !== 'function') continue;
+      const delta = before - target.offsetTop;
+      if (Math.abs(delta) < 1) continue;
+      target.animate(
+        [{ transform: `translateY(${delta}px)` }, { transform: 'translateY(0)' }],
+        { duration: QUESTION_SETTLE_MS, easing: 'cubic-bezier(.2, .75, .25, 1)' },
+      );
+    }
+  }, [hasOptions, preparing]);
+
+  // As alternativas chegaram: um toque curto marca a largada (respeita som/vibração do Perfil).
+  const revealed = useRef(hasOptions);
+  useEffect(() => {
+    if (!hasOptions || revealed.current) return;
+    revealed.current = true;
+    if (!resolved) feedback('tick');
+  }, [hasOptions, resolved]);
 
   useEffect(() => {
     if (!resolved) return undefined;
@@ -355,7 +420,9 @@ export function MatchScreen({
         <div className="match-scoreboard__center">
           {preparing
             ? <span aria-hidden="true" className="timer-ring timer-ring--idle" />
-            : (
+            : reading
+              ? <ChargingTimer durationMs={readingMs ?? 0} key={`charge:${roundNumber ?? 0}`} />
+              : (
               <MatchTimerRing
                 deadlineMs={deadlineMs}
                 initialRemainingMs={remainingMs}
@@ -397,8 +464,17 @@ export function MatchScreen({
           </AvatarFrame>
         </div>
       </header>
-      {preparing
-        ? <div aria-hidden="true" className="match-timer match-timer--preparing" />
+      {preparing || reading
+        ? (
+          <div aria-hidden="true" className={`match-timer match-timer--preparing${reading ? ' match-timer--charging' : ''}`}>
+            {reading && (
+              <span
+                className="match-timer__bar"
+                style={{ '--charge-duration': `${Math.max(1, Math.round(readingMs ?? 0))}ms` } as CSSProperties}
+              />
+            )}
+          </div>
+        )
         : (
           <MatchTimer
             deadlineMs={deadlineMs}
@@ -408,9 +484,24 @@ export function MatchScreen({
             resolved={resolved}
           />
         )}
-      <section className={`question-stage${question.imageUrl ? ' question-stage--media' : ''}`}>
+      <p aria-live="polite" className="sr-only">{reading ? 'Leia a pergunta' : hasOptions && !resolved ? 'Alternativas liberadas' : ''}</p>
+      {!preparing && (
+      <section
+        className={`question-stage${question.imageUrl ? ' question-stage--media' : ''}${reading ? ' question-stage--reading' : ''}`}
+        ref={stageRef}
+      >
         {question.imageUrl && <QuestionMedia key={question.imageUrl} url={question.imageUrl} />}
-        <h1 data-length={promptLength}>{question.prompt}</h1>
+        <h1 data-length={promptLength} data-settle>{question.prompt}</h1>
+        {question.options === undefined && (
+          /*
+           * Espaço das alternativas reservado (invisível) durante a leitura: a
+           * pergunta já nasce perto do lugar final e não pula quando elas chegam.
+           */
+          <div aria-hidden="true" className="answer-grid answer-grid--grid answer-grid--placeholder">
+            {OPTION_LABELS.map((label) => <span className="answer-option" key={label} />)}
+          </div>
+        )}
+        {question.options !== undefined && (
         <div className={`answer-grid answer-grid--${answerLayout}`}>
           {question.options.map((option, index) => {
             const correct = resolution?.correctOption === index;
@@ -460,7 +551,9 @@ export function MatchScreen({
             );
           })}
         </div>
+        )}
       </section>
+      )}
     </main>
   );
 }

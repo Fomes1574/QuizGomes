@@ -210,7 +210,7 @@ describe('página da partida em tempo real', () => {
     expect(screen.getByText('Tema restaurado: CASUAL')).toBeInTheDocument();
   });
 
-  it('envia ROUND_READY uma única vez somente ao fim da apresentação de 1.900 ms', async () => {
+  it('pronto na hora, 1,5 s de leitura sem alternativas e só então o relógio de 10 s', async () => {
     render(
       <MemoryRouter initialEntries={['/partida/room-1']}>
         <Routes>
@@ -226,55 +226,53 @@ describe('página da partida em tempo real', () => {
 
     const socket = FakeWebSocket.instances[0];
     expect(socket).toBeDefined();
+    const base = {
+      opponent: { answered: false, displayName: 'Ana', frameId: null, photoUrl: null, score: 0 },
+      round: { number: 1, total: 5 },
+      viewer: { displayName: 'Gomes', frameId: null, photoUrl: null, score: 0, seat: 1 },
+    };
     act(() => socket?.emitMessage({
-      match: {
-        opponent: { answered: false, displayName: 'Ana', frameId: null, photoUrl: null, score: 0 },
-        phase: 'ROUND_READY',
-        question: { id: 'q-1', options: ['A', 'B', 'C', 'D'], prompt: 'Pergunta sintética?' },
-        remainingMs: 7_000,
-        round: { number: 1, total: 5 },
-        serverNow: Date.now(),
-        viewer: { displayName: 'Gomes', frameId: null, photoUrl: null, score: 0, seat: 1 },
-      },
-      transitionMs: 450,
+      match: { ...base, phase: 'ROUND_READY', question: { id: 'q-1', imageUrl: null, prompt: 'Pergunta sintética?' }, remainingMs: 10_000, serverNow: Date.now() },
       type: 'ROUND_QUESTION',
     }));
 
-    expect(screen.getByRole('status', { name: 'Pergunta 1 de 5' })).toBeInTheDocument();
-    expect(screen.getAllByText('PERGUNTA')).toHaveLength(1);
-    expect(document.querySelector('.match-screen--preparing')).toHaveStyle({
-      '--match-question-delay': '1600ms',
-    });
+    // Sem cartão "Pergunta X de Y": a pergunta ainda não aparece, e o pronto sai na hora (sem foto).
+    expect(screen.queryByRole('status', { name: 'Pergunta 1 de 5' })).not.toBeInTheDocument();
     expect(document.querySelector('.match-screen--preparing')).toHaveAttribute('aria-hidden', 'true');
-    expect([...document.querySelectorAll('.answer-option')].every((button) => button.hasAttribute('disabled'))).toBe(true);
-    expect(socket?.send).not.toHaveBeenCalledWith(JSON.stringify({ roundNumber: 1, type: 'ROUND_READY' }));
-
-    await act(async () => vi.advanceTimersByTimeAsync(1_899));
-    expect(socket?.send).not.toHaveBeenCalledWith(JSON.stringify({ roundNumber: 1, type: 'ROUND_READY' }));
-
-    await act(async () => vi.advanceTimersByTimeAsync(1));
+    expect(screen.queryByText('Pergunta sintética?')).not.toBeInTheDocument();
+    await act(async () => vi.advanceTimersByTimeAsync(0));
     const roundReadyMessages = socket?.send.mock.calls.filter(([message]) => (
       message === JSON.stringify({ roundNumber: 1, type: 'ROUND_READY' })
     ));
     expect(roundReadyMessages).toHaveLength(1);
-    expect(socket?.send).toHaveBeenCalledWith(JSON.stringify({ roundNumber: 1, type: 'ROUND_READY' }));
+
+    // Leitura: pergunta visível, anel carregando, nenhuma alternativa para tocar.
+    act(() => socket?.emitMessage({
+      match: { ...base, phase: 'READING', question: { id: 'q-1', imageUrl: null, prompt: 'Pergunta sintética?' }, remainingMs: 1_500, serverNow: Date.now() },
+      type: 'ROUND_READING',
+    }));
+    expect(screen.getByRole('heading', { name: 'Pergunta sintética?' })).toBeInTheDocument();
+    expect(document.querySelector('.timer-ring--charging')).toHaveStyle({ '--charge-duration': '1500ms' });
+    // Só o espaço reservado (invisível e fora da árvore de acessibilidade); nenhuma alternativa tocável.
+    expect(document.querySelector('button.answer-option')).not.toBeInTheDocument();
+    expect(document.querySelector('.answer-grid--placeholder')).toHaveAttribute('aria-hidden', 'true');
+    expect(screen.queryByRole('timer')).not.toBeInTheDocument();
+    expect(screen.getByText('Leia a pergunta')).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: '1' });
+    expect(socket?.send.mock.calls.some(([message]) => String(message).includes('"ANSWER"'))).toBe(false);
 
     act(() => socket?.emitMessage({
-      match: {
-        opponent: { answered: false, displayName: 'Ana', frameId: null, photoUrl: null, score: 0 },
-        phase: 'ANSWERING',
-        question: { id: 'q-1', options: ['A', 'B', 'C', 'D'], prompt: 'Pergunta sintética?' },
-        remainingMs: 10_000,
-        round: { number: 1, total: 5 },
-        serverNow: Date.now(),
-        viewer: { displayName: 'Gomes', frameId: null, photoUrl: null, score: 0, seat: 1 },
-      },
+      match: { ...base, phase: 'ANSWERING', question: { id: 'q-1', imageUrl: null, options: ['A', 'B', 'C', 'D'], prompt: 'Pergunta sintética?' }, remainingMs: 10_000, serverNow: Date.now() },
       type: 'ROUND_STARTED',
     }));
 
     expect(document.querySelector('.match-screen--preparing')).not.toBeInTheDocument();
+    expect(document.querySelector('.timer-ring--charging')).not.toBeInTheDocument();
     expect(screen.getByRole('timer')).toHaveAccessibleName('10 segundos restantes');
+    expect(document.querySelectorAll('button.answer-option')).toHaveLength(4);
+    expect(document.querySelector('.answer-grid--placeholder')).not.toBeInTheDocument();
     expect(screen.getAllByRole('button').every((button) => !button.hasAttribute('disabled'))).toBe(true);
+    expect(screen.getByText('Alternativas liberadas')).toBeInTheDocument();
   });
 
   it('assume o socket pré-carregado e só envia READY depois que a MatchScreen monta', async () => {

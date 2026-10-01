@@ -1,6 +1,7 @@
 import {
   createLiveMatchState,
   LIVE_PREPARATION_MS,
+  LIVE_READING_MS,
   LIVE_ROUND_RESULT_MS,
   projectLiveMatchForSeat,
   projectLiveMatchPresentationForSeat,
@@ -58,11 +59,14 @@ function startFirstRound(mode: MatchMode = 'RANKED'): { now: number; state: Live
   expect(state.phase).toBe('ROUND_READY');
   state = command(state, { roundNumber: 1, seat: 1, type: 'ROUND_READY' }, preparationEnds + 1);
   state = command(state, { roundNumber: 1, seat: 2, type: 'ROUND_READY' }, preparationEnds + 2);
+  expect(state.phase).toBe('READING');
+  const readingEnds = preparationEnds + 2 + LIVE_READING_MS;
+  state = command(state, { type: 'ALARM' }, readingEnds);
   expect(state.phase).toBe('ANSWERING');
-  return { now: preparationEnds + 2, state };
+  return { now: readingEnds, state };
 }
 
-function stateInPausablePhase(phase: 'PREPARING' | 'ROUND_READY' | 'ANSWERING' | 'ROUND_RESULT'): {
+function stateInPausablePhase(phase: 'PREPARING' | 'ROUND_READY' | 'READING' | 'ANSWERING' | 'ROUND_RESULT'): {
   now: number;
   state: LiveMatchState;
 } {
@@ -78,13 +82,15 @@ function stateInPausablePhase(phase: 'PREPARING' | 'ROUND_READY' | 'ANSWERING' |
   if (phase === 'ROUND_READY') return { now: preparationEnds + 1, state };
   state = command(state, { roundNumber: 1, seat: 1, type: 'ROUND_READY' }, preparationEnds + 1);
   state = command(state, { roundNumber: 1, seat: 2, type: 'ROUND_READY' }, preparationEnds + 2);
+  if (phase === 'READING') return { now: preparationEnds + 3, state };
+  state = command(state, { type: 'ALARM' }, state.phaseDeadlineMs ?? 0);
   const answerEnds = state.phaseDeadlineMs ?? 0;
   state = command(state, { type: 'ALARM' }, answerEnds);
   return { now: answerEnds + 1, state };
 }
 
 describe('partida simultânea autoritativa', () => {
-  it('só inicia os 10 segundos depois de ambos READY na rodada', () => {
+  it('só inicia os 10 segundos depois de ambos READY e de 1,5 s de leitura', () => {
     let state = match();
     state = command(state, { seat: 1, type: 'CONNECT' }, 1_100);
     state = command(state, { seat: 2, type: 'CONNECT' }, 1_101);
@@ -99,8 +105,35 @@ describe('partida simultânea autoritativa', () => {
     state = command(state, { roundNumber: 1, seat: 1, type: 'ROUND_READY' }, deliveredAt + 1);
     expect(state.phase).toBe('ROUND_READY');
     state = command(state, { roundNumber: 1, seat: 2, type: 'ROUND_READY' }, deliveredAt + 2);
+    // Leitura: pergunta e foto sozinhas, sem alternativas e sem relógio de resposta.
+    expect(state.phase).toBe('READING');
+    expect(state.phaseDeadlineMs).toBe(deliveredAt + 2 + LIVE_READING_MS);
+    const reading = projectLiveMatchForSeat(state, 1, deliveredAt + 3);
+    expect(reading.question?.prompt).toBeDefined();
+    expect(reading.question?.options).toBeUndefined();
+    expect(() => transitionLiveMatch(state, {
+      questionId: 'q-1', roundNumber: 1, seat: 1, selectedOption: 0, type: 'ANSWER',
+    }, deliveredAt + 3)).toThrowError(expect.objectContaining({ code: 'INVALID_STATE' }));
+    // Um instante antes do fim da leitura nada muda; no limite, começa a resposta.
+    expect(command(state, { type: 'ALARM' }, deliveredAt + 2 + LIVE_READING_MS - 1).phase).toBe('READING');
+    state = command(state, { type: 'ALARM' }, deliveredAt + 2 + LIVE_READING_MS);
     expect(state.phase).toBe('ANSWERING');
-    expect(state.phaseDeadlineMs).toBe(deliveredAt + 2 + QUESTION_DURATION_MS);
+    expect(state.phaseDeadlineMs).toBe(deliveredAt + 2 + LIVE_READING_MS + QUESTION_DURATION_MS);
+    expect(projectLiveMatchForSeat(state, 1, deliveredAt + 2 + LIVE_READING_MS).question?.options).toHaveLength(4);
+  });
+
+  it('nunca entrega alternativas antes da leitura terminar, nem na pré-carga', () => {
+    let state = match();
+    expect(projectLiveMatchPresentationForSeat(state, 1).preload.firstQuestion.options).toBeUndefined();
+    state = command(state, { seat: 1, type: 'CONNECT' }, 1_100);
+    state = command(state, { seat: 2, type: 'CONNECT' }, 1_101);
+    state = command(state, { seat: 1, type: 'LOBBY_READY' }, 1_102);
+    state = command(state, { seat: 2, type: 'LOBBY_READY' }, 1_103);
+    state = command(state, { type: 'ALARM' }, 1_103 + LIVE_PREPARATION_MS);
+    const roundReady = projectLiveMatchForSeat(state, 2, 1_103 + LIVE_PREPARATION_MS);
+    expect(roundReady.phase).toBe('ROUND_READY');
+    expect(roundReady.question?.options).toBeUndefined();
+    expect(JSON.stringify(roundReady)).not.toContain('Correta');
   });
 
   it('retoma a preparação quando o jogador já pronto reconecta no lobby', () => {
@@ -211,7 +244,9 @@ describe('partida simultânea autoritativa', () => {
           expect(state.roundIndex + 1).toBe(round + 1);
           state = command(state, { roundNumber: round + 1, seat: 1, type: 'ROUND_READY' }, now + 1);
           state = command(state, { roundNumber: round + 1, seat: 2, type: 'ROUND_READY' }, now + 2);
-          now += 2;
+          now += 2 + LIVE_READING_MS;
+          state = command(state, { type: 'ALARM' }, now);
+          expect(state.phase).toBe('ANSWERING');
         }
       }
       expect(state.phase).toBe('FINALIZING');
@@ -233,7 +268,7 @@ describe('partida simultânea autoritativa', () => {
     expect(state.phaseDeadlineMs).toBe(reconnectedAt + 6_500);
   });
 
-  it.each(['PREPARING', 'ROUND_READY', 'ANSWERING', 'ROUND_RESULT'] as const)(
+  it.each(['PREPARING', 'ROUND_READY', 'READING', 'ANSWERING', 'ROUND_RESULT'] as const)(
     'reconecta dentro da graça preservando integralmente %s',
     (phase) => {
       const prepared = stateInPausablePhase(phase);

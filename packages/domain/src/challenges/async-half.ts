@@ -1,6 +1,6 @@
 import { canRevealFirstPlayerRound, CHALLENGE_MODE, type SealedRoundAnswer } from './challenge.js';
 import { RECONNECT_GRACE_MS } from '../match/connection.js';
-import { LIVE_ROUND_RESULT_MS, type LiveMatchProjection, type LiveQuestion } from '../match/live-match.js';
+import { LIVE_READING_MS, LIVE_ROUND_RESULT_MS, type LiveMatchProjection, type LiveQuestion } from '../match/live-match.js';
 import { publicQuestion } from '../match/projection.js';
 import { questionsForMode } from '../match/rules.js';
 import { QUESTION_DURATION_MS, remainingAt, scoreAnswer } from '../match/scoring.js';
@@ -20,11 +20,12 @@ export type AsyncHalfPhase =
   | 'FINALIZING'
   | 'FINISHED'
   | 'PAUSED'
+  | 'READING'
   | 'ROUND_READY'
   | 'ROUND_RESULT'
   | 'VOID';
 
-type PausablePhase = 'ANSWERING' | 'ROUND_READY' | 'ROUND_RESULT';
+type PausablePhase = 'ANSWERING' | 'READING' | 'ROUND_READY' | 'ROUND_RESULT';
 
 export type AsyncHalfSeat = 'FIRST' | 'SECOND';
 
@@ -81,6 +82,7 @@ export type AsyncHalfEvent =
   | { type: 'NOOP' }
   | { type: 'PAUSED' }
   | { type: 'QUESTION_AVAILABLE' }
+  | { type: 'READING_STARTED' }
   | { type: 'RESUMED' }
   | { type: 'ROUND_RESOLVED' }
   | { type: 'ROUND_STARTED' };
@@ -98,7 +100,7 @@ export class AsyncHalfCommandError extends Error {
 }
 
 function pausablePhase(phase: AsyncHalfPhase): PausablePhase | null {
-  return phase === 'ROUND_READY' || phase === 'ANSWERING' || phase === 'ROUND_RESULT' ? phase : null;
+  return phase === 'ROUND_READY' || phase === 'READING' || phase === 'ANSWERING' || phase === 'ROUND_RESULT' ? phase : null;
 }
 
 /** Fases que não aceitam mais nenhuma ação do jogador. */
@@ -172,6 +174,11 @@ function alarm(state: AsyncHalfState, nowMs: number): AsyncHalfTransition {
     return { event: { type: 'NOOP' }, state };
   }
   if (state.phase === 'ROUND_READY') return finalize(state, 'VOID');
+  if (state.phase === 'READING') {
+    state.phase = 'ANSWERING';
+    state.phaseDeadlineMs = nowMs + QUESTION_DURATION_MS;
+    return { event: { type: 'ROUND_STARTED' }, state };
+  }
   if (state.phase === 'ANSWERING') return resolveRound(state, nowMs);
   if (state.phase === 'ROUND_RESULT') {
     if (state.roundIndex + 1 >= state.questions.length) return finalize(state, 'FINALIZING');
@@ -288,9 +295,9 @@ export function transitionAsyncHalf(
       throw new AsyncHalfCommandError('INVALID_ROUND_READY', 'A rodada informada não aguarda READY.');
     }
     state.startedAtMs ??= nowMs;
-    state.phase = 'ANSWERING';
-    state.phaseDeadlineMs = nowMs + QUESTION_DURATION_MS;
-    return { event: { type: 'ROUND_STARTED' }, state };
+    state.phase = 'READING';
+    state.phaseDeadlineMs = nowMs + LIVE_READING_MS;
+    return { event: { type: 'READING_STARTED' }, state };
   }
 
   if (state.phase !== 'ANSWERING') {
@@ -341,8 +348,14 @@ export function sealedAnswersOf(state: AsyncHalfState): SealedRoundAnswer[] {
 }
 
 function phaseHasCurrentQuestion(state: AsyncHalfState): boolean {
-  if (['ROUND_READY', 'ANSWERING', 'ROUND_RESULT'].includes(state.phase)) return true;
+  if (['ROUND_READY', 'READING', 'ANSWERING', 'ROUND_RESULT'].includes(state.phase)) return true;
   return state.phase === 'PAUSED' && state.pause !== null;
+}
+
+/** Alternativas só depois que o relógio da rodada começa (fim da leitura). */
+function phaseRevealsOptions(state: AsyncHalfState): boolean {
+  if (state.phase === 'ANSWERING' || state.phase === 'ROUND_RESULT') return true;
+  return state.phase === 'PAUSED' && (state.pause?.phase === 'ANSWERING' || state.pause?.phase === 'ROUND_RESULT');
 }
 
 /**
@@ -386,7 +399,7 @@ export function projectAsyncHalf(state: AsyncHalfState, nowMs: number): LiveMatc
   if (state.sealedOpponent === null) projection.opponentPending = true;
 
   if (phaseHasCurrentQuestion(state)) {
-    projection.question = publicQuestion(currentQuestion(state));
+    projection.question = publicQuestion(currentQuestion(state), phaseRevealsOptions(state));
     projection.round = { number: state.roundIndex + 1, total: state.questions.length };
   }
   if (state.phaseDeadlineMs !== null) projection.remainingMs = remainingAt(nowMs, state.phaseDeadlineMs);

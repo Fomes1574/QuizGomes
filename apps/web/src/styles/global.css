@@ -930,11 +930,11 @@ dialog.dialog-backdrop::backdrop { background: transparent; }
 .question-media-zoom span { font-weight: 700; font-size: .9rem; opacity: .85; }
 @keyframes zoom-in-backdrop { from { opacity: 0; } to { opacity: 1; } }
 .answer-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-.answer-option { --option-color: var(--brand); position: relative; display: grid; min-height: 84px; grid-template-columns: 38px minmax(0, 1fr) auto; align-items: center; gap: 11px; overflow: hidden; padding: 12px; border: 2px solid color-mix(in srgb, var(--option-color) 22%, var(--border)); border-radius: 20px; text-align: left; touch-action: manipulation; cursor: pointer; background: var(--surface); box-shadow: 0 5px 0 color-mix(in srgb, var(--option-color) 26%, var(--border)); transition: transform 90ms ease, border-color 250ms ease, background-color 250ms ease, box-shadow 90ms ease; animation: option-in 360ms var(--ease-out) calc(var(--match-question-delay, 0ms) + var(--option-delay, 0ms)) both; }
-.answer-option[data-option='A'] { --option-color: var(--option-a); --option-delay: 40ms; }
-.answer-option[data-option='B'] { --option-color: var(--option-b); --option-delay: 90ms; }
-.answer-option[data-option='C'] { --option-color: var(--option-c); --option-delay: 140ms; }
-.answer-option[data-option='D'] { --option-color: var(--option-d); --option-delay: 190ms; }
+.answer-option { --option-color: var(--brand); position: relative; display: grid; min-height: 84px; grid-template-columns: 38px minmax(0, 1fr) auto; align-items: center; gap: 11px; overflow: hidden; padding: 12px; border: 2px solid color-mix(in srgb, var(--option-color) 22%, var(--border)); border-radius: 20px; text-align: left; touch-action: manipulation; cursor: pointer; background: var(--surface); box-shadow: 0 5px 0 color-mix(in srgb, var(--option-color) 26%, var(--border)); transition: transform 90ms ease, border-color 250ms ease, background-color 250ms ease, box-shadow 90ms ease; animation: option-in 240ms var(--ease-out) calc(var(--match-question-delay, 0ms) + var(--option-delay, 0ms)) both; }
+.answer-option[data-option='A'] { --option-color: var(--option-a); --option-delay: 0ms; }
+.answer-option[data-option='B'] { --option-color: var(--option-b); --option-delay: 25ms; }
+.answer-option[data-option='C'] { --option-color: var(--option-c); --option-delay: 50ms; }
+.answer-option[data-option='D'] { --option-color: var(--option-d); --option-delay: 75ms; }
 .answer-option__marker { display: grid; width: 38px; height: 38px; place-items: center; border-radius: 12px; color: var(--option-ink); background: var(--option-color); box-shadow: inset 0 -3px 0 rgb(0 0 0 / .18); font: 800 .95rem/1 var(--font-display); transition: color 200ms ease, background-color 200ms ease, transform 200ms ease; }
 .answer-option > strong { display: -webkit-box; overflow: hidden; overflow-wrap: anywhere; font-size: clamp(.8rem, 2.5vw, 1.02rem); font-weight: 700; line-height: 1.3; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 @media (hover: hover) {
@@ -979,14 +979,20 @@ dialog.dialog-backdrop::backdrop { background: transparent; }
 .timer-ring--correct strong, .timer-ring--wrong strong { color: #fff; font-size: 1.7rem; animation: verdict-stamp 460ms var(--ease-spring) both; }
 .timer-ring--correct, .timer-ring--wrong { animation: ring-pulse 600ms ease-out both; }
 .match-timer--preparing { pointer-events: none; }
+/*
+ * Leitura (1,5 s): pergunta e foto sozinhas. O anel e a barra se enchem de
+ * vazio a cheio no tempo exato da leitura; quando completam, as alternativas
+ * chegam e os dois passam a esvaziar. Só stroke/transform, nada de layout.
+ */
+.timer-ring--charging .timer-ring__fill { stroke: var(--brand); stroke-dashoffset: 0; animation: ring-charge var(--charge-duration) cubic-bezier(.35, 0, .25, 1) both; }
+.match-timer--charging .match-timer__bar { transform: scaleX(1); animation: match-timer-charge var(--charge-duration) cubic-bezier(.35, 0, .25, 1) both; }
+.answer-grid--placeholder { visibility: hidden; pointer-events: none; }
+.answer-grid--placeholder .answer-option { animation: none; }
+@keyframes ring-charge { from { stroke-dashoffset: 100; } to { stroke-dashoffset: 0; } }
+@keyframes match-timer-charge { from { transform: scaleX(0); } to { transform: scaleX(1); } }
 .match-lobby-screen { position: fixed; inset: 0; display: grid; overflow-y: auto; place-items: center; align-content: center; gap: 24px; padding: 28px; text-align: center; background: radial-gradient(circle at 50% 45%, color-mix(in srgb, var(--brand) 12%, transparent), transparent 30rem), var(--background); }
 .match-lobby-screen h1 { max-width: 620px; margin: 0; font-size: clamp(1.5rem, 6vw, 3rem); letter-spacing: -.045em; }
 .countdown { color: var(--brand); font-size: clamp(4rem, 20vw, 9rem); line-height: 1; }
-.round-transition-overlay { position: fixed; z-index: 230; inset: 0; display: grid; place-items: center; padding: 28px; background: radial-gradient(circle at 50% 45%, color-mix(in srgb, var(--brand) 12%, transparent), transparent 30rem), var(--background); animation: round-transition-backdrop var(--match-question-entrance-duration) ease-out calc(var(--round-transition-duration) - var(--match-question-entrance-duration)) both; }
-.round-transition { display: grid; min-width: min(72vw, 320px); place-items: center; gap: 8px; color: var(--text-primary); animation: round-transition-sequence calc(var(--round-transition-duration) - var(--match-question-entrance-duration)) cubic-bezier(.4, 0, .2, 1) both; }
-.round-transition > span { color: var(--brand); font: 800 .68rem/1 var(--font-display); letter-spacing: .24em; }
-.round-transition > strong { display: flex; align-items: baseline; gap: 9px; font: 750 clamp(4rem, 18vw, 8.5rem)/.86 var(--font-display); letter-spacing: -.08em; }
-.round-transition > strong small { color: var(--text-secondary); font-size: .28em; letter-spacing: -.04em; }
 .match-connection-screen { position: fixed; z-index: 240; inset: 0; display: grid; overflow: hidden; place-items: center; padding: 28px; text-align: center; background: radial-gradient(circle at 50% 45%, color-mix(in srgb, var(--brand) 10%, transparent), transparent 31rem), var(--background); animation: match-connection-in 180ms cubic-bezier(.2, .75, .25, 1) both; }
 :root[data-theme='dark'] .match-connection-screen { background: radial-gradient(circle at 50% 45%, rgb(154 25 35 / .16), transparent 31rem), #0e0b0c; }
 .match-connection-screen--leaving { pointer-events: none; animation: match-connection-out 180ms cubic-bezier(.4, 0, .2, 1) both; }
@@ -1149,8 +1155,6 @@ dialog.dialog-backdrop::backdrop { background: transparent; }
 @keyframes score-settle { from { opacity: .55; transform: translateY(3px); } }
 @keyframes score-gain { 0% { opacity: 0; transform: translateY(7px); } 22%, 62% { opacity: 1; } 100% { opacity: 0; transform: translateY(-8px); } }
 @keyframes round-result-out { from { opacity: 1; transform: translateY(0) scale(1); } to { opacity: 0; transform: translateY(-6px) scale(.997); } }
-@keyframes round-transition-sequence { 0% { opacity: 0; transform: translateY(8px) scale(.985); } 20%, 80% { opacity: 1; transform: translateY(0) scale(1); } 100% { opacity: 0; transform: translateY(-5px) scale(.995); } }
-@keyframes round-transition-backdrop { from { opacity: 1; } to { opacity: 0; } }
 @keyframes match-connection-in { from { opacity: 0; transform: translateY(5px) scale(.997); } }
 @keyframes match-connection-out { from { opacity: 1; transform: translateY(0) scale(1); } to { opacity: 0; transform: translateY(-4px) scale(.998); } }
 @keyframes match-connection-signal { to { transform: rotate(1turn); } }
@@ -1302,13 +1306,13 @@ dialog.dialog-backdrop::backdrop { background: transparent; }
   .match-found--duel:not(.match-found--leaving), .lobby-duel { opacity: 1; transform: none; }
   .duel-progress i { width: 100%; }
   .match-timer__bar--running { animation: none !important; transform: scaleX(var(--timer-reduced-ratio)); will-change: auto; }
-  .match-screen--resolved .match-scoreboard, .match-screen--resolved .question-stage, .round-transition, .score-gain { opacity: 1; transform: none; animation: none !important; }
+  .match-timer--charging .match-timer__bar { animation: none !important; }
+  .match-screen--resolved .match-scoreboard, .match-screen--resolved .question-stage, .score-gain { opacity: 1; transform: none; animation: none !important; }
   .confetti { display: none; }
   .invite-orbit__ring, .invite-orbit__slot svg, .streak-title svg { animation: none !important; }
   .record-badge, .match-result-crown, .match-result-heading h1, .match-result-player__score, .match-result-tagline { animation: none !important; }
   .answer-option, .answer-option--selected::after, .streak-chip, .match-timer--urgent > strong, .timer-ring, .timer-ring strong, .timer-ring__fill { animation: none !important; }
   .match-timer--urgent::after { animation: none !important; }
-  .round-transition-overlay { opacity: 1; animation: none !important; }
   .match-connection-card__signal { opacity: 1; transform: none; animation: none !important; }
   .match-connection-screen { opacity: 1; transform: none; }
   .match-connection-screen--leaving { opacity: 0; }
@@ -1394,7 +1398,8 @@ dialog.dialog-backdrop::backdrop { background: transparent; }
 .question-stage {
   width: min(100%, 980px);
   align-content: stretch;
-  grid-template-rows: minmax(0, 1fr) auto;
+  /* A linha do enunciado nunca fica menor que o próprio texto: se não couber, a área rola. */
+  grid-template-rows: minmax(min-content, 1fr) auto;
   gap: 14px;
   overflow-x: hidden;
   overflow-y: auto;
@@ -1403,7 +1408,7 @@ dialog.dialog-backdrop::backdrop { background: transparent; }
   scrollbar-width: none;
 }
 .question-stage::-webkit-scrollbar { display: none; }
-.question-stage--media { grid-template-rows: auto minmax(0, 1fr) auto; }
+.question-stage--media { grid-template-rows: auto minmax(min-content, 1fr) auto; }
 .question-stage h1 { align-self: center; line-height: 1.22; text-wrap: balance; }
 .question-stage h1[data-length='short'] { font-size: clamp(1.45rem, 6.4vw, 2.7rem); }
 .question-stage h1[data-length='medium'] { font-size: clamp(1.22rem, 5.2vw, 2.3rem); }

@@ -10,11 +10,6 @@ import {
 } from '../components/match-connection-screen.js';
 import { MatchLobbyDuel } from '../components/match-lobby-duel.js';
 import { MatchResultScreen, type OpponentFriendStatus } from '../components/match-result-screen.js';
-import {
-  MATCH_QUESTION_ENTRANCE_MS,
-  MatchRoundTransition,
-  roundPresentationDelay,
-} from '../components/match-round-transition.js';
 import { MatchScreen } from '../components/match-screen.js';
 import { ReportQuestionDialog } from '../components/report-question-dialog.js';
 import { useAuth } from '../features/auth-context.js';
@@ -51,7 +46,6 @@ interface RoomMessage {
   match?: LiveMatchProjection;
   message?: string;
   result?: TerminalResult;
-  transitionMs?: number;
   type?: string;
   voidReason?: string;
 }
@@ -87,7 +81,8 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
   const [deadlineMs, setDeadlineMs] = useState<number | null>(null);
   // Janela da rodada já compensada pela ida e volta: anima o anel e a barra.
   const [answerWindowMs, setAnswerWindowMs] = useState(0);
-  const [roundIntro, setRoundIntro] = useState<{ durationMs: number; number: number; total: number } | null>(null);
+  // Leitura (1,5 s no servidor), também compensada: o anel enche exatamente até as alternativas.
+  const [readingWindowMs, setReadingWindowMs] = useState<number | null>(null);
   const [statusMessage, setStatusMessage] = useState('Conectando à sala');
   const [error, setError] = useState<string | null>(null);
   const [terminal, setTerminal] = useState<{
@@ -113,7 +108,6 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
     let disposed = false;
     let retryStartedAtMonotonicMs: number | null = null;
     let retryTimer: number | null = null;
-    let roundReadyTimer: number | null = null;
     // Invalida um ROUND_READY que ainda espera a foto quando a rodada muda.
     let roundReadyToken = 0;
     let countdownTimer: number | null = null;
@@ -190,8 +184,6 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
 
     const clearRoundReady = () => {
       roundReadyToken += 1;
-      if (roundReadyTimer !== null) window.clearTimeout(roundReadyTimer);
-      roundReadyTimer = null;
     };
     const clearCountdown = () => {
       if (countdownTimer !== null) window.clearInterval(countdownTimer);
@@ -220,7 +212,7 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
       clearCountdown();
       setProjection(null);
       setDeadlineMs(null);
-      setRoundIntro(null);
+      setReadingWindowMs(null);
       setError(null);
       setStatusMessage('Confirmando encerramento da partida...');
     };
@@ -234,31 +226,23 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
       update();
       countdownTimer = window.setInterval(update, 100);
     };
-    const acknowledgeRound = (
-      socket: WebSocket,
-      match: LiveMatchProjection,
-      delayMs: number,
-      showPresentation = false,
-    ) => {
+    /**
+     * Pronto da rodada: assim que a foto (se houver) estiver na memória — no
+     * máximo 4 s —, avisa o servidor. Quando os dois avisam, começa a leitura
+     * para os dois ao mesmo tempo, já com a foto pronta para aparecer junto.
+     */
+    const acknowledgeRound = (socket: WebSocket, match: LiveMatchProjection) => {
       if (match.round === undefined) return;
       clearRoundReady();
-      const presentationMs = Math.max(0, delayMs);
-      setRoundIntro(showPresentation ? { ...match.round, durationMs: presentationMs } : null);
-      // A foto começa a baixar junto com a apresentação; o teto conta a
-      // partir de agora, então apresentação + foto nunca passam de ~4 s.
-      const imageReady = waitForQuestionImage(match.question?.imageUrl, Math.max(presentationMs, QUESTION_IMAGE_READY_CAP_MS));
+      setReadingWindowMs(null);
+      const imageReady = waitForQuestionImage(match.question?.imageUrl, QUESTION_IMAGE_READY_CAP_MS);
       const token = roundReadyToken;
-      roundReadyTimer = window.setTimeout(() => {
-        roundReadyTimer = null;
-        setRoundIntro(null);
-        if (showPresentation) setStatusMessage('Sincronizando jogadores');
-        void imageReady.then(() => {
-          if (token !== roundReadyToken) return;
-          if (socket.readyState === WebSocket.OPEN) {
-            socket.send(JSON.stringify({ roundNumber: match.round?.number, type: 'ROUND_READY' }));
-          }
-        });
-      }, presentationMs);
+      void imageReady.then(() => {
+        if (token !== roundReadyToken) return;
+        if (socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({ roundNumber: match.round?.number, type: 'ROUND_READY' }));
+        }
+      });
     };
     const applyProjection = (match: LiveMatchProjection) => {
       setProjection(match);
@@ -278,7 +262,8 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
             }]
         ));
         const resolution = match.resolution;
-        if (resolution !== undefined) {
+        const options = question.options;
+        if (resolution !== undefined && options !== undefined) {
           setSeenQuestions((current) => current.map((seen) => (
             seen.roundNumber !== roundNumber || seen.outcome !== undefined
               ? seen
@@ -286,23 +271,27 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
                 ...seen,
                 outcome: {
                   correctOption: resolution.correctOption,
-                  options: question.options,
+                  options,
                   selectedOption: resolution.viewer.selectedOption,
                 },
               }
           )));
         }
       }
+      if (match.phase === 'READING' && match.remainingMs !== undefined) {
+        const receivedAt = Date.now();
+        setReadingWindowMs(answerDeadline(receivedAt, match.remainingMs, roundTripMs) - receivedAt);
+      }
       if (match.phase === 'ANSWERING' && match.remainingMs !== undefined) {
         const receivedAt = Date.now();
         const deadline = answerDeadline(receivedAt, match.remainingMs, roundTripMs);
         setDeadlineMs(deadline);
         setAnswerWindowMs(deadline - receivedAt);
-        setRoundIntro(null);
+        setReadingWindowMs(null);
       }
       if (match.phase === 'ROUND_RESULT') {
         setDeadlineMs(Date.now());
-        setRoundIntro(null);
+        setReadingWindowMs(null);
       }
       if (match.phase === 'PAUSED' && match.paused !== undefined) {
         const kind = connectionState === 'CONNECTED' ? 'opponent' : 'local';
@@ -345,7 +334,6 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
         clearRoundReady();
         clearCountdown();
         updateConnectionState('CONNECTED');
-        setRoundIntro(null);
         if (payload.match !== undefined) setProjection(payload.match);
         setTerminal({
           ...(payload.cancelledBy === undefined ? {} : { cancelledBy: payload.cancelledBy }),
@@ -369,15 +357,15 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
       }
       if (payload.type === 'ROOM_STATE') {
         if (payload.match?.phase === 'LOBBY') socket.send(JSON.stringify({ type: 'READY' }));
-        if (payload.match?.phase === 'ROUND_READY') acknowledgeRound(socket, payload.match, 0);
+        if (payload.match?.phase === 'ROUND_READY') acknowledgeRound(socket, payload.match);
       }
       if (payload.type === 'PREPARING') setStatusMessage('PREPARE-SE PARA A PARTIDA');
       if (payload.type === 'ROUND_QUESTION' && payload.match !== undefined) {
-        acknowledgeRound(socket, payload.match, roundPresentationDelay(payload.transitionMs), true);
+        acknowledgeRound(socket, payload.match);
       }
       if (payload.type === 'RESUMED') {
         setStatusMessage('Partida restaurada');
-        if (payload.match?.phase === 'ROUND_READY') acknowledgeRound(socket, payload.match, 0);
+        if (payload.match?.phase === 'ROUND_READY') acknowledgeRound(socket, payload.match);
       }
     };
 
@@ -387,7 +375,6 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
       clearHeartbeat();
       clearSocketOpen();
       clearRoundReady();
-      setRoundIntro(null);
       const now = performance.now();
       retryStartedAtMonotonicMs ??= now;
       if (!terminalRecovery) {
@@ -744,14 +731,15 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
 
   const activeQuestion = projection?.question;
   const preparingQuestion = projection?.phase === 'ROUND_READY';
+  const readingQuestion = projection?.phase === 'READING';
   if (activeQuestion !== undefined && projection?.round !== undefined &&
-    (preparingQuestion || projection.phase === 'ANSWERING' || projection.phase === 'ROUND_RESULT') &&
-    (preparingQuestion || deadlineMs !== null)) {
+    (preparingQuestion || readingQuestion || projection.phase === 'ANSWERING' || projection.phase === 'ROUND_RESULT') &&
+    (preparingQuestion || readingQuestion || deadlineMs !== null)) {
     const activeRound = projection.round;
     return (
       <>
         <MatchScreen
-          deadlineMs={preparingQuestion ? 0 : deadlineMs ?? 0}
+          deadlineMs={preparingQuestion || readingQuestion ? 0 : deadlineMs ?? 0}
           duelRoomId={isChallenge ? undefined : sessionId}
           key={`${projection.round.number}:${activeQuestion.id}`}
           onAnswer={(selectedOption) => {
@@ -780,29 +768,18 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
           playerScore={projection.viewer.score}
           preparing={preparingQuestion}
           question={activeQuestion}
-          questionPresentationDelayMs={preparingQuestion
-            ? roundIntro === null
-              ? -MATCH_QUESTION_ENTRANCE_MS
-              : Math.max(0, roundIntro.durationMs - MATCH_QUESTION_ENTRANCE_MS)
-            : 0}
+          readingMs={readingQuestion ? readingWindowMs : null}
           remainingMs={projection.phase === 'ANSWERING' ? answerWindowMs : 0}
           resolution={projection.resolution}
           round={projection.round}
           selectedOption={projection.selectedOption}
           streak={streak.count}
         />
-        {roundIntro !== null && (
-          <MatchRoundTransition
-            durationMs={roundIntro.durationMs}
-            number={roundIntro.number}
-            total={roundIntro.total}
-          />
-        )}
         {/*
           Discreto de propósito: só um ícone, sem rótulo grande competindo com a pergunta.
           Abrir o diálogo não envia nenhum comando à sala — o timer não sabe que ele existe.
         */}
-        {!preparingQuestion && roundIntro === null && (
+        {!preparingQuestion && !readingQuestion && (
           <button
             aria-label="Reportar esta pergunta"
             className="report-trigger"
@@ -830,7 +807,7 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
   }
 
   const canCancel = projection === null || projection.phase === 'LOBBY' || projection.phase === 'PREPARING';
-  const lobbyDuel = error === null && roundIntro === null && projection !== null
+  const lobbyDuel = error === null && projection !== null
     ? { opponent: projection.opponent, viewer: projection.viewer }
     : null;
   return (
@@ -855,14 +832,12 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
       )}
       {error !== null
         ? <h1>{error}</h1>
-        : roundIntro !== null
-          ? <MatchRoundTransition durationMs={roundIntro.durationMs} number={roundIntro.number} total={roundIntro.total} />
-          : (
-            <>
-              <span aria-hidden="true" className="spinner match-lobby-spinner" />
-              <h1>{statusMessage}</h1>
-            </>
-          )}
+        : (
+          <>
+            <span aria-hidden="true" className="spinner match-lobby-spinner" />
+            <h1>{statusMessage}</h1>
+          </>
+        )}
       {countdown !== null && <strong className="countdown">{countdown}</strong>}
       {canCancel && <Button disabled={cancelling} onClick={() => {
         socketRef.current?.send(JSON.stringify({ type: 'CANCEL' }));

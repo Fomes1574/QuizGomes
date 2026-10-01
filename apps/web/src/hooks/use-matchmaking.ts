@@ -96,11 +96,11 @@ export function elapsedSearchSeconds(timeoutAt: number | null, now = Date.now())
 function isQuestion(value: unknown): value is PublicQuestion {
   if (typeof value !== 'object' || value === null) return false;
   const question = value as Partial<PublicQuestion>;
+  // A pré-carga traz só enunciado e foto: as alternativas chegam com o relógio da rodada.
+  const options = question.options;
   return typeof question.id === 'string'
     && typeof question.prompt === 'string'
-    && Array.isArray(question.options)
-    && question.options.length === 4
-    && question.options.every((option) => typeof option === 'string')
+    && (options === undefined || (Array.isArray(options) && options.length === 4 && options.every((option) => typeof option === 'string')))
     && (question.imageUrl === null || typeof question.imageUrl === 'string');
 }
 
