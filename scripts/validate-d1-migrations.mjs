@@ -967,6 +967,7 @@ function assertHiddenCatalogSchema(scenario) {
   }
 }
 
+/** @param {MigrationScenario} scenario */
 function assertFriendQueueAlertsSchema(scenario) {
   const alertColumns = query(scenario, 'PRAGMA table_info(friend_queue_alerts)').map(({ name }) => name);
   assert(
