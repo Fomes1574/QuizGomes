@@ -133,7 +133,13 @@ export function parseQuestionsCsv(
 
   if (diagnostics.length > 0) return { diagnostics, questions: [] };
 
-  const hashes = questions.map((question) => JSON.stringify([question.themeId, question.prompt]));
+  // Mesma regra do hash de conteúdo: enunciado repetido com outras
+  // alternativas (ou as mesmas em outra ordem) é outra pergunta — por
+  // exemplo, "Quem é esse pokémon?" com uma foto diferente em cada linha.
+  const normalize = (text: string) => text.normalize('NFKC').trim().toLocaleLowerCase('pt-BR');
+  const hashes = questions.map((question) => JSON.stringify([
+    question.themeId, normalize(question.prompt), ...question.options.map(normalize),
+  ]));
   // No envio em partes, repetidas são puladas pelo serviço de importação.
   if (!options.allowRepeated && new Set(hashes).size !== hashes.length) {
     return { diagnostics: [{ messages: ['O lote contém perguntas duplicadas entre si.'], row: 0 }], questions: [] };

@@ -99,6 +99,18 @@ describe('import CSV de perguntas', () => {
     expect(diagnostics[0]?.messages[0]).toContain('duplicadas');
   });
 
+  it('mesmo enunciado com alternativas em outra ordem é outra pergunta; coluna foto é ignorada', () => {
+    const csv = [
+      'prompt,optionA,optionB,optionC,optionD,correctOption,foto',
+      '"Quem é esse pokémon?",Pikachu,Bulbasaur,Charmander,Squirtle,0,pikachu.jpg',
+      '"Quem é esse pokémon?",Bulbasaur,Pikachu,Charmander,Squirtle,0,bulbasaur.jpg',
+    ].join('\n');
+    const { diagnostics, questions } = parseQuestionsCsv(csv, 'tema-1');
+    expect(diagnostics).toEqual([]);
+    expect(questions).toHaveLength(2);
+    expect(questions[0]).not.toHaveProperty('foto');
+  });
+
   it('suporta aspas escapadas e vírgulas dentro de campos entre aspas', () => {
     const csv = [
       HEADER,

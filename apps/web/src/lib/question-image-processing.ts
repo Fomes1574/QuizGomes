@@ -11,7 +11,8 @@ export const QUESTION_IMAGE_TARGET_BYTES = 60 * 1_024;
 export const QUESTION_IMAGE_HARD_CAP_BYTES = 100 * 1_024 - 1;
 export const QUESTION_IMAGE_MAX_DIMENSION = 960;
 
-const MAX_SOURCE_BYTES = 25 * 1_024 * 1_024;
+/** Maior foto original aceita para compressão (também o teto de leitura dentro de um .zip). */
+export const QUESTION_IMAGE_SOURCE_MAX_BYTES = 25 * 1_024 * 1_024;
 const MIN_SOURCE_DIMENSION = 64;
 const MAX_ASPECT_RATIO = 3;
 const LONGEST_SIDES = [960, 840, 720, 640] as const;
@@ -24,10 +25,11 @@ export interface ProcessedQuestionImage {
   width: number;
 }
 
-export function validateQuestionImageFile(file: Blob & { name?: string }): string | null {
+/** Só nome, tipo e tamanho: também serve para a foto ainda dentro de um .zip. */
+export function validateQuestionImageFile(file: { name?: string; size: number; type: string }): string | null {
   if (isSvgFile(file)) return 'SVG não é aceito como foto de pergunta.';
   if (!INPUT_TYPES.has(effectiveImageType(file) ?? '')) return 'Use uma foto PNG, JPEG, WebP, AVIF ou GIF.';
-  if (file.size > MAX_SOURCE_BYTES) return 'A foto é grande demais para processar com segurança (máx. 25 MB).';
+  if (file.size > QUESTION_IMAGE_SOURCE_MAX_BYTES) return 'A foto é grande demais para processar com segurança (máx. 25 MB).';
   return null;
 }
 

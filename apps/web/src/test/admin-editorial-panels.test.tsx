@@ -2,6 +2,7 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as QuestionImageProcessing from '../lib/question-image-processing.js';
 import { AdminCategoriesPanel, AdminQuestionEditorialPanel, AdminThemeModerationPanel } from '../pages/admin-editorial-panels.js';
 
 const mocks = vi.hoisted(() => ({ apiRequest: vi.fn(), apiUpload: vi.fn(), getToken: vi.fn(() => Promise.resolve('synthetic-auth')) }));
@@ -9,6 +10,11 @@ vi.mock('../lib/api.js', () => ({
   ClientApiError: class ClientApiError extends Error {},
   apiRequest: mocks.apiRequest,
   apiUpload: mocks.apiUpload,
+}));
+// jsdom não tem canvas: a compressão vira um WebP sintético.
+vi.mock('../lib/question-image-processing.js', async (importOriginal) => ({
+  ...await importOriginal<typeof QuestionImageProcessing>(),
+  processQuestionImage: vi.fn(() => Promise.resolve({ blob: new Blob(['webp-sintetico'], { type: 'image/webp' }), height: 300, width: 400 })),
 }));
 
 describe('AdminCategoriesPanel', () => {
@@ -311,5 +317,114 @@ describe('AdminQuestionEditorialPanel', () => {
     expect(await screen.findByText('60 perguntas aprovadas.')).toBeInTheDocument();
     expect(approveCalls.map((ids) => ids.length)).toEqual([50, 10]);
     expect(pending).toHaveLength(0);
+  });
+
+  it('fotos só podem ser escolhidas depois do arquivo de perguntas', async () => {
+    mocks.apiRequest.mockImplementation((path: string) => {
+      if (path.startsWith('/api/admin/themes')) return Promise.resolve({ themes: [theme] });
+      return Promise.resolve({ nextCursor: null, questions: [] });
+    });
+    render(<AdminQuestionEditorialPanel getToken={mocks.getToken} />);
+    await chooseTheme('Tema Um');
+    await screen.findByText('Importar perguntas');
+    expect(screen.getByLabelText('Fotos das perguntas')).toBeDisabled();
+    expect(screen.getByText('Escolha primeiro o arquivo de perguntas.')).toBeInTheDocument();
+  });
+
+  it('importa CSV com fotos: resumo antes, foto só na pergunta criada pela linha que a cita', async () => {
+    mocks.apiRequest.mockImplementation((path: string) => {
+      if (path.startsWith('/api/admin/themes')) return Promise.resolve({ themes: [theme] });
+      return Promise.resolve({ nextCursor: null, questions: [] });
+    });
+    mocks.apiUpload.mockImplementation((path: string) => {
+      if (path.startsWith('/api/admin/questions/import')) {
+        return Promise.resolve({
+          imported: 2, rows: [{ acceptsImage: true, questionId: 'q-a' }, { acceptsImage: true, questionId: 'q-b' }], skipped: 0, status: 'APPLIED',
+        });
+      }
+      return Promise.resolve({ question: {} });
+    });
+    render(<AdminQuestionEditorialPanel getToken={mocks.getToken} />);
+    await chooseTheme('Tema Um');
+    await screen.findByText('Importar perguntas');
+
+    const csv = new File([[
+      'prompt,optionA,optionB,optionC,optionD,correctOption,foto',
+      '"Quem é esse pokémon?",Pikachu,Bulbasaur,Charmander,Squirtle,0,pikachu.jpg',
+      '"Quem é esse pokémon?",Bulbasaur,Pikachu,Charmander,Squirtle,1,charmander.jpg',
+    ].join('\n')], 'pokemon.csv', { type: 'text/csv' });
+    fireEvent.change(screen.getByLabelText('Arquivo CSV ou JSON'), { target: { files: [csv] } });
+    const photos = [
+      new File(['jpeg'], 'Pikachu.jpg', { type: 'image/jpeg' }),
+      new File(['jpeg'], 'sobrando.jpg', { type: 'image/jpeg' }),
+    ];
+    fireEvent.change(screen.getByLabelText('Fotos das perguntas'), { target: { files: photos } });
+
+    expect(await screen.findByText('1 foto pronta')).toBeInTheDocument();
+    expect(screen.getByText(/Sem foto escolhida \(entram sem foto\): linha 3 \(charmander\.jpg\)/)).toBeInTheDocument();
+    expect(screen.getByText(/Não serão enviadas \(nenhuma linha cita\): sobrando\.jpg/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Importar para revisão' }));
+    expect(await screen.findByText('2 perguntas enviadas para revisão · 1 foto anexada.')).toBeInTheDocument();
+    const imageCalls = mocks.apiUpload.mock.calls.filter((call) => String(call[0]).endsWith('/image'));
+    expect(imageCalls).toHaveLength(1);
+    expect(imageCalls[0]?.[0]).toBe('/api/admin/questions/q-a/image');
+    expect(imageCalls[0]?.[1]).toMatchObject({ method: 'PUT' });
+  });
+
+  it('não prende foto em pergunta repetida ou que já tem foto', async () => {
+    mocks.apiRequest.mockImplementation((path: string) => {
+      if (path.startsWith('/api/admin/themes')) return Promise.resolve({ themes: [theme] });
+      return Promise.resolve({ nextCursor: null, questions: [] });
+    });
+    mocks.apiUpload.mockResolvedValue({ imported: 0, rows: [{ acceptsImage: false, questionId: 'q-antiga' }], skipped: 1, status: 'APPLIED' });
+    render(<AdminQuestionEditorialPanel getToken={mocks.getToken} />);
+    await chooseTheme('Tema Um');
+    await screen.findByText('Importar perguntas');
+    const csv = new File(['prompt,optionA,optionB,optionC,optionD,correctOption,foto\n"P?",A,B,C,D,0,a.jpg'], 'a.csv', { type: 'text/csv' });
+    fireEvent.change(screen.getByLabelText('Arquivo CSV ou JSON'), { target: { files: [csv] } });
+    fireEvent.change(screen.getByLabelText('Fotos das perguntas'), { target: { files: [new File(['x'], 'a.jpg', { type: 'image/jpeg' })] } });
+    await screen.findByText('1 foto pronta');
+    fireEvent.click(screen.getByRole('button', { name: 'Importar para revisão' }));
+    expect(await screen.findByText('1 repetida pulada · 1 foto pulada (pergunta repetida ou que já tinha foto).')).toBeInTheDocument();
+    expect(mocks.apiUpload).toHaveBeenCalledTimes(1);
+  });
+
+  it('na revisão de uma pergunta em revisão, a foto pode ser trocada no próprio formulário', async () => {
+    mocks.apiRequest.mockImplementation((path: string) => {
+      if (path.startsWith('/api/admin/themes')) return Promise.resolve({ themes: [theme] });
+      return Promise.resolve({ nextCursor: null, questions: [{ ...question, imageUrl: '/api/question-images/questions/x/v1.webp' }] });
+    });
+    render(<AdminQuestionEditorialPanel getToken={mocks.getToken} />);
+    await chooseTheme('Tema Um');
+    await screen.findByText('Pergunta em revisão?');
+    expect(screen.getAllByRole('button', { name: /Foto da pergunta/ })).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Revisar e editar' }));
+    expect(screen.getAllByRole('button', { name: /Foto da pergunta/ })).toHaveLength(2);
+  });
+
+  it('criar revisão de pergunta publicada leva a foto nova para o rascunho, nunca para a publicada', async () => {
+    const createObjectURL = vi.fn(() => 'blob:sintetico');
+    Object.assign(URL, { createObjectURL, revokeObjectURL: vi.fn() });
+    const active = { ...question, id: 'question-ativa', imageUrl: '/api/question-images/questions/x/v1.webp', prompt: 'Pergunta publicada?', status: 'ACTIVE' as const };
+    mocks.apiRequest.mockImplementation((path: string) => {
+      if (path.startsWith('/api/admin/themes')) return Promise.resolve({ themes: [theme] });
+      if (path === '/api/editorial/questions/question-ativa') return Promise.resolve({ draftId: 'draft-1' });
+      return Promise.resolve({ nextCursor: null, questions: [active] });
+    });
+    mocks.apiUpload.mockResolvedValue({ question: {} });
+    render(<AdminQuestionEditorialPanel getToken={mocks.getToken} />);
+    await chooseTheme('Tema Um');
+    fireEvent.click(await screen.findByRole('tab', { name: 'Ativa' }));
+    await screen.findByText('Pergunta publicada?');
+    fireEvent.click(screen.getByRole('button', { name: 'Criar revisão' }));
+    expect(screen.getByText('A foto atual vai junto para o rascunho.')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Foto do rascunho'), { target: { files: [new File(['jpeg'], 'nova.jpg', { type: 'image/jpeg' })] } });
+    expect(await screen.findByText('Esta foto entra no rascunho. A publicada só muda quando você aprovar.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Enviar revisão' }));
+
+    expect(await screen.findByText(/Revisão criada\. .*A foto nova vai junto\./)).toBeInTheDocument();
+    expect(mocks.apiUpload).toHaveBeenCalledTimes(1);
+    expect(mocks.apiUpload).toHaveBeenCalledWith('/api/admin/questions/draft-1/image', expect.objectContaining({ method: 'PUT' }));
   });
 });

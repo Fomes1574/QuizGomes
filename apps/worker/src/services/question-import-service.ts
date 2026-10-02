@@ -12,6 +12,25 @@ function chunks<T>(items: readonly T[], size: number): T[][] {
   return result;
 }
 
+interface ExistingQuestion {
+  id: string;
+  image_key: string | null;
+  status: string;
+}
+
+/**
+ * Destino de cada pergunta do lote, na mesma ordem do envio. O painel usa
+ * para prender a foto citada na linha: só aceita foto a pergunta que está em
+ * revisão e ainda não tem foto (a recém-criada, ou a de uma parte que já
+ * entrou antes e teve o envio da foto interrompido). Publicada, rejeitada ou
+ * já com foto nunca é tocada por uma importação. Repetida dentro do próprio
+ * lote não recebe destino: a foto da primeira ocorrência é a que vale.
+ */
+export interface ImportedRow {
+  acceptsImage: boolean;
+  questionId: string | null;
+}
+
 export class QuestionImportService {
   constructor(
     private readonly coreDb: D1Database,
@@ -32,7 +51,9 @@ export class QuestionImportService {
     idempotencyKey: string,
     questions: readonly ImportedQuestion[],
     options: { skipDuplicates?: boolean } = {},
-  ): Promise<{ batchId: string; imported: number; skipped: number; status: 'APPLIED' | 'ALREADY_APPLIED' }> {
+  ): Promise<{
+    batchId: string; imported: number; rows: ImportedRow[]; skipped: number; status: 'APPLIED' | 'ALREADY_APPLIED';
+  }> {
     if (idempotencyKey.length < 8 || idempotencyKey.length > 128) {
       throw new ApiError(400, 'INVALID_IDEMPOTENCY_KEY', 'Envie uma Idempotency-Key válida.');
     }
@@ -41,7 +62,14 @@ export class QuestionImportService {
     ).bind(idempotencyKey).first<{ id: string; item_count: number; status: string }>();
     if (existing !== null) {
       if (existing.status === 'APPLIED') {
-        return { batchId: existing.id, imported: existing.item_count, skipped: 0, status: 'ALREADY_APPLIED' };
+        // Parte reenviada: o destino de cada linha vem do conteúdo, para a
+        // retomada ainda conseguir prender as fotos que faltaram.
+        const candidates = await Promise.all(questions.map((question) => questionContentHashCandidates(question)));
+        const found = await this.findByHashes([...new Set(candidates.flat())]);
+        return {
+          batchId: existing.id, imported: existing.item_count,
+          rows: rowsFor(candidates, found, new Map()), skipped: 0, status: 'ALREADY_APPLIED',
+        };
       }
       throw new ApiError(409, 'IMPORT_IN_PROGRESS', 'Este lote já está em processamento.');
     }
@@ -60,19 +88,9 @@ export class QuestionImportService {
     if (!options.skipDuplicates && new Set(canonicalHashes).size !== canonicalHashes.length) {
       throw new ApiError(400, 'DUPLICATE_IN_BATCH', 'O lote contém perguntas duplicadas.');
     }
-    const allHashCandidates = [...new Set(hashCandidates.flat())];
-    const existingHashes = new Set<string>();
-    // Nunca monte um IN acima dos 100 parâmetros do D1. Este era o motivo de
-    // o CSV válido de 100 perguntas falhar com erro genérico em produção.
-    for (const hashChunk of chunks(allHashCandidates, D1_MAX_BOUND_PARAMETERS)) {
-      const hashPlaceholders = hashChunk.map((_, index) => `?${index + 1}`).join(',');
-      const found = await this.questionsDb.prepare(
-        `SELECT content_hash FROM questions WHERE content_hash IN (${hashPlaceholders})`,
-      ).bind(...hashChunk).all<{ content_hash: string }>();
-      for (const row of found.results) existingHashes.add(row.content_hash);
-      if (!options.skipDuplicates && existingHashes.size > 0) {
-        throw new ApiError(409, 'DUPLICATE_QUESTION', 'Uma ou mais perguntas já existem.');
-      }
+    const existingByHash = await this.findByHashes([...new Set(hashCandidates.flat())]);
+    if (!options.skipDuplicates && existingByHash.size > 0) {
+      throw new ApiError(409, 'DUPLICATE_QUESTION', 'Uma ou mais perguntas já existem.');
     }
 
     const seen = new Set<string>();
@@ -86,7 +104,7 @@ export class QuestionImportService {
         return;
       }
       seen.add(hash);
-      if (candidates.some((candidate) => existingHashes.has(candidate))) {
+      if (candidates.some((candidate) => existingByHash.has(candidate))) {
         skipped += 1;
         return;
       }
@@ -106,9 +124,11 @@ export class QuestionImportService {
       ).bind(questionPoolId(themeId), themeId)),
     ];
 
+    const createdByHash = new Map<string, string>();
     accepted.forEach(({ hash, question }) => {
       const targetPoolId = questionPoolId(question.themeId);
       const questionId = crypto.randomUUID();
+      createdByHash.set(hash, questionId);
       statements.push(
         this.questionsDb.prepare(
            `INSERT INTO questions (
@@ -143,7 +163,9 @@ export class QuestionImportService {
 
     try {
       await this.questionsDb.batch(statements);
-      return { batchId, imported: accepted.length, skipped, status: 'APPLIED' };
+      return {
+        batchId, imported: accepted.length, rows: rowsFor(hashCandidates, existingByHash, createdByHash), skipped, status: 'APPLIED',
+      };
     } catch (error) {
       if (error instanceof Error && /UNIQUE constraint failed: questions\.content_hash/i.test(error.message)) {
         throw new ApiError(409, 'DUPLICATE_QUESTION', 'Uma ou mais perguntas já existem.');
@@ -151,4 +173,37 @@ export class QuestionImportService {
       throw error;
     }
   }
+
+  /** Perguntas já gravadas com algum destes hashes, em consultas de até 100 parâmetros. */
+  private async findByHashes(hashes: readonly string[]): Promise<Map<string, ExistingQuestion>> {
+    const found = new Map<string, ExistingQuestion>();
+    // Nunca monte um IN acima dos 100 parâmetros do D1. Este era o motivo de
+    // o CSV válido de 100 perguntas falhar com erro genérico em produção.
+    for (const hashChunk of chunks(hashes, D1_MAX_BOUND_PARAMETERS)) {
+      const hashPlaceholders = hashChunk.map((_, index) => `?${index + 1}`).join(',');
+      const result = await this.questionsDb.prepare(
+        `SELECT content_hash, id, status, image_key FROM questions WHERE content_hash IN (${hashPlaceholders})`,
+      ).bind(...hashChunk).all<ExistingQuestion & { content_hash: string }>();
+      for (const row of result.results) found.set(row.content_hash, { id: row.id, image_key: row.image_key, status: row.status });
+    }
+    return found;
+  }
+}
+
+function rowsFor(
+  hashCandidates: readonly (readonly string[])[],
+  existingByHash: ReadonlyMap<string, ExistingQuestion>,
+  createdByHash: ReadonlyMap<string, string>,
+): ImportedRow[] {
+  const seen = new Set<string>();
+  return hashCandidates.map((candidates) => {
+    const canonical = candidates[0]!;
+    if (seen.has(canonical)) return { acceptsImage: false, questionId: null };
+    seen.add(canonical);
+    const created = createdByHash.get(canonical);
+    if (created !== undefined) return { acceptsImage: true, questionId: created };
+    const existing = candidates.map((candidate) => existingByHash.get(candidate)).find((row) => row !== undefined);
+    if (existing === undefined) return { acceptsImage: false, questionId: null };
+    return { acceptsImage: existing.status === 'IN_REVIEW' && existing.image_key === null, questionId: existing.id };
+  });
 }

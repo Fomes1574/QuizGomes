@@ -10,8 +10,14 @@ import {
   chunkJsonQuestions,
   fileLineForChunkRow,
   IMPORT_CHUNK_MAX_BYTES,
+  IMPORT_CHUNK_SIZE,
   IMPORT_FILE_MAX_BYTES,
 } from '../lib/import-chunks.js';
+import { processQuestionImage } from '../lib/question-image-processing.js';
+import {
+  type PhotoLibrary, type PhotoPlan, type PhotoRow,
+  buildPhotoLibrary, photoRowsFromCsv, photoRowsFromJson, planPhotos, shortList,
+} from '../lib/question-photo-import.js';
 import type {
   AdminThemeSummary, CategoryAdmin, EditorialQuestion, EditorialQuestionPage, QuestionSourceInput, ThemeSuggestion,
 } from '../lib/models.js';
@@ -409,9 +415,29 @@ const APPROVAL_BATCH_SIZE = 50;
 const QUESTION_STATUS_TABS: EditorialQuestion['status'][] = ['IN_REVIEW', 'ACTIVE', 'REJECTED', 'DISABLED'];
 const EMPTY_SOURCE: QuestionSourceInput = { kind: 'WEB', title: '', url: '' };
 const CSV_IMPORT_TEMPLATE = [
-  'prompt,optionA,optionB,optionC,optionD,correctOption',
-  '"Exemplo de pergunta?",Alternativa A,Alternativa B,Alternativa C,Alternativa D,0',
+  'prompt,optionA,optionB,optionC,optionD,correctOption,foto',
+  '"Exemplo de pergunta?",Alternativa A,Alternativa B,Alternativa C,Alternativa D,0,',
+  '"Exemplo com foto?",Alternativa A,Alternativa B,Alternativa C,Alternativa D,1,exemplo.jpg',
 ].join('\n');
+
+/** Destino de cada linha devolvido pelo servidor, para prender a foto. */
+interface ImportRowDestination { acceptsImage: boolean; questionId: string | null }
+
+interface PhotoSummary {
+  hasColumn: boolean;
+  library: PhotoLibrary;
+  plan: PhotoPlan;
+}
+
+function isCsvFile(file: File): boolean {
+  return file.name.toLowerCase().endsWith('.csv') || file.type === 'text/csv';
+}
+
+/** Linhas (CSV) ou perguntas (JSON) com o valor da coluna `foto`, na ordem de envio. */
+async function photoRowsOf(file: File): Promise<{ hasColumn: boolean; rows: PhotoRow[] }> {
+  const text = await file.text();
+  return isCsvFile(file) ? photoRowsFromCsv(text) : photoRowsFromJson(JSON.parse(text) as unknown);
+}
 
 /** Referência de campo `questions.N.campo` do Zod vira "Pergunta N+1 (campo)". */
 function jsonImportFieldLabel(field: string): string {
@@ -442,6 +468,33 @@ function importErrorText(error: unknown): string {
     if (diagnostics.length > 0) return `${error.message} ${diagnostics.join(' ')}`;
   }
   return errorText(error, 'Não foi possível importar o lote.');
+}
+
+/** Resumo antes do envio: o que vai, o que falta e o que fica de fora. */
+function PhotoSummaryView({ summary }: { summary: PhotoSummary }) {
+  const { hasColumn, library, plan } = summary;
+  const ready = plan.assignments.size;
+  const warnings: string[] = [];
+  if (!hasColumn) warnings.push('O arquivo não tem a coluna "foto": nenhuma foto será enviada.');
+  if (plan.missing.length > 0) {
+    warnings.push(`Sem foto escolhida (entram sem foto): ${shortList(plan.missing.map((row) => `${row.label} (${row.photo ?? ''})`))}.`);
+  }
+  if (plan.ambiguous.length > 0) warnings.push(`Nome repetido em fotos diferentes (entram sem foto): ${shortList(plan.ambiguous)}.`);
+  if (plan.invalid.length > 0) warnings.push(`Fotos que não servem: ${shortList(plan.invalid.map((item) => `${item.name} — ${item.reason}`), 3)}`);
+  if (library.problems.length > 0) warnings.push(...library.problems);
+  return (
+    <div className="import-photos" role="status">
+      <p className="import-photos__headline">
+        <strong>{ready} {ready === 1 ? 'foto pronta' : 'fotos prontas'}</strong> para {plan.referencedRows} {plan.referencedRows === 1 ? 'linha que cita foto' : 'linhas que citam foto'}.
+      </p>
+      {warnings.length > 0 && <ul className="import-photos__warnings">{warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>}
+      {(plan.unused.length > 0 || library.ignored.length > 0) && (
+        <p className="import-photos__note">
+          Não serão enviadas (nenhuma linha cita): {shortList([...plan.unused, ...library.ignored])}.
+        </p>
+      )}
+    </div>
+  );
 }
 
 function truncate(text: string, max: number): string {
@@ -482,7 +535,14 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
   // cada tentativa anularia a própria proteção de idempotência.
   const [importIdempotencyKey, setImportIdempotencyKey] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
-  const [importProgress, setImportProgress] = useState<{ done: number; total: number } | null>(null);
+  const [importProgress, setImportProgress] = useState<{ done: number; photos?: { done: number; total: number }; total: number } | null>(null);
+  // Fotos só existem junto de um arquivo de perguntas: sem CSV/JSON o campo
+  // fica desativado e trocar o arquivo limpa a escolha.
+  const [photoFiles, setPhotoFiles] = useState<File[]>([]);
+  const [photoInputKey, setPhotoInputKey] = useState(0);
+  const [photoSummary, setPhotoSummary] = useState<PhotoSummary | null>(null);
+  const [photoSummaryError, setPhotoSummaryError] = useState<string | null>(null);
+  const [preparingPhotos, setPreparingPhotos] = useState(false);
   const [selectedQuestionIds, setSelectedQuestionIds] = useState<string[]>([]);
   const [batchApproving, setBatchApproving] = useState(false);
   const [approvalProgress, setApprovalProgress] = useState<number | null>(null);
@@ -492,6 +552,11 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
   const [editingQuestion, setEditingQuestion] = useState<EditorialQuestion | null>(null);
   const [editDraft, setEditDraft] = useState(emptyDraft());
   const [savingEdit, setSavingEdit] = useState(false);
+  // Foto do rascunho de uma pergunta publicada: só é aplicada ao rascunho
+  // depois que ele existe; a publicada nunca muda antes da aprovação.
+  const [revisionPhoto, setRevisionPhoto] = useState<{ blob: Blob; kind: 'replace'; url: string } | { kind: 'keep' | 'remove' }>({ kind: 'keep' });
+  const [revisionPhotoBusy, setRevisionPhotoBusy] = useState(false);
+  const [revisionPhotoError, setRevisionPhotoError] = useState<string | null>(null);
   const [exporting, setExporting] = useState<'csv' | 'json' | null>(null);
 
   useEffect(() => {
@@ -527,6 +592,26 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
   }
 
   useEffect(() => {
+    // Resumo antes do envio: quais linhas têm foto, o que falta e o que sobra.
+    let cancelled = false;
+    queueMicrotask(() => {
+      setPhotoSummary(null);
+      setPhotoSummaryError(null);
+      if (importFile === null || photoFiles.length === 0) { setPreparingPhotos(false); return; }
+      setPreparingPhotos(true);
+      void Promise.all([photoRowsOf(importFile), buildPhotoLibrary(photoFiles)])
+        .then(([{ hasColumn, rows }, library]) => {
+          if (!cancelled) setPhotoSummary({ hasColumn, library, plan: planPhotos(rows, library) });
+        })
+        .catch(() => {
+          if (!cancelled) setPhotoSummaryError('Não foi possível ler o arquivo de perguntas para casar as fotos. Confira se o CSV/JSON está correto.');
+        })
+        .finally(() => { if (!cancelled) setPreparingPhotos(false); });
+    });
+    return () => { cancelled = true; };
+  }, [importFile, photoFiles]);
+
+  useEffect(() => {
     // Microtask para não chamar setState de forma síncrona no corpo do efeito.
     queueMicrotask(() => {
       if (themeId === '') { setPage({ nextCursor: null, questions: [] }); return; }
@@ -549,8 +634,26 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
     }
   }
 
+  useEffect(() => () => { if (revisionPhoto.kind === 'replace') URL.revokeObjectURL(revisionPhoto.url); }, [revisionPhoto]);
+
+  async function chooseRevisionPhoto(file: File | null) {
+    if (file === null) return;
+    setRevisionPhotoBusy(true);
+    setRevisionPhotoError(null);
+    try {
+      const processed = await processQuestionImage(file);
+      setRevisionPhoto({ blob: processed.blob, kind: 'replace', url: URL.createObjectURL(processed.blob) });
+    } catch (photoError) {
+      setRevisionPhotoError(errorText(photoError, 'Não foi possível preparar a foto.'));
+    } finally {
+      setRevisionPhotoBusy(false);
+    }
+  }
+
   function beginEdit(question: EditorialQuestion) {
     setMessage(null);
+    setRevisionPhoto({ kind: 'keep' });
+    setRevisionPhotoError(null);
     setEditingQuestion(question);
     setEditDraft({
       correctOption: question.correctOption,
@@ -579,7 +682,7 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
     setSavingEdit(true);
     setMessage(null);
     try {
-      const result = await apiRequest<{ question?: EditorialQuestion }>(`/api/editorial/questions/${encodeURIComponent(editingQuestion.id)}`, {
+      const result = await apiRequest<{ draftId?: string; question?: EditorialQuestion }>(`/api/editorial/questions/${encodeURIComponent(editingQuestion.id)}`, {
         body: {
           correctOption: editDraft.correctOption, options: editDraft.options, prompt: editDraft.prompt,
           sources: editDraft.sources.filter((source) => source.url.trim() !== ''),
@@ -590,7 +693,21 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
         setPage((current) => ({ ...current, questions: current.questions.map((question) => question.id === result.question?.id ? result.question : question) }));
         setMessage({ kind: 'success', text: 'Rascunho atualizado. Revise-o antes de aprovar.' });
       } else {
-        setMessage({ kind: 'success', text: 'Revisão criada. A pergunta publicada continua ativa até você aprová-la.' });
+        let photoNote = '';
+        if (revisionPhoto.kind !== 'keep' && result.draftId !== undefined) {
+          const draftImagePath = `/api/admin/questions/${encodeURIComponent(result.draftId)}/image`;
+          try {
+            if (revisionPhoto.kind === 'replace') {
+              await apiUpload(draftImagePath, { body: revisionPhoto.blob, getToken, method: 'PUT' });
+            } else {
+              await apiRequest(draftImagePath, { getToken, method: 'DELETE' });
+            }
+            photoNote = revisionPhoto.kind === 'replace' ? ' A foto nova vai junto.' : ' O rascunho segue sem foto.';
+          } catch (photoError) {
+            photoNote = ` A foto não foi aplicada (${errorText(photoError, 'falha no envio')}); ajuste-a no cartão do rascunho em revisão.`;
+          }
+        }
+        setMessage({ kind: photoNote.includes('não foi aplicada') ? 'error' : 'success', text: `Revisão criada. A pergunta publicada continua ativa até você aprová-la.${photoNote}` });
         if (status === 'IN_REVIEW') loadQuestions(themeId, status, null, true);
       }
       setEditingQuestion(null);
@@ -748,23 +865,32 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
     // puladas. Cada parte tem chave própria derivada do arquivo: reenviar o
     // mesmo arquivo depois de uma falha continua de onde parou.
     const importPath = `/api/admin/questions/import?themeId=${encodeURIComponent(themeId)}&duplicates=skip`;
-    const isCsv = importFile.name.toLowerCase().endsWith('.csv') || importFile.type === 'text/csv';
+    const isCsv = isCsvFile(importFile);
     let imported = 0;
     let skipped = 0;
     let alreadyApplied = 0;
     let done = 0;
     let total = 0;
+    // Fotos: só as citadas por uma linha e já casadas no resumo.
+    const photoPlan = photoFiles.length > 0 ? photoSummary?.plan ?? null : null;
+    const photoTotal = photoPlan?.assignments.size ?? 0;
+    let photosDone = 0;
+    let photosSent = 0;
+    let photosSkipped = 0;
+    const photoFailures: string[] = [];
     try {
       const text = await importFile.text();
       const csvChunks = isCsv ? chunkCsv(text) : [];
-      const jsonChunks = isCsv ? [] : chunkJsonQuestions(JSON.parse(text) as unknown);
+      const jsonRows = isCsv ? null : photoRowsFromJson(JSON.parse(text) as unknown);
+      const jsonChunks = jsonRows === null ? [] : chunkJsonQuestions(jsonRows.parsed);
       if (jsonChunks === null) throw new Error('JSON_SHAPE');
       total = isCsv ? csvChunks.length : jsonChunks.length;
       if (total === 0) throw new Error('EMPTY_FILE');
+      const photoRows = jsonRows?.rows ?? (photoPlan === null ? [] : photoRowsFromCsv(text).rows);
       for (let index = 0; index < total; index += 1) {
         setImportProgress({ done: index, total });
         const headers = { 'Idempotency-Key': `${baseKey}:${index + 1}` };
-        let result: { imported: number; skipped?: number; status: 'ALREADY_APPLIED' | 'APPLIED' };
+        let result: { imported: number; rows?: ImportRowDestination[]; skipped?: number; status: 'ALREADY_APPLIED' | 'APPLIED' };
         const csvChunk = csvChunks[index];
         try {
           if (csvChunk !== undefined) {
@@ -791,17 +917,56 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
         if (result.status === 'ALREADY_APPLIED') alreadyApplied += result.imported;
         else imported += result.imported;
         skipped += result.skipped ?? 0;
+        // A parte entrou; agora as fotos dela, uma por vez. Falha de foto não
+        // desfaz a pergunta: ela fica em revisão sem foto e o relatório diz qual.
+        if (photoPlan !== null) {
+          const firstRow = index * IMPORT_CHUNK_SIZE;
+          for (let row = firstRow; row < firstRow + IMPORT_CHUNK_SIZE; row += 1) {
+            const source = photoPlan.assignments.get(row);
+            if (source === undefined) continue;
+            const destination = result.rows?.[row - firstRow];
+            setImportProgress({ done: index, photos: { done: photosDone, total: photoTotal }, total });
+            photosDone += 1;
+            if (destination?.questionId === null || destination?.questionId === undefined || !destination.acceptsImage) {
+              photosSkipped += 1;
+              continue;
+            }
+            const questionId = destination.questionId;
+            try {
+              const processed = await processQuestionImage(await source.load());
+              await withRateLimitRetry(() => apiUpload(`/api/admin/questions/${encodeURIComponent(questionId)}/image`, {
+                body: processed.blob, getToken, method: 'PUT',
+              }));
+              photosSent += 1;
+            } catch (photoError) {
+              photoFailures.push(`${photoRows[row]?.label ?? `pergunta ${row + 1}`} (${source.name}): ${errorText(photoError, 'não foi possível enviar.')}`);
+            }
+          }
+        }
         done = index + 1;
       }
-      setImportFile(null);
-      setImportFileKey((current) => current + 1);
-      setImportIdempotencyKey(null);
       const parts = [
         imported > 0 ? `${imported} ${imported === 1 ? 'pergunta enviada' : 'perguntas enviadas'} para revisão` : null,
         alreadyApplied > 0 ? `${alreadyApplied} já tinham sido importadas antes` : null,
         skipped > 0 ? `${skipped} ${skipped === 1 ? 'repetida pulada' : 'repetidas puladas'}` : null,
+        photosSent > 0 ? `${photosSent} ${photosSent === 1 ? 'foto anexada' : 'fotos anexadas'}` : null,
+        photosSkipped > 0 ? `${photosSkipped} ${photosSkipped === 1 ? 'foto pulada' : 'fotos puladas'} (pergunta repetida ou que já tinha foto)` : null,
       ].filter((part): part is string => part !== null);
-      setMessage({ kind: 'success', text: parts.length === 0 ? 'Nada novo neste arquivo: todas as perguntas já existem.' : `${parts.join(' · ')}.` });
+      const summary = parts.length === 0 ? 'Nada novo neste arquivo: todas as perguntas já existem.' : `${parts.join(' · ')}.`;
+      if (photoFailures.length > 0) {
+        // Mantém arquivo e fotos escolhidos: "Importar" de novo só tenta as fotos que faltaram.
+        setMessage({
+          kind: 'error',
+          text: `${summary} ${photoFailures.length} ${photoFailures.length === 1 ? 'foto não entrou' : 'fotos não entraram'}: ${shortList(photoFailures, 3)}. Essas perguntas estão em revisão sem foto: troque a foto e importe de novo, ou adicione pelo cartão da pergunta.`,
+        });
+      } else {
+        setImportFile(null);
+        setImportFileKey((current) => current + 1);
+        setImportIdempotencyKey(null);
+        setPhotoFiles([]);
+        setPhotoInputKey((current) => current + 1);
+        setMessage({ kind: 'success', text: summary });
+      }
       if (status === 'IN_REVIEW') loadQuestions(themeId, status, null, true);
     } catch (importError) {
       const shapeError = importError instanceof SyntaxError || (importError instanceof Error && importError.message === 'JSON_SHAPE')
@@ -812,7 +977,7 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
             ? 'Um trecho de 100 perguntas passou de 256 KB. Encurte os textos ou divida o arquivo.'
             : null;
       const progress = total > 1 && done > 0
-        ? ` ${done} de ${total} partes já entraram (${imported} perguntas); envie o mesmo arquivo de novo para continuar de onde parou.`
+        ? ` ${done} de ${total} partes já entraram (${imported} perguntas${photosSent > 0 ? `, ${photosSent} fotos` : ''}); envie o mesmo arquivo de novo para continuar de onde parou.`
         : '';
       setMessage({ kind: 'error', text: `${shapeError ?? importErrorText(importError)}${progress}` });
       if (status === 'IN_REVIEW' && done > 0) loadQuestions(themeId, status, null, true);
@@ -1003,6 +1168,58 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
                   </div>
                 </label>
               ))}
+              {editingQuestion.status === 'IN_REVIEW' ? (
+                <div className="field">
+                  <span>Foto</span>
+                  <QuestionImageField
+                    getToken={getToken}
+                    onChanged={(updated) => {
+                      setEditingQuestion(updated);
+                      setPage((current) => ({ ...current, questions: current.questions.map((item) => (item.id === updated.id ? updated : item)) }));
+                    }}
+                    question={editingQuestion}
+                  />
+                </div>
+              ) : (
+                <div className="field">
+                  <span>Foto do rascunho</span>
+                  {(revisionPhoto.kind === 'replace' || (revisionPhoto.kind === 'keep' && editingQuestion.imageUrl)) && (
+                    <img
+                      alt=""
+                      className="question-image-field__preview"
+                      decoding="async"
+                      src={revisionPhoto.kind === 'replace' ? revisionPhoto.url : editingQuestion.imageUrl ?? ''}
+                    />
+                  )}
+                  <small className="import-photos__hint">
+                    {revisionPhoto.kind === 'replace'
+                      ? 'Esta foto entra no rascunho. A publicada só muda quando você aprovar.'
+                      : revisionPhoto.kind === 'remove'
+                        ? 'O rascunho vai sem foto. A publicada só muda quando você aprovar.'
+                        : editingQuestion.imageUrl ? 'A foto atual vai junto para o rascunho.' : 'Sem foto.'}
+                  </small>
+                  <div className="admin-card__actions">
+                    <label className="button button--ghost">
+                      {revisionPhotoBusy ? 'Comprimindo…' : editingQuestion.imageUrl || revisionPhoto.kind === 'replace' ? 'Trocar foto' : 'Adicionar foto'}
+                      <input
+                        accept="image/png,image/jpeg,image/webp,image/avif,image/gif"
+                        aria-label="Foto do rascunho"
+                        className="sr-only"
+                        disabled={revisionPhotoBusy || savingEdit}
+                        onChange={(event) => { void chooseRevisionPhoto(event.target.files?.[0] ?? null); event.target.value = ''; }}
+                        type="file"
+                      />
+                    </label>
+                    {revisionPhoto.kind !== 'keep' && (
+                      <Button disabled={revisionPhotoBusy || savingEdit} onClick={() => setRevisionPhoto({ kind: 'keep' })} type="button" variant="ghost">Desfazer</Button>
+                    )}
+                    {revisionPhoto.kind === 'keep' && editingQuestion.imageUrl && (
+                      <Button disabled={revisionPhotoBusy || savingEdit} onClick={() => setRevisionPhoto({ kind: 'remove' })} type="button" variant="ghost">Tirar foto do rascunho</Button>
+                    )}
+                  </div>
+                  {revisionPhotoError !== null && <p className="form-message form-message--error" role="alert">{revisionPhotoError}</p>}
+                </div>
+              )}
               {editDraft.sources.map((source, index) => (
                 <div className="admin-panel__option-row" key={index}>
                   <input aria-label={`Título da fonte opcional ${index + 1}`} maxLength={160} onChange={(event) => updateEditSource(index, { title: event.target.value })} placeholder="Título da fonte (opcional)" value={source.title ?? ''} />
@@ -1016,23 +1233,47 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
               <div className="admin-card__actions">
                 <Button disabled={savingEdit || editDraft.sources.length >= 5} onClick={() => setEditDraft((current) => ({ ...current, sources: [...current.sources, { ...EMPTY_SOURCE }] }))} type="button" variant="ghost">Adicionar fonte opcional</Button>
                 <Button disabled={savingEdit} type="button" variant="ghost" onClick={() => setEditingQuestion(null)}>Cancelar</Button>
-                <Button disabled={savingEdit} type="submit">{savingEdit ? 'Salvando…' : editingQuestion.status === 'ACTIVE' ? 'Enviar revisão' : 'Salvar revisão'}</Button>
+                <Button disabled={savingEdit || revisionPhotoBusy} type="submit">{savingEdit ? 'Salvando…' : editingQuestion.status === 'ACTIVE' ? 'Enviar revisão' : 'Salvar revisão'}</Button>
               </div>
             </form>
           )}
           <section className="form-card" aria-labelledby="admin-question-import-title">
             <h3 id="admin-question-import-title">Importar perguntas</h3>
             <p>Envie CSV ou JSON de qualquer tamanho até 8 MB. O arquivo sobe em partes de 100 perguntas, e as que já existem são puladas. O tema selecionado acima vale para todas; fontes são opcionais.</p>
-            <label className="field"><span>Arquivo CSV ou JSON</span><input accept=".csv,application/json,text/csv" key={importFileKey} onChange={(event) => {
+            <label className="field"><span>Arquivo CSV ou JSON</span><input accept=".csv,application/json,text/csv" disabled={importing} key={importFileKey} onChange={(event) => {
               const file = event.target.files?.[0] ?? null;
               setImportFile(file);
               setImportIdempotencyKey(file === null ? null : crypto.randomUUID());
+              setPhotoFiles([]);
+              setPhotoInputKey((current) => current + 1);
             }} type="file" /></label>
+            <label className="field">
+              <span>Fotos das perguntas (opcional)</span>
+              <input
+                accept="image/*,.heic,.heif,.zip,application/zip"
+                aria-label="Fotos das perguntas"
+                disabled={importing || importFile === null}
+                key={photoInputKey}
+                multiple
+                onChange={(event) => setPhotoFiles(Array.from(event.target.files ?? []))}
+                type="file"
+              />
+              <small className="import-photos__hint">
+                {importFile === null
+                  ? 'Escolha primeiro o arquivo de perguntas.'
+                  : 'Escreva o nome da foto na coluna "foto" de cada linha e escolha aqui as fotos ou um .zip com elas. O app comprime cada uma antes de enviar.'}
+              </small>
+            </label>
+            {preparingPhotos && <p className="inline-notice" role="status">Conferindo as fotos…</p>}
+            {photoSummaryError !== null && <p className="form-message form-message--error" role="alert">{photoSummaryError}</p>}
+            {photoSummary !== null && <PhotoSummaryView summary={photoSummary} />}
             <div className="admin-card__actions">
               <Button onClick={downloadCsvTemplate} type="button" variant="ghost">Baixar modelo CSV</Button>
-              <Button disabled={importing || importFile === null} onClick={() => void importQuestions()} type="button">
+              <Button disabled={importing || importFile === null || preparingPhotos || photoSummaryError !== null} onClick={() => void importQuestions()} type="button">
                 {importing
-                  ? importProgress !== null && importProgress.total > 1 ? `Enviando parte ${importProgress.done + 1} de ${importProgress.total}…` : 'Importando…'
+                  ? importProgress?.photos !== undefined
+                    ? `Fotos: ${importProgress.photos.done + 1} de ${importProgress.photos.total}…`
+                    : importProgress !== null && importProgress.total > 1 ? `Enviando parte ${importProgress.done + 1} de ${importProgress.total}…` : 'Importando…'
                   : 'Importar para revisão'}
               </Button>
             </div>

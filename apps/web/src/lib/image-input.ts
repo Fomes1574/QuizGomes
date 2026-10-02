@@ -28,7 +28,7 @@ const EXTENSION_TYPES: Record<string, string> = {
 };
 
 /** Tipo efetivo da imagem, ou `null` quando não parece uma foto raster. */
-export function effectiveImageType(file: Blob & { name?: string }): string | null {
+export function effectiveImageType(file: { name?: string; type: string }): string | null {
   const name = (file.name ?? '').toLocaleLowerCase('pt-BR');
   const declared = file.type.toLowerCase();
   if (declared === 'image/svg+xml' || name.endsWith('.svg')) return null;
@@ -37,7 +37,7 @@ export function effectiveImageType(file: Blob & { name?: string }): string | nul
   return EXTENSION_TYPES[extension] ?? null;
 }
 
-export function isSvgFile(file: Blob & { name?: string }): boolean {
+export function isSvgFile(file: { name?: string; type: string }): boolean {
   return file.type.toLowerCase() === 'image/svg+xml' || (file.name ?? '').toLocaleLowerCase('pt-BR').endsWith('.svg');
 }
 

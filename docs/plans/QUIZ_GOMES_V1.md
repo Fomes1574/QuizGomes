@@ -1612,6 +1612,17 @@ Pedidos do proprietário nesta rodada: limpeza a cada 15 dias (admin 6 meses), X
 - Correção junto: em telas baixas com foto + enunciado longo + alternativas longas, o enunciado podia ser espremido e cortado; a linha dele agora nunca fica menor que o texto (se não couber, a área rola). Verificado sem sobreposição em 9 tamanhos × 4 tipos de pergunta × leitura e resposta.
 - Duração: cada rodada fica ~0,4 s mais curta que antes (1,5 s de leitura no lugar de 1,9 s de cartão).
 
+### 2026-10-02 — importação com fotos e foto na revisão
+
+- Decisão do proprietário: o CSV (ou JSON) ganha a coluna opcional `foto` com o nome do arquivo; as fotos são escolhidas junto (várias de uma vez ou um .zip) e casam com as linhas pelo nome, sem pasta e sem diferenciar maiúsculas; sem extensão vale quando o nome é único. Sem a coluna, a importação é a mesma de antes.
+- Repetida continua sendo tema + enunciado + alternativas na ordem (sem a foto). Assim "Quem é esse pokémon?" pode existir várias vezes, cada uma com alternativas diferentes (ou em outra ordem) e sua foto. A checagem de repetidas dentro do próprio CSV passou a usar a mesma regra (antes olhava só o enunciado).
+- Foto nunca cria pergunta: o campo de fotos só abre depois do arquivo de perguntas; foto que nenhuma linha cita aparece como "não serão enviadas" e não sai do navegador; o servidor só aceita foto em pergunta já existente (em revisão ou publicada).
+- Resumo antes do envio: fotos prontas, linhas que citam foto sem arquivo (entram sem foto), nome repetido em fotos diferentes, fotos que não servem e as que sobram.
+- Envio: cada parte de 100 sobe como antes; o servidor agora devolve o destino de cada linha (`rows`). A foto só entra em pergunta em revisão e ainda sem foto — a recém-criada, ou a de uma parte reenviada cuja foto falhou. Publicada, rejeitada, já com foto ou repetida dentro do lote nunca é tocada. Cada foto é comprimida no navegador (mesmo WebP de até ~60 KB / teto de 100 KB, revalidado pelo Worker) e enviada uma por vez, com espera automática se o freio por IP responder 429. Foto que falha não desfaz a pergunta: o relatório cita a linha e importar o mesmo arquivo de novo tenta só as que faltaram.
+- .zip lido no próprio navegador, sem biblioteca nova (`DecompressionStream`), uma foto por vez pelo `slice` do arquivo: um .zip grande não ocupa a memória inteira. Fora: ZIP64 (> 4 GB ou > 65 mil arquivos) e .zip com senha.
+- Revisão: "Revisar e editar" de uma pergunta em revisão mostra o campo de foto no próprio formulário (troca na hora). "Criar revisão" de uma publicada mostra a foto atual (vai junto) e permite trocar ou tirar a foto só do rascunho; a publicada continua com a foto dela até a aprovação.
+- Sem migration e sem custo novo: fotos no mesmo R2 já usado pelas perguntas.
+
 ## Critério de saída desta execução
 
 - Milestones 8 e 8.5 aprovados fisicamente e congelados;

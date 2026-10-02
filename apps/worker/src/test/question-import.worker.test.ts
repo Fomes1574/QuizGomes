@@ -72,4 +72,49 @@ describe('importação CSV grande', () => {
     ).bind(existing, repeated, fresh).first<{ total: number }>();
     expect(total?.total).toBe(3);
   });
+
+  it('devolve o destino de cada linha para prender fotos, sem tocar em publicada ou já com foto', async () => {
+    const service = new QuestionImportService(env.CORE_DB, env.QUESTIONS_DB);
+    const base = { sources: [], themeId: THEME_ID };
+    const prompt = `Quem é esse pokémon? ${crypto.randomUUID()}`;
+    const withPhoto = `Já tem foto ${crypto.randomUUID()}?`;
+    const published = `Publicada ${crypto.randomUUID()}?`;
+    const seed = await service.import('import-actor', crypto.randomUUID(), [
+      { ...base, correctOption: 0, options: ['Um', 'Dois', 'Três', 'Quatro'], prompt: withPhoto },
+      { ...base, correctOption: 0, options: ['Um', 'Dois', 'Três', 'Quatro'], prompt: published },
+    ]);
+    await env.QUESTIONS_DB.batch([
+      env.QUESTIONS_DB.prepare("UPDATE questions SET image_key = 'questions/sintetico/v1.webp', image_bytes = 10 WHERE id = ?1")
+        .bind(seed.rows[0]?.questionId),
+      env.QUESTIONS_DB.prepare("UPDATE questions SET status = 'REJECTED' WHERE id = ?1").bind(seed.rows[1]?.questionId),
+    ]);
+
+    const key = crypto.randomUUID();
+    const batch = [
+      { ...base, correctOption: 0, options: ['Pikachu', 'Bulbasaur', 'Charmander', 'Squirtle'] as [string, string, string, string], prompt },
+      { ...base, correctOption: 1, options: ['Bulbasaur', 'Pikachu', 'Charmander', 'Squirtle'] as [string, string, string, string], prompt },
+      { ...base, correctOption: 0, options: ['Pikachu', 'Bulbasaur', 'Charmander', 'Squirtle'] as [string, string, string, string], prompt },
+      { ...base, correctOption: 0, options: ['Um', 'Dois', 'Três', 'Quatro'] as [string, string, string, string], prompt: withPhoto },
+      { ...base, correctOption: 0, options: ['Um', 'Dois', 'Três', 'Quatro'] as [string, string, string, string], prompt: published },
+    ];
+    const first = await service.import('import-actor', key, batch, { skipDuplicates: true });
+    expect(first).toMatchObject({ imported: 2, skipped: 3, status: 'APPLIED' });
+    expect(first.rows.map((row) => row.acceptsImage)).toEqual([true, true, false, false, false]);
+    expect(first.rows[0]?.questionId).not.toBe(first.rows[1]?.questionId);
+    expect(first.rows[2]?.questionId).toBeNull();
+    expect(first.rows[3]?.questionId).toBe(seed.rows[0]?.questionId);
+
+    // Retomada: a mesma parte devolve os mesmos destinos enquanto a foto não entrou…
+    const again = await service.import('import-actor', key, batch, { skipDuplicates: true });
+    expect(again.status).toBe('ALREADY_APPLIED');
+    expect(again.rows.map((row) => row.questionId)).toEqual(first.rows.map((row) => row.questionId));
+    expect(again.rows.map((row) => row.acceptsImage)).toEqual([true, true, false, false, false]);
+
+    // …e, depois que a foto entra, nunca a sobrescreve.
+    await env.QUESTIONS_DB.prepare("UPDATE questions SET image_key = 'questions/sintetico/v2.webp', image_bytes = 10 WHERE id = ?1")
+      .bind(first.rows[0]?.questionId).run();
+    const later = await service.import('import-actor', crypto.randomUUID(), batch, { skipDuplicates: true });
+    expect(later.rows.map((row) => row.acceptsImage)).toEqual([false, true, false, false, false]);
+    expect(later.rows[0]?.questionId).toBe(first.rows[0]?.questionId);
+  });
 });
