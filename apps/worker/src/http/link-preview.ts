@@ -126,3 +126,56 @@ export async function siteLinkPreview(request: Request, env: Env, url: URL): Pro
   headers.delete('Content-Length');
   return new Response(response.body, { headers, status: response.status });
 }
+
+const INVITE_PATH = /^\/convite\/([a-z0-9#%]{4,40})\/?$/i;
+
+/**
+ * Prévia do link de convite de amizade (`/convite/QGXXXX`). Mostra só o
+ * código que quem compartilhou já mandou no texto: não consulta o banco,
+ * então um link não revela o nome de ninguém para quem não entrou no app.
+ */
+export async function inviteLinkPreview(request: Request, env: Env, url: URL): Promise<Response | null> {
+  if (request.method !== 'GET' && request.method !== 'HEAD') return null;
+  const raw = INVITE_PATH.exec(url.pathname)?.[1];
+  if (raw === undefined) return null;
+  let code: string;
+  try {
+    code = decodeURIComponent(raw).replace(/^#/, '').toUpperCase();
+  } catch {
+    return null;
+  }
+  if (!/^QG[A-Z0-9]{4,32}$/.test(code)) return null;
+  const page = await env.ASSETS.fetch(request);
+  if (!page.ok || !(page.headers.get('Content-Type') ?? '').includes('text/html')) return page;
+  const title = 'Bora duelar no QUIZ GOMES? · Convite de amizade';
+  const description = `Toque para adicionar #${code} como amigo e se desafiarem ao vivo: 10 segundos por pergunta, sem desempate.`;
+  const image = new URL('/og-image.jpg', url.origin).toString();
+  const canonical = new URL(`/convite/${code}`, url.origin).toString();
+  const properties: Record<string, string> = {
+    'og:description': description, 'og:image': image, 'og:title': title, 'og:url': canonical,
+  };
+  const names: Record<string, string> = {
+    description, 'twitter:card': 'summary_large_image', 'twitter:description': description, 'twitter:image': image, 'twitter:title': title,
+  };
+  const response = new HTMLRewriter()
+    .on('title', { element: (element) => { element.setInnerContent(title); } })
+    .on('meta[property]', {
+      element: (element) => {
+        const value = properties[element.getAttribute('property') ?? ''];
+        if (value !== undefined) element.setAttribute('content', value);
+      },
+    })
+    .on('meta[name]', {
+      element: (element) => {
+        const value = names[element.getAttribute('name') ?? ''];
+        if (value !== undefined) element.setAttribute('content', value);
+      },
+    })
+    .transform(page);
+  const headers = new Headers(response.headers);
+  // Cada convite tem seu código: nunca servir a prévia de outro de um cache.
+  headers.set('Cache-Control', 'no-cache');
+  headers.delete('ETag');
+  headers.delete('Content-Length');
+  return new Response(response.body, { headers, status: response.status });
+}

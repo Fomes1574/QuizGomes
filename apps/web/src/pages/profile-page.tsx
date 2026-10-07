@@ -22,6 +22,7 @@ import {
 } from '../components/profile-sections.js';
 import { ShareCardButton } from '../components/share-result-button.js';
 import { StreakReminderToggle } from '../components/streak-reminder-toggle.js';
+import { inviteUrl } from '../lib/invite-link.js';
 import { FRAME_RING_COLORS, type AchievementItem, type FrameItem } from '../lib/achievements.js';
 import { RankBadge } from '../components/rank-badge.js';
 import { SocialConfirmDialog } from '../components/social-confirm-dialog.js';
@@ -221,7 +222,7 @@ export function ProfilePage() {
                 kind: 'profile',
               }}
               label="Compartilhar perfil"
-              message={{ text: `Me desafia no QUIZ GOMES! Me adiciona: ${profile.publicId}`, url: window.location.origin }}
+              message={{ text: `Me desafia no QUIZ GOMES! Toca no link pra me adicionar (${profile.publicId}):`, url: inviteUrl(profile.publicId) }}
               variant="primary"
             />
             <Button onClick={() => setEditingAvatar((value) => !value)} variant="secondary">Trocar avatar</Button>

@@ -12,6 +12,7 @@ import { ThemesPage } from './pages/themes-page.js';
 
 const CreatePage = lazy(() => import('./pages/create-page.js').then((module) => ({ default: module.CreatePage })));
 const LiveMatchPage = lazy(() => import('./pages/live-match-page.js').then((module) => ({ default: module.LiveMatchPage })));
+const InvitePage = lazy(() => import('./pages/invite-page.js').then((module) => ({ default: module.InvitePage })));
 const SocialPage = lazy(() => import('./pages/social-page.js').then((module) => ({ default: module.SocialPage })));
 
 /** Trocar de tema (ex.: "ir para a fila vizinha") remonta a página do zero. */
@@ -35,6 +36,7 @@ export function App() {
           <Route path="criar" element={<Navigate replace to="/" />} />
           <Route path="perfil" element={<ProfilePage />} />
           <Route path="temas/:slug" element={<ThemeDetailRoute />} />
+          <Route path="convite/:code" element={<Suspense fallback={<LoadingState label="Abrindo convite" />}><InvitePage /></Suspense>} />
           <Route path="*" element={<NotFoundPage />} />
         </Route>
         <Route path="partida/:roomId" element={<Suspense fallback={<main className="match-lobby-screen"><LoadingState label="Preparando partida" /></main>}><LiveMatchPage /></Suspense>} />

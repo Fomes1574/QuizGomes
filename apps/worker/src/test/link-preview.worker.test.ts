@@ -1,6 +1,6 @@
 import { env } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
-import { siteLinkPreview, themeLinkPreview } from '../http/link-preview.js';
+import { inviteLinkPreview, siteLinkPreview, themeLinkPreview } from '../http/link-preview.js';
 
 const SHELL = `<!doctype html><html><head>
 <meta name="description" content="padrão" />
@@ -75,5 +75,27 @@ describe('prévia de link da página inicial', () => {
     expect(html).toContain('<meta property="og:url" content="https://quiz.test/" />');
     expect(html).not.toContain('content="/icons/icon-512.webp"');
     expect(await siteLinkPreview(new Request('https://quiz.test/perfil'), withShell(), new URL('https://quiz.test/perfil'))).toBeNull();
+  });
+});
+
+describe('prévia de link do convite de amizade', () => {
+  it('mostra o código do convite com endereços absolutos, sem consultar nome no banco', async () => {
+    const url = new URL('https://quiz.test/convite/qgajc7rk');
+    const response = await inviteLinkPreview(new Request(url), withShell(), url);
+    const html = await response!.text();
+    expect(html).toContain('<title>Bora duelar no QUIZ GOMES? · Convite de amizade</title>');
+    expect(html).toContain('Toque para adicionar #QGAJC7RK como amigo');
+    expect(html).toContain('<meta property="og:url" content="https://quiz.test/convite/QGAJC7RK" />');
+    expect(html).toContain('<meta property="og:image" content="https://quiz.test/og-image.jpg" />');
+    expect(response!.headers.get('Cache-Control')).toBe('no-cache');
+  });
+
+  it('código inválido ou outra rota não ganham prévia', async () => {
+    const invalid = new URL('https://quiz.test/convite/%3Cscript%3E');
+    expect(await inviteLinkPreview(new Request(invalid), withShell(), invalid)).toBeNull();
+    const short = new URL('https://quiz.test/convite/AB12');
+    expect(await inviteLinkPreview(new Request(short), withShell(), short)).toBeNull();
+    const other = new URL('https://quiz.test/social');
+    expect(await inviteLinkPreview(new Request(other), withShell(), other)).toBeNull();
   });
 });

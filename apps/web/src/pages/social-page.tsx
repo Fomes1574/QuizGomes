@@ -11,6 +11,7 @@ import { useChallenges } from '../features/challenge-context.js';
 import { useFriendPresence, useSocial } from '../features/social-context.js';
 import { apiRequest } from '../lib/api.js';
 import { saveChallengeTarget } from '../lib/challenge-target.js';
+import { inviteUrl } from '../lib/invite-link.js';
 import { prepareShareCards } from '../lib/story-card.js';
 import { challengeCardCopy, type ChallengeView } from '../lib/challenges.js';
 import type { FriendPresence, SocialCandidate, SocialFriend, SocialSnapshot, SocialUser } from '../lib/social.js';
@@ -73,8 +74,9 @@ function InviteCard({ lonely, profile }: { lonely: boolean; profile: InviteProfi
   }
 
   async function invite() {
-    const text = `Bora duelar no QUIZ GOMES? Me adiciona: ${profile.publicId}`;
-    const url = window.location.origin;
+    // O link abre direto a tela de adicionar: quem recebe não precisa digitar o código.
+    const text = `Bora duelar no QUIZ GOMES? Toca no link pra me adicionar (${profile.publicId}):`;
+    const url = inviteUrl(profile.publicId);
     const touch = typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches;
     if (touch && typeof navigator.share === 'function') {
       try {

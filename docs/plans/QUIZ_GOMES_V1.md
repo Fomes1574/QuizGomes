@@ -1633,6 +1633,12 @@ Pedidos do proprietário nesta rodada: limpeza a cada 15 dias (admin 6 meses), X
 - Medição: Workers Logs ligado (`observability`, plano gratuito). Avisos `MATCH_PHASE_LATE`/`CHALLENGE_PHASE_LATE` (fase passou ≥ 250 ms depois do prazo, com o gatilho que agiu), `*_ALARM_RETRY` e `ROOM_SIDE_EFFECT_SLOW`/`_FAILED` (efeito ≥ 500 ms ou com erro). Decisão pendente: conferir no painel da Cloudflare a cota de logs e baixar `head_sampling_rate` se o volume crescer.
 - Testes novos: cronômetro libera as alternativas com o alarme empurrado para longe; gatilho adiantado na leitura vale como prazo e repetido não passa a fase duas vezes; na resposta, gatilho adiantado nunca encurta o prazo; presença fora do ar e D1 fora do ar não impedem a pergunta; "jogando" não é reenviado na 2ª rodada; recibo da 2ª rodada no desafio; unidade do relógio e da fila.
 
+### 2026-10-07 — convite de amizade por link
+
+- "Chamar amigos" (Social) e "Compartilhar perfil" passam a mandar `/convite/QGXXXX` em vez do endereço do site. O link abre a tela do convite: os dois retratos ligados por um "+", o nome de quem chamou e um botão "Adicionar {nome}". Nada é enviado só por abrir o link: o pedido sai no toque (evita pedidos involuntários por link aberto sem querer).
+- Estados: já amigos, pedido já enviado, a pessoa já te pediu (vira "Aceitar e virar amigos"), espera para reenviar, o próprio link, código inexistente ou inválido. Quem chega sem conta toca em "Entrar com Google e adicionar": o pedido sai sozinho quando a conta fica pronta (só para o convite tocado).
+- Usa as rotas existentes (busca por ID público, pedido e aceite), com as mesmas regras de bloqueio, limite de 200 amizades e espera. Prévia do link (WhatsApp etc.) só com o código, sem consultar o banco: o link não revela nome a quem não entrou.
+
 ## Critério de saída desta execução
 
 - Milestones 8 e 8.5 aprovados fisicamente e congelados;
