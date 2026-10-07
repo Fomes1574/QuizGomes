@@ -1,4 +1,4 @@
-import { env, runInDurableObject } from 'cloudflare:test';
+import { env, runDurableObjectAlarm, runInDurableObject } from 'cloudflare:test';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AsyncHalfState } from '@quiz-gomes/domain';
 import { ChallengeRepository } from '../repositories/challenge-repository.js';
@@ -183,6 +183,42 @@ describe('M9C+M10 — Social converge por evento, sem polling', () => {
     ).bind(challengeId).all()).toMatchObject({
       results: [{ question_id: firstQuestion.id, round_number: 1, user_id: first.id }],
     });
+  });
+
+  it('registra a entrega também das rodadas seguintes, que chegam pelo relógio da metade', async () => {
+    const { themeSlug, users } = await fixture(2);
+    const first = userAt(users, 0);
+    const second = userAt(users, 1);
+    await befriend(first, second);
+    const { challengeId, repository } = await asyncChallenge(first, second, themeSlug);
+    const stub = await openRoom(challengeId, 'FIRST');
+    const response = await stub.fetch(new Request('https://challenge.internal/socket', {
+      headers: { Upgrade: 'websocket', 'X-QG-Authenticated-User-Id': first.id },
+    }));
+    expect(response.status).toBe(101);
+    response.webSocket?.accept();
+
+    // Fim do resultado da rodada 1: o relógio (sem socket de origem) abre a rodada 2.
+    await runInDurableObject(stub, async (_instance, state) => {
+      const stored = await state.storage.get<AsyncHalfState>('half');
+      if (stored === undefined) throw new Error('Metade não inicializada.');
+      stored.phase = 'ROUND_RESULT';
+      stored.phaseDeadlineMs = Date.now() - 1;
+      await state.storage.put('half', stored);
+      await state.storage.setAlarm(Date.now() + 60_000);
+    });
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
+
+    const secondQuestion = await repository.questionSet(challengeId).then((questions) => questions[1]);
+    if (secondQuestion === undefined) throw new Error('Segunda pergunta ausente.');
+    const views = await env.CORE_DB.prepare(
+      `SELECT question_id, round_number, user_id FROM question_report_views
+        WHERE context_kind = 'CHALLENGE' AND context_id = ?1 ORDER BY round_number`,
+    ).bind(challengeId).all();
+    expect(views.results).toEqual([
+      expect.objectContaining({ round_number: 1, user_id: first.id }),
+      { question_id: secondQuestion.id, round_number: 2, user_id: first.id },
+    ]);
   });
 
   it('entrega CHALLENGE_UPDATED só a quem participa do desafio', async () => {

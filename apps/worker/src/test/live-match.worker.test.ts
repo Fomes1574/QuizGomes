@@ -38,7 +38,7 @@ interface TestMessage {
 
 interface SocketCapture {
   socket: WebSocket;
-  waitFor(type: string, predicate?: (message: TestMessage) => boolean): Promise<TestMessage>;
+  waitFor(type: string, predicate?: (message: TestMessage) => boolean, timeoutMs?: number): Promise<TestMessage>;
 }
 
 function capture(socket: WebSocket): SocketCapture {
@@ -65,7 +65,7 @@ function capture(socket: WebSocket): SocketCapture {
   socket.accept();
   return {
     socket,
-    waitFor: (type: string, predicate?: (message: TestMessage) => boolean) => {
+    waitFor: (type: string, predicate?: (message: TestMessage) => boolean, timeoutMs = 2_000) => {
       const existingIndex = messages.findIndex(
         (message) => message.type === type && (predicate?.(message) ?? true),
       );
@@ -83,7 +83,7 @@ function capture(socket: WebSocket): SocketCapture {
             waiters.splice(index, 1);
             reject(new Error(`Timeout aguardando ${type}.`));
           }
-        }, 2_000);
+        }, timeoutMs);
       });
     },
   };
@@ -1258,5 +1258,164 @@ describe('recorde pessoal por tema', () => {
     expect(records.results).toEqual([
       { best_score: winnerScore, match_id: firstMatchId, mode: 'CASUAL', user_id: fixture.userIds[0] },
     ]);
+  });
+});
+
+/** Ajusta o prazo da fase direto no storage e afasta o alarme de reserva, sem disparar nada. */
+async function setPhaseDeadline(stub: DurableObjectStub, offsetMs: number): Promise<number> {
+  return runInDurableObject(stub, async (_instance, state) => {
+    const room = await state.storage.get<LiveMatchState>('room');
+    if (room === undefined) throw new Error('Sala ausente.');
+    room.phaseDeadlineMs = Date.now() + offsetMs;
+    await state.storage.put('room', room);
+    await state.storage.setAlarm(Date.now() + 60_000);
+    return room.phaseDeadlineMs;
+  });
+}
+
+async function storedRoom(stub: DurableObjectStub): Promise<{ alarm: number | null; room: LiveMatchState }> {
+  return runInDurableObject(stub, async (_instance, state) => {
+    const room = await state.storage.get<LiveMatchState>('room');
+    if (room === undefined) throw new Error('Sala ausente.');
+    return { alarm: await state.storage.getAlarm(), room };
+  });
+}
+
+/** Troca dependências externas da instância viva da sala (presença, D1) para simular falhas. */
+async function patchRoomEnv(stub: DurableObjectStub, patch: Partial<typeof env>): Promise<void> {
+  await runInDurableObject(stub, (instance) => {
+    const room = instance as unknown as { env: typeof env };
+    room.env = { ...room.env, ...patch };
+  });
+}
+
+async function startRoomAtReading(
+  stub: DurableObjectStub,
+  uids: readonly [string, string],
+): Promise<{ first: SocketCapture; second: SocketCapture }> {
+  const first = await openRoom(stub, uids[0]);
+  const second = await openRoom(stub, uids[1]);
+  await Promise.all([first.waitFor('ROOM_STATE'), second.waitFor('ROOM_STATE')]);
+  first.socket.send(JSON.stringify({ type: 'READY' }));
+  second.socket.send(JSON.stringify({ type: 'READY' }));
+  await Promise.all([first.waitFor('PREPARING'), second.waitFor('PREPARING')]);
+  await expireAlarm(stub);
+  await Promise.all([first.waitFor('ROUND_QUESTION'), second.waitFor('ROUND_QUESTION')]);
+  first.socket.send(JSON.stringify({ roundNumber: 1, type: 'ROUND_READY' }));
+  second.socket.send(JSON.stringify({ roundNumber: 1, type: 'ROUND_READY' }));
+  await Promise.all([first.waitFor('ROUND_READING'), second.waitFor('ROUND_READING')]);
+  return { first, second };
+}
+
+describe('relógio da sala: alternativas na hora, sem depender do alarme nem de rede externa', () => {
+  it('o cronômetro da própria sala libera as alternativas no fim da leitura, mesmo com o alarme atrasado', async () => {
+    const fixture = await seedMatchFixture('timer-reading', 500, 'CASUAL');
+    const { stub } = await initializeRoom(fixture);
+    const { first, second } = await startRoomAtReading(stub, fixture.uids);
+    // Alarme de reserva empurrado para longe: só o cronômetro em memória pode agir.
+    await runInDurableObject(stub, async (_instance, state) => {
+      await state.storage.setAlarm(Date.now() + 60_000);
+    });
+    const [started] = await Promise.all([
+      first.waitFor('ROUND_STARTED', undefined, 4_000),
+      second.waitFor('ROUND_STARTED', undefined, 4_000),
+    ]);
+    expect(started.match?.question?.options).toHaveLength(4);
+    expect(started.match?.phase).toBe('ANSWERING');
+    // Ao passar de fase, o alarme de reserva volta para o prazo novo.
+    const { alarm, room } = await storedRoom(stub);
+    expect(alarm).toBe(room.phaseDeadlineMs);
+  });
+
+  it('gatilho alguns ms adiantado na leitura vale como o prazo; repetido, não passa a fase duas vezes', async () => {
+    const fixture = await seedMatchFixture('timer-early', 500, 'CASUAL');
+    const { stub } = await initializeRoom(fixture);
+    const { first } = await startRoomAtReading(stub, fixture.uids);
+    await setPhaseDeadline(stub, 30);
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
+    const started = await first.waitFor('ROUND_STARTED', undefined, 500);
+    expect(started.match?.remainingMs).toBeGreaterThan(9_000);
+    // Segundo gatilho (alarme repetido depois de o cronômetro já ter agido): nada muda.
+    await runInDurableObject(stub, async (_instance, state) => {
+      await state.storage.setAlarm(Date.now() + 60_000);
+    });
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
+    await expect(first.waitFor('ROUND_STARTED', undefined, 150)).rejects.toThrow('Timeout');
+    expect((await storedRoom(stub)).room.phase).toBe('ANSWERING');
+  });
+
+  it('na resposta, gatilho adiantado nunca encurta o prazo: a rodada só fecha no prazo exato', async () => {
+    const fixture = await seedMatchFixture('timer-answer', 500, 'CASUAL');
+    const { stub } = await initializeRoom(fixture);
+    const { first } = await startRoomAtAnswering(stub, fixture.uids);
+    const deadline = await setPhaseDeadline(stub, 40);
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
+    const { alarm, room } = await storedRoom(stub);
+    expect(room.phase).toBe('ANSWERING');
+    // Reserva reagendada logo depois do prazo, e o cronômetro fecha a rodada no prazo.
+    expect(alarm).toBe(deadline + 1);
+    const resolved = await first.waitFor('ROUND_RESOLVED', undefined, 1_000);
+    expect(resolved.match?.phase).toBe('ROUND_RESULT');
+  });
+
+  it('presença fora do ar não impede a primeira pergunta de chegar', async () => {
+    const fixture = await seedMatchFixture('presence-down', 500, 'CASUAL');
+    const { roomId, stub } = await initializeRoom(fixture);
+    const first = await openRoom(stub, fixture.uids[0]);
+    const second = await openRoom(stub, fixture.uids[1]);
+    await Promise.all([first.waitFor('ROOM_STATE'), second.waitFor('ROOM_STATE')]);
+    first.socket.send(JSON.stringify({ type: 'READY' }));
+    second.socket.send(JSON.stringify({ type: 'READY' }));
+    await Promise.all([first.waitFor('PREPARING'), second.waitFor('PREPARING')]);
+    await patchRoomEnv(stub, {
+      PRESENCE_HUB: {
+        get: () => ({ fetch: () => Promise.reject(new Error('Presença sintética fora do ar.')) }),
+        idFromName: (name: string) => env.PRESENCE_HUB.idFromName(name),
+      } as unknown as DurableObjectNamespace,
+    });
+    await expireAlarm(stub);
+    const [question] = await Promise.all([first.waitFor('ROUND_QUESTION'), second.waitFor('ROUND_QUESTION')]);
+    expect(question.match?.phase).toBe('ROUND_READY');
+    // O recibo de denúncia (D1) segue funcionando independentemente da presença.
+    const views = await env.CORE_DB.prepare(
+      `SELECT COUNT(*) AS total FROM question_report_views WHERE context_kind = 'MATCH' AND context_id = ?1`,
+    ).bind(roomId).first<{ total: number }>();
+    expect(views?.total).toBe(2);
+  });
+
+  it('D1 fora do ar no recibo não impede a próxima pergunta; "jogando" não é reenviado a cada rodada', async () => {
+    const fixture = await seedMatchFixture('d1-down', 500, 'CASUAL');
+    const { stub } = await initializeRoom(fixture);
+    const { first, questionId, second } = await startRoomAtAnswering(stub, fixture.uids);
+    first.socket.send(JSON.stringify({ questionId, roundNumber: 1, selectedOption: 0, type: 'ANSWER' }));
+    second.socket.send(JSON.stringify({ questionId, roundNumber: 1, selectedOption: 1, type: 'ANSWER' }));
+    await Promise.all([first.waitFor('ROUND_RESOLVED'), second.waitFor('ROUND_RESOLVED')]);
+    const presenceCalls: string[] = [];
+    const failingCore = new Proxy(env.CORE_DB, {
+      get(target, property) {
+        if (property === 'batch') return () => Promise.reject(new Error('D1 sintético fora do ar.'));
+        const value: unknown = Reflect.get(target, property);
+        return typeof value === 'function' ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+      },
+    });
+    await patchRoomEnv(stub, {
+      CORE_DB: failingCore,
+      PRESENCE_HUB: {
+        get: (id: DurableObjectId) => ({
+          fetch: (url: string, init: RequestInit) => {
+            presenceCalls.push((JSON.parse(init.body as string) as { to: string }).to);
+            return env.PRESENCE_HUB.get(id).fetch(url, init);
+          },
+        }),
+        idFromName: (name: string) => env.PRESENCE_HUB.idFromName(name),
+      } as unknown as DurableObjectNamespace,
+    });
+    await expireAlarm(stub);
+    const [next] = await Promise.all([
+      first.waitFor('ROUND_QUESTION', (message) => message.match?.round?.number === 2),
+      second.waitFor('ROUND_QUESTION', (message) => message.match?.round?.number === 2),
+    ]);
+    expect(next.match?.phase).toBe('ROUND_READY');
+    expect(presenceCalls).toEqual([]);
   });
 });

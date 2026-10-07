@@ -15,6 +15,13 @@ import type { Env } from '../env.js';
 import { ChallengeRepository, type ChallengeWriteOutcome } from '../repositories/challenge-repository.js';
 import { recordReportView } from '../repositories/report-view-repository.js';
 import { notifyChallengeReadyForSecond, notifyChallengeUpdated } from '../services/challenge-notifier.js';
+import {
+  PHASE_LATE_LOG_MS,
+  TransitionQueue,
+  measuredSideEffect,
+  phaseClock,
+  timerDelay,
+} from './phase-clock.js';
 
 /**
  * Sala de uma metade do desafio assíncrono.
@@ -51,6 +58,13 @@ const SEALED_KEY = 'sealed-pending';
 const REPLACED_SOCKET_CODE = 4_000;
 const FINALIZATION_RETRY_MS = 1_000;
 
+/** Prazo que o relógio da metade está esperando agora (na pausa, a carência). */
+function phaseDeadlineOf(state: AsyncHalfState): number | null {
+  return state.phase === 'PAUSED' && state.pause !== null ? state.pause.graceDeadlineMs : state.phaseDeadlineMs;
+}
+
+type PhaseTrigger = 'alarm' | 'message' | 'timer';
+
 function readAttachment(socket: WebSocket): HalfAttachment | null {
   return socket.deserializeAttachment() as HalfAttachment | null;
 }
@@ -66,6 +80,10 @@ function parseClientMessage(raw: string): ClientMessage | null {
 }
 
 export class ChallengeRoom {
+  /** Cronômetro em memória da fase atual; o alarme do storage é a reserva. */
+  private phaseTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly transitions = new TransitionQueue();
+
   constructor(
     private readonly ctx: DurableObjectState,
     private readonly env: Env,
@@ -145,9 +163,12 @@ export class ChallengeRoom {
     await this.webSocketClose(socket, 1_006);
   }
 
-  async alarm(): Promise<void> {
+  async alarm(alarmInfo?: { isRetry?: boolean; retryCount?: number }): Promise<void> {
     const state = await this.state();
     if (state === null) return;
+    if (alarmInfo?.isRetry === true) {
+      console.warn(JSON.stringify({ challengeId: state.challengeId, code: 'CHALLENGE_ALARM_RETRY', phase: state.phase, retryCount: alarmInfo.retryCount ?? null }));
+    }
     // Uma metade cancelada já encerrou o desafio: nada mais finaliza aqui.
     if (state.phase === 'CANCELLED') {
       await this.ctx.storage.delete(SEALED_KEY);
@@ -163,7 +184,7 @@ export class ChallengeRoom {
       await this.trySeal(state);
       return;
     }
-    await this.applyCommand({ type: 'ALARM' }, Date.now());
+    await this.applyCommand({ type: 'ALARM' }, Date.now(), undefined, 'alarm');
   }
 
   /**
@@ -174,8 +195,15 @@ export class ChallengeRoom {
     const state = await this.state();
     if (state === null) return Response.json({ status: 'empty' });
     if (isTerminalHalf(state.phase)) return Response.json({ status: 'already' });
-    const cancelled = transitionAsyncHalf(state, { type: 'CANCEL' }, Date.now()).state;
-    await this.ctx.storage.put(STATE_KEY, cancelled);
+    const cancelled = await this.transitions.run(async () => {
+      const latest = await this.state() ?? state;
+      if (isTerminalHalf(latest.phase)) return null;
+      const next = transitionAsyncHalf(latest, { type: 'CANCEL' }, Date.now()).state;
+      await this.ctx.storage.put(STATE_KEY, next);
+      this.clearPhaseTimer();
+      return next;
+    });
+    if (cancelled === null) return Response.json({ status: 'already' });
     await this.ctx.storage.delete(SEALED_KEY);
     // Mesmo quando a interrupção parte do servidor (relação encerrada ou um
     // retry após falha), a sala terminal converge a reserva do D1 sozinha.
@@ -248,6 +276,7 @@ export class ChallengeRoom {
     });
     await this.ctx.storage.put(STATE_KEY, state);
     await this.ctx.storage.setAlarm(state.phaseDeadlineMs ?? Date.now() + 1_000);
+    if (state.phaseDeadlineMs !== null) this.armPhaseTimer(state.phaseDeadlineMs);
     return Response.json({ status: 'ready' });
   }
 
@@ -292,22 +321,49 @@ export class ChallengeRoom {
     return new Response(null, { status: 101, webSocket: client });
   }
 
+  /**
+   * Uma transição por vez: lê, decide, grava, rearma os relógios e avisa o
+   * jogador sem rede externa no meio. O recibo de denúncia sai depois do aviso.
+   */
   private async applyCommand(
     command: AsyncHalfCommand,
     nowMs: number,
     origin?: WebSocket,
+    trigger: PhaseTrigger = 'message',
   ): Promise<void> {
-    const current = await this.state();
-    if (current === null) return;
-    const transition = transitionAsyncHalf(current, command, nowMs);
-    await this.ctx.storage.put(STATE_KEY, transition.state);
-    await this.scheduleAlarm(transition.state);
-    // CONNECTED entrega a primeira ROUND_READY; QUESTION_AVAILABLE entrega a
-    // seguinte; RESUMED repete uma entrega já registrada de forma idempotente.
-    if (origin !== undefined && ['CONNECTED', 'QUESTION_AVAILABLE', 'RESUMED'].includes(transition.event.type)) {
-      await this.recordRoundDelivery(transition.state, origin);
+    const applied = await this.transitions.run(async () => {
+      const current = await this.state();
+      if (current === null) return null;
+      const deadlineMs = phaseDeadlineOf(current);
+      const clockMs = command.type === 'ALARM' ? phaseClock(current.phase, deadlineMs, nowMs) : nowMs;
+      const transition = transitionAsyncHalf(current, command, clockMs);
+      if (command.type === 'ALARM' && transition.event.type === 'NOOP') {
+        // Antes do prazo, ou o outro gatilho já passou a fase: nada mudou.
+        await this.rearmAfterIdleTrigger(current, trigger);
+        return null;
+      }
+      if (command.type === 'ALARM' && deadlineMs !== null && clockMs - deadlineMs >= PHASE_LATE_LOG_MS) {
+        console.warn(JSON.stringify({
+          challengeId: current.challengeId, code: 'CHALLENGE_PHASE_LATE', lateMs: clockMs - deadlineMs, phase: current.phase, trigger,
+        }));
+      }
+      await this.ctx.storage.put(STATE_KEY, transition.state);
+      await this.scheduleAlarm(transition.state);
+      // CONNECTED/RESUMED entregam a rodada atual a quem conectou; QUESTION_AVAILABLE
+      // (vinda do relógio, sem origem) entrega a seguinte a todos os sockets da metade.
+      const deliveredTo = transition.event.type === 'QUESTION_AVAILABLE'
+        ? (origin === undefined ? this.ctx.getWebSockets() : [origin])
+        : origin !== undefined && (transition.event.type === 'CONNECTED' || transition.event.type === 'RESUMED') ? [origin] : [];
+      this.broadcast(transition.state, transition.event, clockMs, origin);
+      return { deliveredTo, transition };
+    });
+    if (applied === null) return;
+    const { transition } = applied;
+    if (applied.deliveredTo.length > 0) {
+      await measuredSideEffect('report_view', { challengeId: transition.state.challengeId }, async () => {
+        for (const socket of applied.deliveredTo) await this.recordRoundDelivery(transition.state, socket);
+      });
     }
-    this.broadcast(transition.state, transition.event, nowMs, origin);
     if (transition.state.phase === 'CANCELLED') {
       await this.ctx.storage.delete(SEALED_KEY);
       await this.applyCancellation(transition.state);
@@ -390,12 +446,58 @@ export class ChallengeRoom {
     for (const socket of this.ctx.getWebSockets()) this.safeSend(socket, payload);
   }
 
+  /** Cronômetro em memória no prazo exato e alarme do storage como reserva. */
   private async scheduleAlarm(state: AsyncHalfState): Promise<void> {
-    if (isTerminalHalf(state.phase)) return;
-    const deadline = state.phase === 'FINALIZING'
-      ? Date.now() + FINALIZATION_RETRY_MS
-      : state.phaseDeadlineMs;
-    if (deadline !== null) await this.ctx.storage.setAlarm(deadline);
+    if (isTerminalHalf(state.phase)) {
+      this.clearPhaseTimer();
+      return;
+    }
+    if (state.phase === 'FINALIZING') {
+      this.clearPhaseTimer();
+      await this.ctx.storage.setAlarm(Date.now() + FINALIZATION_RETRY_MS);
+      return;
+    }
+    const deadline = state.phaseDeadlineMs;
+    if (deadline === null) {
+      this.clearPhaseTimer();
+      return;
+    }
+    this.armPhaseTimer(phaseDeadlineOf(state) ?? deadline);
+    await this.ctx.storage.setAlarm(deadline);
+  }
+
+  private async rearmAfterIdleTrigger(state: AsyncHalfState, trigger: PhaseTrigger): Promise<void> {
+    const deadlineMs = phaseDeadlineOf(state);
+    if (deadlineMs === null) return;
+    this.armPhaseTimer(deadlineMs);
+    // Dentro do próprio alarme, 1 ms depois garante a reserva sem repetir o mesmo instante.
+    if (trigger === 'alarm') await this.ctx.storage.setAlarm(deadlineMs + 1);
+  }
+
+  private armPhaseTimer(deadlineMs: number): void {
+    this.clearPhaseTimer();
+    this.phaseTimer = setTimeout(() => {
+      this.phaseTimer = null;
+      void this.onPhaseTimer();
+    }, timerDelay(deadlineMs, Date.now()));
+  }
+
+  private clearPhaseTimer(): void {
+    if (this.phaseTimer !== null) clearTimeout(this.phaseTimer);
+    this.phaseTimer = null;
+  }
+
+  private async onPhaseTimer(): Promise<void> {
+    try {
+      const state = await this.state();
+      if (state === null || state.phase === 'FINALIZING' || isTerminalHalf(state.phase)) return;
+      await this.applyCommand({ type: 'ALARM' }, Date.now(), undefined, 'timer');
+    } catch (error) {
+      // O alarme de reserva continua agendado no mesmo prazo e tenta de novo.
+      console.error(JSON.stringify({
+        code: 'CHALLENGE_PHASE_TIMER_FAILED', message: error instanceof Error ? error.message.slice(0, 120) : 'erro desconhecido',
+      }));
+    }
   }
 
   private async recordRoundDelivery(state: AsyncHalfState, socket: WebSocket): Promise<void> {

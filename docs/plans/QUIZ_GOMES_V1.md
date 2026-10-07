@@ -1623,6 +1623,16 @@ Pedidos do proprietário nesta rodada: limpeza a cada 15 dias (admin 6 meses), X
 - Revisão: "Revisar e editar" de uma pergunta em revisão mostra o campo de foto no próprio formulário (troca na hora). "Criar revisão" de uma publicada mostra a foto atual (vai junto) e permite trocar ou tirar a foto só do rascunho; a publicada continua com a foto dela até a aprovação.
 - Sem migration e sem custo novo: fotos no mesmo R2 já usado pelas perguntas.
 
+### 2026-10-07 — relógio das salas e caminho da pergunta sem esperas externas
+
+- Relato do proprietário: numa partida, as alternativas demoraram ~3 s (a leitura é 1,5 s). A passagem leitura → resposta dependia só do alarme do Durable Object, que pode tocar atrasado e, se o handler falha, só é repetido ~2 s depois. Nenhuma regra de jogo mudou.
+- Relógio: cada fase com prazo tem agora um cronômetro em memória na sala (dispara no prazo exato) e o alarme do storage como reserva no mesmo prazo (cobre reinício da sala). Os dois chamam a mesma transição, que só acontece uma vez. Gatilho até 50 ms adiantado vale como o prazo só em preparação, leitura e resultado — nunca em resposta, "pronto" ou pausa. Gatilho adiantado demais ou repetido não grava nada e só rearma os relógios (dentro do alarme, a reserva vai para prazo + 1 ms).
+- Transições serializadas por sala (ler → decidir → gravar → avisar, uma por vez), inclusive na conexão/reconexão, sem rede externa no meio.
+- Pergunta primeiro: o recibo de denúncia (D1) e o aviso de presença saem depois da mensagem aos jogadores, fora da fila, e falha neles só vira log. Corrige o bug em que uma falha da presença deixava a pergunta sem ser enviada e a partida acabava anulada após 10 s. "Jogando" é avisado uma vez, na primeira pergunta (antes, a cada rodada).
+- Desafio entre amigos: mesmas mudanças, e correção de bug — o recibo de entrega só era gravado na 1ª rodada (as seguintes chegam pelo relógio, sem socket de origem), então denunciar uma pergunta da 2ª em diante era recusado.
+- Medição: Workers Logs ligado (`observability`, plano gratuito). Avisos `MATCH_PHASE_LATE`/`CHALLENGE_PHASE_LATE` (fase passou ≥ 250 ms depois do prazo, com o gatilho que agiu), `*_ALARM_RETRY` e `ROOM_SIDE_EFFECT_SLOW`/`_FAILED` (efeito ≥ 500 ms ou com erro). Decisão pendente: conferir no painel da Cloudflare a cota de logs e baixar `head_sampling_rate` se o volume crescer.
+- Testes novos: cronômetro libera as alternativas com o alarme empurrado para longe; gatilho adiantado na leitura vale como prazo e repetido não passa a fase duas vezes; na resposta, gatilho adiantado nunca encurta o prazo; presença fora do ar e D1 fora do ar não impedem a pergunta; "jogando" não é reenviado na 2ª rodada; recibo da 2ª rodada no desafio; unidade do relógio e da fila.
+
 ## Critério de saída desta execução
 
 - Milestones 8 e 8.5 aprovados fisicamente e congelados;

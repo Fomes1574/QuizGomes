@@ -4,6 +4,14 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-08-10",
   "workers_dev": true,
+  // Workers Logs: incluído no plano gratuito (cota diária de eventos; acima
+  // dela os logs só deixam de ser guardados, sem cobrança). Mostra os avisos
+  // MATCH_PHASE_LATE, *_ALARM_RETRY e ROOM_SIDE_EFFECT_* das salas. Se o
+  // volume crescer, baixe head_sampling_rate (ex.: 0.1) em vez de desligar.
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
   "assets": {
     "directory": "../web/dist",
     "binding": "ASSETS",

@@ -20,6 +20,13 @@ import { notifyChallengeUpdated } from '../services/challenge-notifier.js';
 import { recordQuestionAnswers } from '../services/question-statistics-service.js';
 import { recordValidPlay } from '../services/progression-service.js';
 import { AchievementRepository } from '../repositories/achievement-repository.js';
+import {
+  PHASE_LATE_LOG_MS,
+  TransitionQueue,
+  measuredSideEffect,
+  phaseClock,
+  timerDelay,
+} from './phase-clock.js';
 
 interface RoomAttachment {
   seat: LiveSeat;
@@ -61,6 +68,13 @@ function safeInitializationCode(error: unknown): string {
     ? error.code
     : 'MATCH_INITIALIZATION_FAILED';
 }
+
+/** Prazo que o relógio da sala está esperando agora (na pausa, a carência). */
+function phaseDeadlineOf(state: LiveMatchState): number | null {
+  return state.phase === 'PAUSED' && state.pause !== null ? state.pause.graceDeadlineMs : state.phaseDeadlineMs;
+}
+
+type PhaseTrigger = 'alarm' | 'message' | 'timer';
 
 function readAttachment(socket: WebSocket): RoomAttachment | null {
   return socket.deserializeAttachment() as RoomAttachment | null;
@@ -111,6 +125,11 @@ export class MatchRoom {
   // esta promessa compartilhada, o segundo request vê state nulo, bate no lock
   // de jogador do primeiro e devolve PLAYER_BUSY apesar de ser a mesma sala.
   private initializationInFlight: Promise<LiveMatchState> | null = null;
+  /** Cronômetro em memória da fase atual; o alarme do storage é a reserva. */
+  private phaseTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly transitions = new TransitionQueue();
+  /** Avisos de presença saem na ordem dos eventos, mesmo fora da fila de transições. */
+  private readonly presenceUpdates = new TransitionQueue();
 
   constructor(
     private readonly ctx: DurableObjectState,
@@ -189,9 +208,13 @@ export class MatchRoom {
     await this.webSocketClose(socket, 1_006);
   }
 
-  async alarm(): Promise<void> {
+  async alarm(alarmInfo?: { isRetry?: boolean; retryCount?: number }): Promise<void> {
     const state = await this.state();
     if (state === null) return;
+    if (alarmInfo?.isRetry === true) {
+      // Repetição depois de uma falha: a Cloudflare espera segundos antes de tentar de novo.
+      console.warn(JSON.stringify({ code: 'MATCH_ALARM_RETRY', matchId: state.matchId, phase: state.phase, retryCount: alarmInfo.retryCount ?? null }));
+    }
     if (state.phase === 'FINISHED' || state.phase === 'VOID') {
       if (await this.ctx.storage.get<FinalizedLiveMatch>(RESULT_KEY) === undefined) {
         const summary = await this.restoreTerminalSummary(state);
@@ -210,7 +233,7 @@ export class MatchRoom {
       await this.tryFinalize(state);
       return;
     }
-    await this.applyCommand({ type: 'ALARM' }, Date.now());
+    await this.applyCommand({ type: 'ALARM' }, Date.now(), undefined, 'alarm');
   }
 
   private repository(): LiveMatchRepository {
@@ -344,36 +367,56 @@ export class MatchRoom {
     server.serializeAttachment({ seat: player.seat, uid, userId: player.userId } satisfies RoomAttachment);
     this.ctx.acceptWebSocket(server);
 
+    if (state.phase === 'FINISHED' || state.phase === 'VOID' || state.phase === 'FINALIZING') {
+      await this.connectToTerminal(server, state);
+    } else if (terminalOnly) {
+      await this.connectForTerminalOnly(server, state, player.seat);
+    } else {
+      const connected = await this.transitions.run(async () => {
+        // Relido dentro da fila: outra transição pode ter passado desde a leitura acima.
+        const latest = await this.state() ?? state;
+        if (latest.phase === 'FINISHED' || latest.phase === 'VOID' || latest.phase === 'FINALIZING') {
+          return { latest, transition: null };
+        }
+        const transition = transitionLiveMatch(latest, { seat: player.seat, type: 'CONNECT' }, Date.now());
+        await this.save(transition.state);
+        await this.syncAlarm(transition.state);
+        let effects: Promise<void> = Promise.resolve();
+        if (transition.event.type === 'RESUMED') {
+          this.broadcastState('RESUMED', transition.state);
+          effects = this.startEventEffects(transition.event, transition.state, latest, this.ctx.getWebSockets());
+        } else if (transition.event.type !== 'FINALIZE') {
+          this.sendState(server, 'ROOM_STATE', transition.state);
+          this.broadcastState('MATCH_STATE', transition.state, server);
+          if (transition.event.type === 'CONNECTED' && transition.state.phase === 'LOBBY') {
+            effects = this.updatePresence('preparing', transition.state.matchId);
+          }
+          if (transition.event.type === 'CONNECTED' && ['ROUND_READY', 'READING', 'ANSWERING', 'ROUND_RESULT'].includes(transition.state.phase)) {
+            effects = this.recordRoundDeliveryMeasured(transition.state, [server]);
+          }
+        }
+        return { effects, latest, transition };
+      });
+      if (connected.transition === null) {
+        await this.connectToTerminal(server, connected.latest);
+      } else if (connected.transition.event.type === 'FINALIZE') {
+        if (!await this.tryFinalize(connected.transition.state)) await this.deferTerminal(server, connected.transition.state);
+      } else {
+        await connected.effects;
+      }
+    }
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  /** Sala já decidida: entrega o resultado guardado ou avisa que ele está sendo confirmado. */
+  private async connectToTerminal(server: WebSocket, state: LiveMatchState): Promise<void> {
     if (state.phase === 'FINISHED' || state.phase === 'VOID') {
       const summary = await this.restoreTerminalSummary(state);
       if (summary !== null) this.sendTerminal(server, state, summary);
       else await this.deferTerminal(server, state);
-    } else if (state.phase === 'FINALIZING') {
-      if (!await this.tryFinalize(state)) await this.deferTerminal(server, state);
-    } else if (terminalOnly) {
-      await this.connectForTerminalOnly(server, state, player.seat);
-    } else {
-      const transition = transitionLiveMatch(state, { seat: player.seat, type: 'CONNECT' }, Date.now());
-      await this.save(transition.state);
-      await this.syncAlarm(transition.state);
-      if (transition.event.type === 'FINALIZE') {
-        if (!await this.tryFinalize(transition.state)) await this.deferTerminal(server, transition.state);
-      } else if (transition.event.type === 'RESUMED') {
-        await this.setPlayersActivity(transition.state.startedAtMs === null ? 'preparing' : 'playing');
-        await this.recordRoundDelivery(transition.state);
-        this.broadcastState('RESUMED', transition.state);
-      } else {
-        if (transition.event.type === 'CONNECTED' && transition.state.phase === 'LOBBY') {
-          await this.setPlayersActivity('preparing');
-        }
-        if (transition.event.type === 'CONNECTED' && ['ROUND_READY', 'READING', 'ANSWERING', 'ROUND_RESULT'].includes(transition.state.phase)) {
-          await this.recordRoundDelivery(transition.state, [server]);
-        }
-        this.sendState(server, 'ROOM_STATE', transition.state);
-        this.broadcastState('MATCH_STATE', transition.state, server);
-      }
+      return;
     }
-    return new Response(null, { status: 101, webSocket: client });
+    if (!await this.tryFinalize(state)) await this.deferTerminal(server, state);
   }
 
   private async connectForTerminalOnly(
@@ -381,38 +424,78 @@ export class MatchRoom {
     state: LiveMatchState,
     seat: LiveSeat,
   ): Promise<void> {
-    const transition = state.phase === 'PAUSED'
-      ? transitionLiveMatch(state, { type: 'ALARM' }, Date.now())
-      : transitionLiveMatch(state, { seat, type: 'DISCONNECT' }, Date.now());
-    await this.save(transition.state);
-    await this.syncAlarm(transition.state);
-    if (transition.event.type === 'FINALIZE') {
-      if (!await this.tryFinalize(transition.state)) this.safeSend(socket, { type: 'MATCH_FINALIZING' });
+    const outcome = await this.transitions.run(async () => {
+      const latest = await this.state() ?? state;
+      if (latest.phase === 'FINISHED' || latest.phase === 'VOID' || latest.phase === 'FINALIZING') return null;
+      const transition = latest.phase === 'PAUSED'
+        ? transitionLiveMatch(latest, { type: 'ALARM' }, Date.now())
+        : transitionLiveMatch(latest, { seat, type: 'DISCONNECT' }, Date.now());
+      await this.save(transition.state);
+      await this.syncAlarm(transition.state);
+      let effects: Promise<void> = Promise.resolve();
+      if (transition.event.type === 'PAUSED') {
+        this.broadcastState('PAUSED_FOR_RECONNECT', transition.state, socket);
+        effects = this.updatePresence('reconnecting', transition.state.matchId);
+      }
+      return { effects, transition };
+    });
+    if (outcome?.transition.event.type === 'FINALIZE') {
+      if (!await this.tryFinalize(outcome.transition.state)) this.safeSend(socket, { type: 'MATCH_FINALIZING' });
       return;
     }
-    if (transition.event.type === 'PAUSED') {
-      await this.setPlayersActivity('reconnecting');
-      this.broadcastState('PAUSED_FOR_RECONNECT', transition.state, socket);
-    }
+    await outcome?.effects;
     this.safeSend(socket, { type: 'MATCH_FINALIZING' });
   }
 
-  private async applyCommand(command: LiveMatchCommand, nowMs: number, source?: WebSocket): Promise<void> {
-    const current = await this.state();
-    if (current === null) throw new LiveMatchCommandError('ROOM_NOT_FOUND', 'Sala não encontrada.');
-    const transition = transitionLiveMatch(current, command, nowMs);
-    if (transition.event.type === 'QUESTION_AVAILABLE' && current.startedAtMs === null) {
-      await this.repository().markStarted(current.matchId);
-    }
-    await this.save(transition.state);
-    await this.syncAlarm(transition.state);
-    await this.publishEvent(transition.event, transition.state, source);
-    if (transition.event.type === 'FINALIZE' && !await this.tryFinalize(transition.state)) {
-      this.broadcastState('MATCH_FINALIZING', transition.state);
+  /**
+   * Uma transição por vez: lê, decide, grava, rearma os relógios e avisa os
+   * jogadores — sem nenhuma chamada de rede externa no meio. Presença e
+   * recibo de denúncia saem depois do aviso e nunca atrasam nem travam a
+   * rodada (antes, uma falha neles deixava a pergunta sem ser enviada).
+   */
+  private async applyCommand(
+    command: LiveMatchCommand,
+    nowMs: number,
+    source?: WebSocket,
+    trigger: PhaseTrigger = 'message',
+  ): Promise<void> {
+    const applied = await this.transitions.run(async () => {
+      const current = await this.state();
+      if (current === null) throw new LiveMatchCommandError('ROOM_NOT_FOUND', 'Sala não encontrada.');
+      const deadlineMs = phaseDeadlineOf(current);
+      const clockMs = command.type === 'ALARM' ? phaseClock(current.phase, deadlineMs, nowMs) : nowMs;
+      const transition = transitionLiveMatch(current, command, clockMs);
+      if (command.type === 'ALARM' && transition.event.type === 'NOOP') {
+        // Gatilho antes do prazo, ou repetido depois que o outro já passou a
+        // fase: nada mudou. Só garante os dois relógios armados.
+        await this.rearmAfterIdleTrigger(current, trigger);
+        return null;
+      }
+      if (command.type === 'ALARM' && deadlineMs !== null && clockMs - deadlineMs >= PHASE_LATE_LOG_MS) {
+        console.warn(JSON.stringify({
+          code: 'MATCH_PHASE_LATE', lateMs: clockMs - deadlineMs, matchId: current.matchId, phase: current.phase, trigger,
+        }));
+      }
+      if (transition.event.type === 'QUESTION_AVAILABLE' && current.startedAtMs === null) {
+        await this.repository().markStarted(current.matchId);
+      }
+      await this.save(transition.state);
+      await this.syncAlarm(transition.state);
+      const recipients = this.ctx.getWebSockets();
+      this.broadcastEvent(transition.event, transition.state, source);
+      return {
+        effects: this.startEventEffects(transition.event, transition.state, current, recipients),
+        transition,
+      };
+    });
+    if (applied === null) return;
+    await applied.effects;
+    if (applied.transition.event.type === 'FINALIZE' && !await this.tryFinalize(applied.transition.state)) {
+      this.broadcastState('MATCH_FINALIZING', applied.transition.state);
     }
   }
 
-  private async publishEvent(event: LiveMatchEvent, state: LiveMatchState, source?: WebSocket): Promise<void> {
+  private broadcastEvent(event: LiveMatchEvent, state: LiveMatchState, source?: WebSocket): void {
     if (event.type === 'NOOP') {
       if (source !== undefined) this.sendState(source, 'MATCH_STATE', state);
       return;
@@ -422,8 +505,6 @@ export class MatchRoom {
       return;
     }
     if (event.type === 'QUESTION_AVAILABLE') {
-      await this.setPlayersActivity('playing');
-      await this.recordRoundDelivery(state);
       this.broadcastState('ROUND_QUESTION', state);
       return;
     }
@@ -441,18 +522,85 @@ export class MatchRoom {
       return;
     }
     if (event.type === 'PAUSED') {
-      await this.setPlayersActivity('reconnecting');
       this.broadcastState('PAUSED_FOR_RECONNECT', state);
       return;
     }
     if (event.type === 'RESUMED') {
-      await this.setPlayersActivity(state.startedAtMs === null ? 'preparing' : 'playing');
       this.broadcastState('RESUMED', state);
       return;
     }
     if (event.type === 'CONNECTED') {
       if (source !== undefined) this.sendState(source, 'ROOM_STATE', state);
-      return;
+    }
+  }
+
+  /**
+   * Efeitos fora do caminho da rodada, disparados já na ordem dos eventos e
+   * aguardados só depois que a fila de transições foi liberada. Nunca lançam.
+   */
+  private startEventEffects(
+    event: LiveMatchEvent,
+    state: LiveMatchState,
+    previous: LiveMatchState,
+    recipients: readonly WebSocket[],
+  ): Promise<void> {
+    const effects: Promise<void>[] = [];
+    if (event.type === 'QUESTION_AVAILABLE') {
+      // "Jogando" é avisado uma vez, na primeira pergunta; depois só muda na pausa/retomada.
+      if (previous.startedAtMs === null) effects.push(this.updatePresence('playing', state.matchId));
+      effects.push(this.recordRoundDeliveryMeasured(state, recipients));
+    }
+    if (event.type === 'PAUSED') effects.push(this.updatePresence('reconnecting', state.matchId));
+    if (event.type === 'RESUMED') {
+      effects.push(this.updatePresence(state.startedAtMs === null ? 'preparing' : 'playing', state.matchId));
+      effects.push(this.recordRoundDeliveryMeasured(state, recipients));
+    }
+    return Promise.all(effects).then(() => undefined);
+  }
+
+  private updatePresence(to: 'playing' | 'preparing' | 'reconnecting', matchId: string): Promise<void> {
+    return this.presenceUpdates.run(() => measuredSideEffect(`presence_${to}`, { matchId }, () => this.setPlayersActivity(to)));
+  }
+
+  private recordRoundDeliveryMeasured(state: LiveMatchState, recipients: readonly WebSocket[]): Promise<void> {
+    // Só existe pergunta entregue a partir da rodada (na preparação ainda não há nenhuma).
+    if (!['ROUND_READY', 'READING', 'ANSWERING', 'ROUND_RESULT'].includes(state.phase)) return Promise.resolve();
+    return measuredSideEffect('report_view', { matchId: state.matchId }, () => this.recordRoundDelivery(state, recipients));
+  }
+
+  /** O gatilho chegou sem nada a fazer: mantém cronômetro e alarme de reserva no prazo atual. */
+  private async rearmAfterIdleTrigger(state: LiveMatchState, trigger: PhaseTrigger): Promise<void> {
+    const deadlineMs = phaseDeadlineOf(state);
+    if (deadlineMs === null) return;
+    this.armPhaseTimer(deadlineMs);
+    // Dentro do próprio alarme, reagendar exatamente o mesmo instante pode ser
+    // tratado como "já executado"; 1 ms depois é inofensivo e garante a reserva.
+    if (trigger === 'alarm') await this.ctx.storage.setAlarm(deadlineMs + 1);
+  }
+
+  private armPhaseTimer(deadlineMs: number): void {
+    this.clearPhaseTimer();
+    this.phaseTimer = setTimeout(() => {
+      this.phaseTimer = null;
+      void this.onPhaseTimer();
+    }, timerDelay(deadlineMs, Date.now()));
+  }
+
+  private clearPhaseTimer(): void {
+    if (this.phaseTimer !== null) clearTimeout(this.phaseTimer);
+    this.phaseTimer = null;
+  }
+
+  private async onPhaseTimer(): Promise<void> {
+    try {
+      const state = await this.state();
+      if (state === null || state.phase === 'FINALIZING' || state.phase === 'FINISHED' || state.phase === 'VOID') return;
+      await this.applyCommand({ type: 'ALARM' }, Date.now(), undefined, 'timer');
+    } catch (error) {
+      // O alarme de reserva continua agendado no mesmo prazo e tenta de novo.
+      console.error(JSON.stringify({
+        code: 'MATCH_PHASE_TIMER_FAILED', message: error instanceof Error ? error.message.slice(0, 120) : 'erro desconhecido',
+      }));
     }
   }
 
@@ -467,7 +615,7 @@ export class MatchRoom {
    * jogador pode já não ter recebido o payload. Falha desta telemetria nunca
    * atrasa nem interrompe a partida.
    */
-  private async recordRoundDelivery(state: LiveMatchState, sockets = this.ctx.getWebSockets()): Promise<void> {
+  private async recordRoundDelivery(state: LiveMatchState, sockets: readonly WebSocket[] = this.ctx.getWebSockets()): Promise<void> {
     const question = state.questions[state.roundIndex];
     if (question === undefined) return;
     const recipients = new Set(
@@ -691,20 +839,25 @@ export class MatchRoom {
     await this.ctx.storage.put(ROOM_KEY, state);
   }
 
+  /** Cronômetro em memória no prazo exato e alarme do storage como reserva, no mesmo prazo. */
   private async syncAlarm(state: LiveMatchState): Promise<void> {
     if (state.phase === 'FINISHED' || state.phase === 'VOID') {
+      this.clearPhaseTimer();
       await this.ctx.storage.deleteAlarm();
       return;
     }
     if (state.phase === 'FINALIZING') {
+      this.clearPhaseTimer();
       await this.ctx.storage.setAlarm(Date.now() + FINALIZATION_RETRY_MS);
       return;
     }
-    if (state.phase === 'PAUSED' && state.pause !== null) {
-      await this.ctx.storage.setAlarm(state.pause.graceDeadlineMs);
+    const deadlineMs = phaseDeadlineOf(state);
+    if (deadlineMs === null) {
+      this.clearPhaseTimer();
       return;
     }
-    if (state.phaseDeadlineMs !== null) await this.ctx.storage.setAlarm(state.phaseDeadlineMs);
+    this.armPhaseTimer(deadlineMs);
+    await this.ctx.storage.setAlarm(deadlineMs);
   }
 
   private async setPlayersActivity(to: 'idle' | 'playing' | 'preparing' | 'reconnecting'): Promise<void> {
