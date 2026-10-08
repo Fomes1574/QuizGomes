@@ -37,7 +37,7 @@ describe('XP global', () => {
   });
 
   it('exige no mínimo 174.364 vitórias Ranqueadas teóricas', () => {
-    expect(minimumRankedWinsToMaxLevel()).toBe(174_364);
+    expect(minimumRankedWinsToMaxLevel()).toBe(52_310);
   });
 
   it('não cria nível 1000 e mantém MAX', () => {
@@ -45,14 +45,13 @@ describe('XP global', () => {
     expect(levelProgress(TOTAL_XP_TO_MAX_LEVEL + 1_000_000).level).toBe(999);
   });
 
-  it('vitória vale o XP do modo; derrota e empate concluídos valem participação', () => {
-    expect(xpAward('CASUAL', 'WIN')).toBe(20);
-    expect(xpAward('RANKED', 'WIN')).toBe(30);
-    // Participação: derrota e empate de partida concluída valem 5 XP.
-    expect(xpAward('RANKED', 'LOSS')).toBe(5);
-    expect(xpAward('CASUAL', 'LOSS')).toBe(5);
-    expect(xpAward('RANKED', 'DRAW')).toBe(5);
-    expect(xpAward('CASUAL', 'DRAW')).toBe(5);
+  it('vitória vale o XP do modo; derrota e empate concluídos valem a participação do modo', () => {
+    expect(xpAward('CASUAL', 'WIN')).toBe(50);
+    expect(xpAward('RANKED', 'WIN')).toBe(100);
+    expect(xpAward('CASUAL', 'LOSS')).toBe(10);
+    expect(xpAward('CASUAL', 'DRAW')).toBe(10);
+    expect(xpAward('RANKED', 'LOSS')).toBe(20);
+    expect(xpAward('RANKED', 'DRAW')).toBe(20);
     expect(xpAward('RANKED', 'VOID')).toBe(0);
     expect(xpAward('CASUAL', 'VOID')).toBe(0);
   });

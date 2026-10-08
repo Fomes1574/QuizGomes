@@ -1520,7 +1520,9 @@ interface RematchTarget {
 /**
  * Revanche só existe entre os dois jogadores de uma partida ao vivo que
  * terminou há pouco (nunca anulada nem desafio assíncrono). O servidor
- * descobre adversário, tema e modo pela própria partida.
+ * descobre adversário e tema pela própria partida. É sempre Normal, mesmo
+ * depois de uma Rankeada: Rankeada só acontece na fila pública, contra
+ * alguém sorteado, para ninguém combinar resultado com um amigo.
  */
 async function rematchTarget(env: Env, userId: string, matchId: string, nowMs = Date.now()): Promise<RematchTarget> {
   const row = await env.CORE_DB.prepare(
@@ -1545,9 +1547,9 @@ async function rematchTarget(env: Env, userId: string, matchId: string, nowMs = 
     throw new ApiError(409, 'REMATCH_EXPIRED', 'O tempo para a revanche acabou.');
   }
   return {
-    mode: row.mode,
+    mode: 'CASUAL',
     opponentUserId: row.opponent_user_id,
-    resource: `${row.theme_id}:${row.mode}`,
+    resource: `${row.theme_id}:CASUAL`,
     themeName: row.theme_name,
     themeSlug: row.theme_slug,
   };

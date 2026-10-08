@@ -1,4 +1,4 @@
-import { questionsForMode, type MatchMode } from '@quiz-gomes/domain';
+import { PARTICIPATION_XP, WIN_XP, questionsForMode, type MatchMode } from '@quiz-gomes/domain';
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { Avatar } from '../components/avatar.js';
@@ -197,8 +197,8 @@ export function ThemeDetailPage() {
             <div className="play-deck__copy">
               <strong>{mode === 'RANKED' ? 'Vale Conhecimento' : 'Sem pressão no ranking'}</strong>
               <p>{mode === 'RANKED'
-                ? 'Vitória rende 30 XP e mexe no seu Conhecimento deste tema. Terminou sem vencer? Leva 5 XP.'
-                : 'Vitória rende 20 XP, e terminar a partida já vale 5. Seu Conhecimento fica intacto.'}</p>
+                ? `Vitória rende ${WIN_XP.RANKED} XP e mexe no seu Conhecimento deste tema. Terminou sem vencer? Leva ${PARTICIPATION_XP.RANKED} XP.`
+                : `Vitória rende ${WIN_XP.CASUAL} XP, e terminar a partida já vale ${PARTICIPATION_XP.CASUAL}. Seu Conhecimento fica intacto.`}</p>
               <ul className="play-deck__facts">
                 {modeRecord !== null && <li className="play-deck__record"><Icon name="crown" />Seu recorde: {modeRecord.toLocaleString('pt-BR')}</li>}
                 {waitingHere > 0 && <li className="play-deck__live"><span aria-hidden="true" className="theme-card__live-dot" />{waitingLabel(waitingHere)} agora</li>}

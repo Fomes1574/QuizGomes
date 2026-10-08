@@ -272,6 +272,9 @@ export function MatchResultScreen({
             <Icon name="bolt" />{rematch.state === 'sending' ? 'Chamando…' : `Revanche com ${opponent.name.split(' ')[0] ?? 'adversário'}`}
           </Button>
         )}
+        {rematch !== undefined && rematch.incoming === null && !cancelledBeforeStart && ranked === true && (
+          <p className="match-result-actions__note">A revanche é na Normal. Rankeada, só na fila.</p>
+        )}
         {rematch?.state === 'error' && rematch.message !== undefined && <p className="form-error">{rematch.message}</p>}
         {onPlayAgain !== undefined && !cancelledBeforeStart && (
           <Button className="match-result-actions__again" onClick={onPlayAgain} variant={rematch === undefined ? 'primary' : 'secondary'}><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 4.5v15a1 1 0 0 0 1.5.86l12.3-7.5a1 1 0 0 0 0-1.72L8.5 3.64A1 1 0 0 0 7 4.5Z" /></svg>Jogar de novo</Button>

@@ -3,10 +3,11 @@ import type { MatchMode, MatchResult } from '../types.js';
 export const MAX_LEVEL = 999;
 export const TOTAL_XP_TO_MAX_LEVEL = 5_230_904;
 
-const XP_BY_MODE: Record<MatchMode, number> = {
-  CASUAL: 20,
-  RANKED: 30,
-};
+/** XP da vitória por modo (decisão do proprietário, 2026-10-08). */
+export const WIN_XP: Readonly<Record<MatchMode, number>> = Object.freeze({
+  CASUAL: 50,
+  RANKED: 100,
+});
 
 export function xpForNextLevel(level: number): number {
   if (!Number.isInteger(level) || level < 1 || level >= MAX_LEVEL) {
@@ -60,13 +61,16 @@ export function levelProgress(totalXpInput: number): LevelProgress {
  * Vale para derrota e empate de partida concluída; partida anulada (VOID) e
  * abandono nunca pagam.
  */
-export const PARTICIPATION_XP = 5;
+export const PARTICIPATION_XP: Readonly<Record<MatchMode, number>> = Object.freeze({
+  CASUAL: 10,
+  RANKED: 20,
+});
 
 export function xpAward(mode: MatchMode, result: MatchResult): number {
-  if (result === 'WIN') return XP_BY_MODE[mode];
-  return result === 'LOSS' || result === 'DRAW' ? PARTICIPATION_XP : 0;
+  if (result === 'WIN') return WIN_XP[mode];
+  return result === 'LOSS' || result === 'DRAW' ? PARTICIPATION_XP[mode] : 0;
 }
 
 export function minimumRankedWinsToMaxLevel(): number {
-  return Math.ceil(TOTAL_XP_TO_MAX_LEVEL / XP_BY_MODE.RANKED);
+  return Math.ceil(TOTAL_XP_TO_MAX_LEVEL / WIN_XP.RANKED);
 }

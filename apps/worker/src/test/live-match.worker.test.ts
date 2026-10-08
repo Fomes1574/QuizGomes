@@ -740,8 +740,8 @@ describe('Milestone 8 no runtime Workers simulado', () => {
     const [firstFinished, secondFinished] = await Promise.all([
       firstReconnected.waitFor('MATCH_FINISHED'), second.waitFor('MATCH_FINISHED'),
     ]);
-    expect(firstFinished.result?.viewer).toMatchObject({ knowledgeAfter: 575, knowledgeDelta: 75, result: 'WIN', xpDelta: 30 });
-    expect(secondFinished.result?.viewer).toMatchObject({ knowledgeAfter: 470, knowledgeDelta: -30, result: 'LOSS', xpDelta: 5 });
+    expect(firstFinished.result?.viewer).toMatchObject({ knowledgeAfter: 575, knowledgeDelta: 75, result: 'WIN', xpDelta: 100 });
+    expect(secondFinished.result?.viewer).toMatchObject({ knowledgeAfter: 470, knowledgeDelta: -30, result: 'LOSS', xpDelta: 20 });
 
     const matchRow = await env.CORE_DB.prepare(
       'SELECT status, result_version, winner_user_id FROM matches WHERE id = ?1',
@@ -812,7 +812,7 @@ describe('Milestone 8 no runtime Workers simulado', () => {
     await duplicateRepository.finalize(retryState);
     await duplicateRepository.finalize(retryState);
     expect(await env.CORE_DB.prepare('SELECT total_xp FROM user_profiles WHERE user_id = ?1')
-      .bind(fixture.userIds[0]).first<{ total_xp: number }>()).toEqual({ total_xp: 30 });
+      .bind(fixture.userIds[0]).first<{ total_xp: number }>()).toEqual({ total_xp: 100 });
     expect(await env.CORE_DB.prepare('SELECT knowledge FROM theme_rankings WHERE user_id = ?1 AND theme_id = ?2')
       .bind(fixture.userIds[0], fixture.themeId).first<{ knowledge: number }>()).toEqual({ knowledge: 575 });
   });
@@ -1146,8 +1146,8 @@ describe('Milestone 8 no runtime Workers simulado', () => {
     expect(concurrentResults[1]).toEqual(result);
     expect(result).toMatchObject({ status: 'FINISHED', winnerUserId: null });
     expect(result.players.map((player) => player.result)).toEqual(['DRAW', 'DRAW']);
-    // Empate concluído paga só a participação (5 XP) e nunca mexe em Conhecimento.
-    expect(result.players.map((player) => [player.knowledgeDelta, player.xpDelta])).toEqual([[0, 5], [0, 5]]);
+    // Empate concluído paga só a participação e nunca mexe em Conhecimento.
+    expect(result.players.map((player) => [player.knowledgeDelta, player.xpDelta])).toEqual([[0, 20], [0, 20]]);
     const rankings = await env.CORE_DB.prepare(
       `SELECT knowledge, ranked_matches, wins, losses, draws
          FROM theme_rankings
@@ -1176,8 +1176,8 @@ describe('Milestone 8 no runtime Workers simulado', () => {
     const finalizing = finishStoredMatch(initial, 1);
     await repository.markStarted(matchId);
     const result = await repository.finalize(finalizing);
-    expect(result.players[0]).toMatchObject({ knowledgeAfter: 500, knowledgeDelta: 0, result: 'WIN', xpDelta: 20 });
-    expect(result.players[1]).toMatchObject({ knowledgeAfter: 500, knowledgeDelta: 0, result: 'LOSS', xpDelta: 5 });
+    expect(result.players[0]).toMatchObject({ knowledgeAfter: 500, knowledgeDelta: 0, result: 'WIN', xpDelta: 50 });
+    expect(result.players[1]).toMatchObject({ knowledgeAfter: 500, knowledgeDelta: 0, result: 'LOSS', xpDelta: 10 });
     // Totais da Normal no Perfil: uma vitória e uma derrota, sem contar duas vezes num retry.
     await repository.finalize(finalizing);
     const casual = await env.CORE_DB.prepare(

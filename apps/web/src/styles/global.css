@@ -1356,6 +1356,7 @@ dialog.dialog-backdrop::backdrop { background: transparent; }
 
 /* Foto de pergunta no painel editorial (ADMIN). */
 .question-image-field { display: grid; gap: 8px; }
+.match-result-actions__note { margin: -4px 0 0; color: var(--text-secondary); font-size: .76rem; text-align: center; }
 .import-photos__hint { color: var(--text-secondary); font-size: .76rem; line-height: 1.5; }
 .import-photos { display: grid; gap: 8px; padding: 13px 14px; border: 1px solid var(--border); border-radius: 13px; background: var(--surface-soft); font-size: .8rem; line-height: 1.5; }
 .import-photos p { margin: 0; }

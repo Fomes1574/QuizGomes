@@ -21,7 +21,7 @@ describe('Revanche imediata', () => {
   let restore: (() => void) | null = null;
   afterEach(() => { restore?.(); restore = null; });
 
-  it('só participantes de partida recém-concluída pedem revanche, no mesmo tema e modo', async () => {
+  it('só participantes de partida recém-concluída pedem revanche, no mesmo tema e sempre Normal', async () => {
     const { themeSlug, users } = await fixture(3);
     const themeId = await themeIdOf(themeSlug);
     const [first, second, outsider] = [userAt(users, 0), userAt(users, 1), userAt(users, 2)];
@@ -32,7 +32,8 @@ describe('Revanche imediata', () => {
     const fresh = await finishedMatch(themeId, first.id, second.id, 20_000);
     const accepted = await SELF.fetch(`https://quiz.test/api/social/rematch/${fresh}`, { headers: auth, method: 'POST' });
     expect(accepted.status).toBe(200);
-    expect(await accepted.json()).toMatchObject({ mode: 'RANKED', resource: `${themeId}:RANKED`, themeSlug });
+    // Partida de origem é Rankeada, mas a revanche nunca é: Rankeada só na fila pública.
+    expect(await accepted.json()).toMatchObject({ mode: 'CASUAL', resource: `${themeId}:CASUAL`, themeSlug });
 
     const old = await finishedMatch(themeId, first.id, second.id, 4 * 60_000);
     expect((await SELF.fetch(`https://quiz.test/api/social/rematch/${old}`, { headers: auth, method: 'POST' })).status).toBe(409);
@@ -49,14 +50,14 @@ describe('Revanche imediata', () => {
     expect((await SELF.fetch(`https://quiz.test/api/social/rematch/${blocked}`, { headers: auth, method: 'POST' })).status).toBe(404);
   });
 
-  it('a fila privada recusa revanche com tema ou modo diferentes da partida', async () => {
+  it('a fila privada recusa revanche Rankeada ou de outro tema', async () => {
     const { themeSlug, users } = await fixture(2);
     const themeId = await themeIdOf(themeSlug);
     const [first, second] = [userAt(users, 0), userAt(users, 1)];
     const session = await issueRealFirebaseTestToken(first.uid);
     restore = session.restore;
     const matchId = await finishedMatch(themeId, first.id, second.id, 5_000);
-    const resource = `${themeId}:CASUAL`;
+    const resource = `${themeId}:RANKED`;
     const ticket = await SELF.fetch('https://quiz.test/api/realtime/tickets', {
       body: JSON.stringify({ resource, scope: 'matchmaking' }),
       headers: { Authorization: `Bearer ${session.token}`, 'Content-Type': 'application/json' },
