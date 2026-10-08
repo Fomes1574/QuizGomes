@@ -41,3 +41,8 @@ export function takeInviteAdd(publicId: string): boolean {
     return false;
   }
 }
+
+/** Caminho do perfil de alguém: `/jogador/QGXXXX` (o "#" fica fora, como no convite). */
+export function playerPath(publicId: string): string {
+  return `/jogador/${encodeURIComponent(publicId.replace(/^#/, '').toUpperCase())}`;
+}

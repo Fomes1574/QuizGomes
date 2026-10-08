@@ -1657,6 +1657,12 @@ Pedidos do proprietário nesta rodada: limpeza a cada 15 dias (admin 6 meses), X
 - Perfil ganhou a vitrine: prévia de como os outros te veem, três destaques (estrela), "Top automático", "X de Y" com anel, "Quase lá" com barras, filtros Todos/Top/Ranking/Feitos e um toque para equipar. API `GET/PUT /api/profile/titles` só aceita o que a pessoa tem agora.
 - Resultado: "Você é o Top 1 em X", "Você subiu para #3 em X", "Sua posição agora é #2 em X", "Você saiu do Top 10 em X" e os títulos liberados na partida.
 
+### 2026-10-08 — ranking completo, perfil de jogador e comparação
+
+- `GET /api/themes/:slug/ranking`: Top 100 (Conhecimento > 0, conta ativa, empate divide a posição). Quem está fora do Top vê a própria posição com dois vizinhos de cada lado (contagem limitada a 10.000; acima disso, "10.000+"). `?scope=friends` mostra só amigos e a própria pessoa (exige login). Bloqueios valem nos dois sentidos: a pessoa some sem renumerar a lista. O Top 5 da página do tema passou a usar a mesma fonte.
+- `GET /api/players/:code`: perfil de outro jogador, só com login. Mostra nível, título atual, destaques escolhidos (só o que a pessoa ainda tem), melhores temas, números da Rankeada, a relação (amigos, pedido enviado/recebido) e "Você × Nome" nos temas que os dois jogam. Bloqueio, conta desativada ou código inexistente respondem 404 iguais.
+- App: `/temas/:slug/ranking` (Top 100 / Amigos) e `/jogador/QGXXXX`. Nomes no Top 5, no ranking e no Social abrem o perfil; o próprio nome leva ao Perfil.
+
 ## Critério de saída desta execução
 
 - Milestones 8 e 8.5 aprovados fisicamente e congelados;

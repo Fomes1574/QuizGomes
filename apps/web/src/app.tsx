@@ -14,6 +14,8 @@ const CreatePage = lazy(() => import('./pages/create-page.js').then((module) => 
 const LiveMatchPage = lazy(() => import('./pages/live-match-page.js').then((module) => ({ default: module.LiveMatchPage })));
 const InvitePage = lazy(() => import('./pages/invite-page.js').then((module) => ({ default: module.InvitePage })));
 const SocialPage = lazy(() => import('./pages/social-page.js').then((module) => ({ default: module.SocialPage })));
+const ThemeRankingPage = lazy(() => import('./pages/theme-ranking-page.js').then((module) => ({ default: module.ThemeRankingPage })));
+const PlayerPage = lazy(() => import('./pages/player-page.js').then((module) => ({ default: module.PlayerPage })));
 
 /** Trocar de tema (ex.: "ir para a fila vizinha") remonta a página do zero. */
 function ThemeDetailRoute() {
@@ -36,6 +38,8 @@ export function App() {
           <Route path="criar" element={<Navigate replace to="/" />} />
           <Route path="perfil" element={<ProfilePage />} />
           <Route path="temas/:slug" element={<ThemeDetailRoute />} />
+          <Route path="temas/:slug/ranking" element={<Suspense fallback={<LoadingState label="Abrindo o ranking" />}><ThemeRankingPage /></Suspense>} />
+          <Route path="jogador/:code" element={<Suspense fallback={<LoadingState label="Abrindo perfil" />}><PlayerPage /></Suspense>} />
           <Route path="convite/:code" element={<Suspense fallback={<LoadingState label="Abrindo convite" />}><InvitePage /></Suspense>} />
           <Route path="*" element={<NotFoundPage />} />
         </Route>

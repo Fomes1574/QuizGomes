@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Avatar } from '../components/avatar.js';
 import { AvatarFrame } from '../components/avatar-frame.js';
 import { EmptyState, LoadingState } from '../components/async-state.js';
@@ -11,7 +11,7 @@ import { useChallenges } from '../features/challenge-context.js';
 import { useFriendPresence, useSocial } from '../features/social-context.js';
 import { apiRequest } from '../lib/api.js';
 import { saveChallengeTarget } from '../lib/challenge-target.js';
-import { inviteUrl } from '../lib/invite-link.js';
+import { inviteUrl, playerPath } from '../lib/invite-link.js';
 import { prepareShareCards } from '../lib/story-card.js';
 import { challengeCardCopy, type ChallengeView } from '../lib/challenges.js';
 import type { FriendPresence, SocialCandidate, SocialFriend, SocialSnapshot, SocialUser } from '../lib/social.js';
@@ -144,7 +144,7 @@ function SocialIdentity({ presence, user }: { presence?: FriendPresence; user: S
         ) : null}
       </span>
       <div className="social-person__copy">
-        <strong>{user.displayName}</strong>
+        <strong><Link className="social-person__name" to={playerPath(user.publicId)}>{user.displayName}</Link></strong>
         <span className="social-person__public-id">{user.publicId}</span>
         {presence !== undefined ? (
           <span

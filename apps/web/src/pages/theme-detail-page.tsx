@@ -19,6 +19,7 @@ import { apiRequest } from '../lib/api.js';
 import { feedback } from '../lib/feedback.js';
 import { consumePlayAuthIntent, savePlayAuthIntent } from '../lib/auth-intent.js';
 import type { ThemeDetailResponse, ThemeSummary } from '../lib/models.js';
+import { playerPath } from '../lib/invite-link.js';
 import { busiestOtherTheme, queueCounts, waitingLabel } from '../lib/queue-activity.js';
 import { queueInviteMode, queueInviteUrl, shareQueueInvite } from '../lib/queue-invite.js';
 import { clearChallengeTarget, readChallengeTarget, type ChallengeTarget } from '../lib/challenge-target.js';
@@ -284,7 +285,10 @@ export function ThemeDetailPage() {
             })}
           </div>
           {data.topFive.length === 0 ? <p className="leaderboard-empty">A primeira Rankeada ainda está esperando por alguém.</p> : (
-            <ol>{data.topFive.map((entry) => <li key={entry.publicId}><span className="leaderboard-position">{entry.position}</span><AvatarFrame frameId={entry.frameId}><Avatar customUrl={entry.customAvatarUrl} googleUrl={entry.photoUrl} name={entry.displayName} size="small" /></AvatarFrame><span><strong>{entry.displayName}</strong><small>{entry.publicId}</small></span><RankBadge knowledge={entry.knowledge} /></li>)}</ol>
+            <ol>{data.topFive.map((entry) => <li key={entry.publicId}><span className="leaderboard-position">{entry.position}</span><AvatarFrame frameId={entry.frameId}><Avatar customUrl={entry.customAvatarUrl} googleUrl={entry.photoUrl} name={entry.displayName} size="small" /></AvatarFrame><span><Link className="leaderboard-name" to={entry.publicId === profile?.publicId ? '/perfil' : playerPath(entry.publicId)}><strong>{entry.displayName}</strong></Link><small>{entry.publicId}</small></span><RankBadge knowledge={entry.knowledge} /></li>)}</ol>
+          )}
+          {data.topFive.length > 0 && (
+            <Link className="leaderboard-more" to={`/temas/${encodeURIComponent(data.theme.slug)}/ranking`}>Ver ranking completo<Icon name="back" /></Link>
           )}
         </aside>
       </div>

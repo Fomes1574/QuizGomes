@@ -15,7 +15,7 @@ import {
 } from '@quiz-gomes/domain';
 import type { Env } from '../env.js';
 import { ApiError } from '../http/api-error.js';
-import { resolvePlayerTitle, themeAchievements } from './player-title-service.js';
+import { resolvePlayerTitle, themeAchievements, themeName } from './player-title-service.js';
 
 /** Quantos títulos ainda bloqueados a vitrine mostra (os mais próximos primeiro). */
 const LOCKED_SHOWN = 24;
@@ -234,4 +234,53 @@ export async function updateTitleShowcase(
   await env.CORE_DB.prepare(
     `UPDATE user_profiles SET ${assignments.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?1`,
   ).bind(userId, ...values).run();
+}
+
+/**
+ * Os destaques que a pessoa escolheu, como os outros veem: só o que ela tem
+ * agora (um Top que ela perdeu some do destaque sem mexer na escolha).
+ */
+export async function pinnedHighlights(
+  env: Pick<Env, 'CORE_DB' | 'TOP_TITLE_MIN_PLAYERS'>,
+  userId: string,
+): Promise<ShowcaseTitle[]> {
+  const row = await env.CORE_DB.prepare('SELECT pinned_achievements FROM user_profiles WHERE user_id = ?1')
+    .bind(userId).first<{ pinned_achievements: string | null }>();
+  const highlights: ShowcaseTitle[] = [];
+  for (const id of parsePins(row?.pinned_achievements ?? null)) {
+    const described = await describeOwnedTitle(env, userId, id);
+    if (described !== null) highlights.push(described);
+  }
+  return highlights;
+}
+
+async function describeOwnedTitle(
+  env: Pick<Env, 'CORE_DB' | 'TOP_TITLE_MIN_PLAYERS'>,
+  userId: string,
+  id: string,
+): Promise<ShowcaseTitle | null> {
+  if (!await ownsTitle(env, userId, id)) return null;
+  if (id.startsWith(TOP_PREFIX)) {
+    const themeId = id.slice(TOP_PREFIX.length);
+    const [position, name] = await Promise.all([
+      themeAchievements(env).topPosition(userId, themeId),
+      themeName(env.CORE_DB, themeId),
+    ]);
+    if (position === null || name === null) return null;
+    return { group: 'top', hint: '', id, label: topTitleLabel(position, name), position, style: topTitleTier(position) };
+  }
+  const parsed = parseTitleId(id);
+  if (parsed === null) return null;
+  if (parsed.kind === 'GLOBAL') {
+    const label = globalAchievementTitle(parsed.achievementId);
+    return label === null ? null : { group: 'feitos', hint: '', id, label, style: 'feat' };
+  }
+  const name = await themeName(env.CORE_DB, parsed.themeId);
+  return name === null ? null : {
+    group: themeAchievementGroup(parsed.achievementId),
+    hint: '',
+    id,
+    label: themeAchievementTitle(parsed.achievementId, name),
+    style: themeAchievementTitleStyle(parsed.achievementId),
+  };
 }

@@ -58,6 +58,8 @@ import { QuestionImportService } from './services/question-import-service.js';
 import { questionExportCsvHeader, questionExportCsvRow } from './services/question-export.js';
 import { parseQuestionsCsv } from './services/question-csv.js';
 import { MAX_PINNED_TITLES, titleShowcase, updateTitleShowcase } from './services/title-showcase-service.js';
+import { playerProfile } from './services/player-profile-service.js';
+import { LEADERBOARD_SIZE, RankingRepository } from './repositories/ranking-repository.js';
 import { DirectChallengeService } from './services/direct-challenge-service.js';
 import { inviteLinkPreview, siteLinkPreview, themeLinkPreview } from './http/link-preview.js';
 import { ThemeSuggestionRepository } from './repositories/theme-suggestion-repository.js';
@@ -2187,6 +2189,13 @@ async function apiRoute(request: Request, env: Env, url: URL, context: Execution
   if (url.pathname === '/api/profile/celebrations') return profileCelebrationsRoute(request, env);
   if (url.pathname === '/api/profile/frame') return profileFrameRoute(request, env);
   if (url.pathname === '/api/profile/titles') return profileTitlesRoute(request, env);
+  const playerMatch = /^\/api\/players\/([^/]{1,40})$/.exec(url.pathname);
+  if (playerMatch?.[1] !== undefined && request.method === 'GET') {
+    const profile = await profileOf(request, env);
+    let code: string;
+    try { code = decodeURIComponent(playerMatch[1]); } catch { throw new ApiError(404, 'PLAYER_NOT_FOUND', 'Não encontramos esse jogador.'); }
+    return json(await playerProfile(env, profile, `#${code.replace(/^#/, '')}`));
+  }
   if (url.pathname === '/api/profile/streak-reminder') return profileStreakReminderRoute(request, env);
   if (url.pathname === '/api/profile/avatar') return profileAvatarRoute(request, env);
   if (url.pathname === '/api/profile/account') return profileAccountRoute(request, env);
@@ -2333,12 +2342,30 @@ async function apiRoute(request: Request, env: Env, url: URL, context: Execution
       throw error;
     }
   }
+  const rankingMatch = /^\/api\/themes\/([^/]+)\/ranking$/.exec(url.pathname);
+  if (rankingMatch?.[1] !== undefined && request.method === 'GET') {
+    const theme = await themes.findTheme(decodeURIComponent(rankingMatch[1]));
+    if (theme === null) throw new ApiError(404, 'THEME_NOT_FOUND', 'Tema não encontrado.');
+    const ranking = new RankingRepository(env.CORE_DB);
+    const scope = url.searchParams.get('scope') === 'friends' ? 'friends' : 'top';
+    const viewer = request.headers.get('Authorization') === null ? null : await profileOf(request, env);
+    if (scope === 'friends') {
+      if (viewer === null) throw new ApiError(401, 'AUTH_REQUIRED', 'Entre para ver seus amigos no ranking.');
+      return json({ entries: await ranking.friends(theme.id, viewer.userId), scope, theme: { name: theme.name, slug: theme.slug } });
+    }
+    const entries = await ranking.leaderboard(theme.id, viewer?.userId ?? null, LEADERBOARD_SIZE);
+    const around = viewer !== null && !entries.some((entry) => entry.self)
+      ? await ranking.around(theme.id, viewer.userId)
+      : null;
+    return json({ around, entries, scope, theme: { name: theme.name, slug: theme.slug } });
+  }
   const themeMatch = /^\/api\/themes\/([^/]+)$/.exec(url.pathname);
   if (themeMatch?.[1] !== undefined && request.method === 'GET') {
     const theme = await themes.findTheme(decodeURIComponent(themeMatch[1]));
     if (theme === null) throw new ApiError(404, 'THEME_NOT_FOUND', 'Tema não encontrado.');
     const questionRepository = new QuestionRepository(env.QUESTIONS_DB);
-    const topFive = await themes.topFive(theme.id);
+    // Mesma fonte do ranking completo: conta desativada e Conhecimento zero ficam de fora.
+    const topFive = await new RankingRepository(env.CORE_DB).leaderboard(theme.id, null, 5);
     let personal: null | {
       discoveredPercentage: number;
       knowledge: number;

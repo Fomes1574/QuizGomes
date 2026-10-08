@@ -1836,11 +1836,92 @@ label.button:has(input:focus-visible) { outline: 3px solid var(--focus); outline
 /* Nos duelos o título pode quebrar em até duas linhas em vez de sumir em "…";
    coroa e medalha seguem coladas ao texto, inclusive alinhado à direita. */
 .match-result-player .player-title,
+.player-hero .player-title,
 .duel-side .player-title { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .match-result-player .player-title__text,
+.player-hero .player-title__text,
 .duel-side .player-title__text { display: inline; white-space: normal; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
 .match-result-player .player-title__crown,
+.player-hero .player-title__crown,
+.player-hero .player-title__medal,
 .duel-side .player-title__crown,
 .match-result-player .player-title__medal,
 .duel-side .player-title__medal { display: inline-grid; margin-right: 5px; vertical-align: -0.18em; }
 .match-result-player .player-title { text-align: center; }
+
+/* ---------- Links para perfis ---------- */
+.social-person__name, .leaderboard-name { color: inherit; text-decoration: none; }
+.social-person__name:hover, .leaderboard-name:hover { text-decoration: underline; }
+.leaderboard-more { display: inline-flex; align-items: center; gap: 6px; margin-top: 14px; color: var(--brand); font-size: .8rem; font-weight: 800; text-decoration: none; }
+.leaderboard-more svg { width: 16px; height: 16px; transform: rotate(180deg); }
+
+/* ---------- Ranking completo ---------- */
+.ranking-page { display: grid; gap: 14px; }
+.ranking-page__back { display: inline-flex; align-items: center; gap: 4px; width: fit-content; color: var(--text-secondary); font-size: .82rem; font-weight: 750; text-decoration: none; }
+.ranking-page__back svg { width: 18px; height: 18px; }
+.ranking-page__head h1 { margin: 4px 0 2px; font-size: clamp(1.6rem, 6vw, 2.2rem); }
+.ranking-page__head p { margin: 0; color: var(--text-secondary); font-size: .85rem; }
+.ranking-page__empty { margin: 0; padding: 18px; border: 1px dashed var(--border-strong); border-radius: var(--radius-md); color: var(--text-secondary); text-align: center; }
+.ranking-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.ranking-row a { display: grid; grid-template-columns: 38px 40px minmax(0, 1fr) auto; align-items: center; gap: 10px; min-height: 58px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 16px; color: inherit; background: var(--surface); text-decoration: none; transition: border-color 160ms ease, transform 90ms ease; }
+.ranking-row a:hover { border-color: var(--border-strong); }
+.ranking-row a:active { transform: scale(.99); }
+.ranking-row__position { color: var(--text-secondary); font: 800 .9rem/1 var(--font-display); font-variant-numeric: tabular-nums; text-align: center; }
+.ranking-row--p1 .ranking-row__position { color: #b58300; }
+.ranking-row--p2 .ranking-row__position { color: #6d7c8f; }
+.ranking-row--p3 .ranking-row__position { color: #a8622c; }
+:root[data-theme='dark'] .ranking-row--p1 .ranking-row__position { color: #ffcc33; }
+:root[data-theme='dark'] .ranking-row--p2 .ranking-row__position { color: #c9d3df; }
+:root[data-theme='dark'] .ranking-row--p3 .ranking-row__position { color: #e2a26c; }
+.ranking-row__name { display: grid; min-width: 0; gap: 2px; }
+.ranking-row__name strong, .ranking-row__name small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ranking-row__name strong { font-size: .9rem; }
+.ranking-row__name small { color: var(--text-secondary); font-size: .7rem; font-variant-numeric: tabular-nums; }
+.ranking-row .rank-badge__gem { width: 27px; height: 30px; }
+.ranking-row--self a { border: 2px solid var(--brand); background: color-mix(in srgb, var(--brand) 7%, var(--surface)); }
+.ranking-list__gap { margin: -2px 0; color: var(--text-secondary); font-weight: 900; text-align: center; }
+@media (max-width: 420px) { .ranking-row .rank-badge > span:last-child { display: none; } }
+
+/* ---------- Perfil de outro jogador ---------- */
+.player-page { display: grid; gap: 16px; }
+.player-page__gate { display: grid; justify-items: center; gap: 10px; padding: 40px 16px; text-align: center; }
+.player-page__gate h1 { margin: 0; }
+.player-page__gate p { max-width: 34ch; margin: 0 0 6px; color: var(--text-secondary); }
+.player-hero { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 12px 18px; padding: 20px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: radial-gradient(circle at 15% 0%, color-mix(in srgb, var(--brand) 12%, transparent), transparent 60%), var(--surface); }
+.player-hero__copy { display: grid; justify-items: start; gap: 4px; min-width: 0; }
+.player-hero__copy h1 { margin: 0; overflow-wrap: anywhere; font-size: clamp(1.4rem, 6vw, 2rem); line-height: 1.05; }
+.player-hero__copy small { color: var(--text-secondary); font-size: .74rem; font-weight: 650; }
+.player-hero__level { padding: 3px 9px; border-radius: 99px; color: var(--brand); background: color-mix(in srgb, var(--brand) 10%, transparent); font-size: .7rem; font-weight: 800; }
+.player-hero__action { display: grid; grid-column: 1 / -1; gap: 8px; }
+.player-hero__note { margin: 0; color: var(--text-secondary); font-size: .82rem; }
+.player-hero__badge { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 44px; border-radius: 14px; color: var(--correct); background: var(--correct-soft); font-weight: 800; }
+.player-hero__badge svg { width: 18px; height: 18px; }
+.player-highlights { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.player-highlights__item { padding: 8px 12px; border: 1px solid var(--border); border-radius: 99px; background: var(--surface); }
+.player-highlights__item--gold { border-color: color-mix(in srgb, #e2a400 55%, var(--border)); }
+.player-compare ul { display: grid; gap: 14px; margin: 12px 0 0; padding: 0; list-style: none; }
+.player-compare li { display: grid; gap: 6px; }
+.player-compare__theme { color: var(--text-primary); font-weight: 800; text-decoration: none; }
+.player-compare__bar { display: flex; height: 10px; overflow: hidden; border-radius: 99px; background: var(--surface-soft); }
+.player-compare__mine { flex: var(--share) 1 0; background: var(--brand); }
+.player-compare__theirs { flex: var(--share) 1 0; background: var(--violet); }
+.player-compare__values { display: flex; justify-content: space-between; gap: 8px; font-size: .76rem; }
+.player-compare__values b { margin-right: 4px; }
+.player-compare__values span:first-child b { color: var(--brand); }
+.player-compare__values span:last-child { text-align: right; }
+.player-compare__values span:last-child b { color: var(--violet); }
+.player-compare small { color: var(--text-secondary); font-size: .72rem; }
+.player-grid { display: grid; gap: 16px; }
+.player-themes { display: grid; gap: 8px; margin: 12px 0 0; padding: 0; list-style: none; }
+.player-themes li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+.player-themes li:last-child { border-bottom: 0; }
+.player-themes a { overflow: hidden; min-width: 0; color: var(--text-primary); font-weight: 750; text-decoration: none; text-overflow: ellipsis; white-space: nowrap; }
+.player-stats > div { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 12px; text-align: center; }
+.player-stats strong { display: block; font: 800 1.35rem/1.1 var(--font-display); }
+.player-stats small { color: var(--text-secondary); font-size: .7rem; }
+@media (min-width: 760px) {
+  .player-hero__action { grid-column: auto; grid-row: 1; grid-column-start: 3; }
+  .player-hero { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .player-grid { grid-template-columns: 1fr 1fr; }
+}
+

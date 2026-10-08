@@ -10,6 +10,7 @@ Estas regras valem para toda alteração neste repositório.
 - Não criar subtemas. A hierarquia é Categoria → Tema → Pergunta. Dificuldade (Fácil/Médio/Difícil) não existe mais como conceito operacional: não usá-la em produto, admin, importação, sorteio, matchmaking, XP ou Conhecimento. A UI pública mostra somente "Partida normal" e "Partida rankeada".
 - Fontes e evidências são opcionais na V1: podem ser registradas quando disponíveis, mas sua ausência não bloqueia revisão, importação ou publicação de uma pergunta.
 - Ranking e Conhecimento são por tema. Média de categoria é somente estatística.
+- Ranking do tema: Top 100 (Conhecimento > 0, conta ativa), empate divide a posição, e quem está abaixo vê a própria posição com dois vizinhos de cada lado; aba Amigos mostra só a própria roda. Bloqueio vale nos dois sentidos: a pessoa some da lista sem renumerar. Perfil de outro jogador só para quem entrou; bloqueio, conta desativada ou ID inexistente respondem igual ("não encontrado") e o ID interno nunca sai.
 - Matchmaking público é apenas simultâneo. Assíncrono é apenas entre amigos.
 - Rankeada só existe na fila pública simultânea, contra adversário sorteado. Nada que junte amigos (desafio ou revanche) é Rankeado.
 - Revanche imediata: só os dois jogadores de uma partida ao vivo concluída há até 3 min, fila privada da dupla (mesmo tema, sempre Normal mesmo após Rankeada, 30 s, fora da contagem pública da fila).

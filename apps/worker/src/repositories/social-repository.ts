@@ -52,7 +52,7 @@ export interface FriendPresenceTarget {
   userId: string;
 }
 
-interface PersonRow {
+export interface PersonRow {
   custom_avatar_version: number | null;
   display_name: string;
   equipped_frame_id: string | null;
@@ -84,12 +84,12 @@ interface PendingRow {
   status: 'ACCEPTED' | 'CANCELLED' | 'PENDING' | 'REJECTED';
 }
 
-const PUBLIC_PERSON_COLUMNS = `
+export const PUBLIC_PERSON_COLUMNS = `
   p.user_id, p.public_id, p.display_name, p.photo_url, p.equipped_frame_id,
   CASE WHEN a.active = 1 THEN a.version ELSE NULL END AS custom_avatar_version
 `;
 
-function person(row: PersonRow): SocialUser {
+export function person(row: PersonRow): SocialUser {
   return {
     customAvatarUrl: customAvatarUrl(row.user_id, row.custom_avatar_version),
     displayName: row.display_name,
