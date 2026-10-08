@@ -64,7 +64,10 @@ describe('Perfil como cartão de jogador', () => {
   it('mostra ofensiva em risco, últimas partidas com ✓/×, recordes e estatística da Normal', async () => {
     mocks.apiRequest.mockResolvedValue(summary);
     render(<MemoryRouter><ProfilePage /></MemoryRouter>);
-    expect(await screen.findByRole('status')).toHaveTextContent('Ainda não jogou hoje: uma partida em Naruto mantém a chama acesa.');
+    expect(await screen.findByRole('img', { name: 'Vitória' })).toBeInTheDocument();
+    // Ofensiva em risco: só o ícone pulsa, sem texto de sermão.
+    expect(screen.queryByText(/mantém a chama acesa/)).not.toBeInTheDocument();
+    expect(document.querySelector('.profile-card--streak-risk')).toBeInTheDocument();
     expect(screen.getByRole('img', { name: 'Vitória' })).toHaveTextContent('✓');
     expect(screen.getByRole('img', { name: 'Derrota' })).toHaveTextContent('×');
     expect(screen.getByText(/contra Rival/)).toBeInTheDocument();

@@ -1957,15 +1957,6 @@ label.button:has(input:focus-visible) { outline: 3px solid var(--focus); outline
 .scoreboard-marks__top--silver { background: linear-gradient(135deg, #f4f7fb, #a9b5c4); }
 .scoreboard-marks__top--bronze { background: linear-gradient(135deg, #f3b47b, #a5592a); }
 
-/* ---------- Barra de placar depois da rodada ---------- */
-.score-tug { display: grid; justify-items: center; gap: 4px; width: min(100% - 32px, 420px); margin: 2px auto 0; animation: score-tug-in 260ms var(--ease-out) both; }
-.score-tug__bar { position: relative; display: block; width: 100%; height: 6px; overflow: hidden; border-radius: 99px; background: var(--violet); }
-.score-tug__bar i { position: absolute; inset: 0; border-radius: inherit; background: var(--brand); transform-origin: right; transition: transform 520ms var(--ease-out); }
-.score-tug small { color: var(--text-secondary); font-size: .7rem; font-weight: 750; }
-.score-tug--ahead small { color: var(--correct); }
-@keyframes score-tug-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
-@media (prefers-reduced-motion: reduce) { .score-tug { animation: none; } .score-tug__bar i { transition: none; } }
-
 /* ---------- Trilha de títulos do tema ---------- */
 .theme-trail { display: grid; gap: 12px; padding: 18px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); }
 .theme-trail__head { display: flex; align-items: end; justify-content: space-between; gap: 12px; }

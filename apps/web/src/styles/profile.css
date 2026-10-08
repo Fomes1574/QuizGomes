@@ -5,8 +5,6 @@
 .profile-card__meta { color: var(--text-secondary); font-size: .7rem; font-weight: 650; font-variant-numeric: tabular-nums; }
 .profile-card__hint { margin: 12px 0 0; color: var(--text-secondary); font-size: .72rem; }
 .profile-card__subhead { margin-top: 20px; }
-.profile-card__warning { margin: 12px 0 0 !important; padding: 10px 12px; border-radius: 12px; color: var(--text-primary) !important; background: color-mix(in srgb, var(--warning) 16%, transparent); font-weight: 650; }
-.profile-card__warning a { color: inherit; font-weight: 800; }
 .segmented--small { grid-template-columns: repeat(2, auto); padding: 3px; }
 .segmented--small button { min-height: 32px; padding: 0 12px; font-size: .7rem; }
 

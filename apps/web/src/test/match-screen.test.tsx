@@ -233,28 +233,10 @@ describe('interface de partida', () => {
     expect(screen.getByRole('button', { name: /C1 — correta/ })).toHaveClass('answer-option--correct');
   });
 
-  it('na Rankeada mostra a liga e o Top de forma discreta; depois da rodada, quem está na frente', async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date('2026-08-10T12:00:00Z'));
+  it('na Rankeada mostra a liga e o Top de forma discreta, sem barra de diferença depois da rodada', () => {
     const opponent = { name: 'Ana Luiza', rankKnowledge: 16_400, titleStyle: 'gold' as const };
     const player = { ...PLAYER, rankKnowledge: 9_200 };
-    const view = render(<MatchScreen
-      deadlineMs={Date.now() + 8_000}
-      onAnswer={() => undefined}
-      opponent={opponent}
-      opponentScore={30}
-      player={player}
-      playerScore={20}
-      question={QUESTION}
-      remainingMs={8_000}
-    />);
-    expect(screen.getByText('Ouro V')).toBeInTheDocument();
-    expect(screen.getByText('Prata IV')).toBeInTheDocument();
-    expect(screen.getByText('Top 1 do tema')).toBeInTheDocument();
-    // Durante a pergunta não existe barra de placar.
-    expect(screen.queryByText(/na frente por/)).not.toBeInTheDocument();
-
-    view.rerender(<MatchScreen
+    render(<MatchScreen
       deadlineMs={Date.now()}
       onAnswer={() => undefined}
       opponent={opponent}
@@ -269,9 +251,10 @@ describe('interface de partida', () => {
         viewer: { correct: true, roundScore: 27, selectedOption: 2 },
       }}
     />);
-    expect(screen.getByText('Ana na frente por 10')).toBeInTheDocument();
-    await act(async () => { await vi.advanceTimersByTimeAsync(600); });
-    expect(screen.getByText('Você na frente por 17')).toBeInTheDocument();
+    expect(screen.getByText('Ouro V')).toBeInTheDocument();
+    expect(screen.getByText('Prata IV')).toBeInTheDocument();
+    expect(screen.getByText('Top 1 do tema')).toBeInTheDocument();
+    expect(screen.queryByText(/na frente por/)).not.toBeInTheDocument();
   });
 
   it('na Normal o placar não mostra liga', () => {

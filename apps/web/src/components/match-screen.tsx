@@ -85,26 +85,6 @@ interface MatchParticipantView {
   titleStyle?: PlayerTitleStyle | null | undefined;
 }
 
-/**
- * Depois de cada rodada: quem está na frente, numa barra só. O lado do
- * adversário fica à esquerda e o seu à direita, como no placar.
- */
-function ScoreTug({ opponent, opponentName, player }: { opponent: number; opponentName: string; player: number }) {
-  const total = opponent + player;
-  const share = total === 0 ? 0.5 : player / total;
-  const gap = Math.abs(player - opponent);
-  const first = opponentName.trim().split(/\s+/)[0] ?? opponentName;
-  const text = gap === 0 ? 'Empatados' : player > opponent ? `Você na frente por ${gap}` : `${first} na frente por ${gap}`;
-  return (
-    <div className={`score-tug${player > opponent ? ' score-tug--ahead' : player < opponent ? ' score-tug--behind' : ''}`}>
-      <span aria-hidden="true" className="score-tug__bar">
-        <i style={{ transform: `scaleX(${share})` }} />
-      </span>
-      <small>{text}</small>
-    </div>
-  );
-}
-
 /** Liga e, se houver, a marca do Top: pequenas, para não roubar a pergunta. */
 function ScoreboardMarks({ participant }: { participant: MatchParticipantView }) {
   const { rankKnowledge, titleStyle } = participant;
@@ -523,10 +503,7 @@ export function MatchScreen({
           </AvatarFrame>
         </div>
       </header>
-      {/* Rodada resolvida: o relógio já acabou e o lugar dele vira a barra de placar. */}
-      {resolved && !opponentPending && displayedScores.opponent + displayedScores.player > 0
-        ? <ScoreTug opponent={displayedScores.opponent} opponentName={opponent.name} player={displayedScores.player} />
-        : preparing || reading
+      {preparing || reading
         ? (
           <div aria-hidden="true" className={`match-timer match-timer--preparing${reading ? ' match-timer--charging' : ''}`}>
             {reading && (

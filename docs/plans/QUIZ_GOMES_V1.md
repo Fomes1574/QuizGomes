@@ -1683,6 +1683,11 @@ Pedidos do proprietário nesta rodada: limpeza a cada 15 dias (admin 6 meses), X
 - Coleções: o Perfil mostra, por categoria em que a pessoa jogou Rankeada, em quantos temas ela já tem algum título ("3 de 8"), com ✓ quando completa. Só exibição, sem prêmio novo.
 - Decisão pendente: avatares desenhados (leva inicial gratuita, desbloqueáveis e evolução do favorito) dependem de quem vai criar a arte. Nada foi gerado.
 
+### 2026-10-08 — ajustes pedidos pelo proprietário
+
+- Saiu a barra de diferença de pontos depois de cada rodada (o relógio volta a ocupar o lugar dela). O placar com os dois números já diz quem está na frente.
+- Saiu o aviso "Ainda não jogou hoje: uma partida … mantém a chama acesa" do cartão de ofensiva no Perfil. A ofensiva em risco continua indicada só pelo ícone da chama pulsando.
+
 ## Critério de saída desta execução
 
 - Milestones 8 e 8.5 aprovados fisicamente e congelados;

@@ -201,11 +201,6 @@ export function StreakCard({ streak }: { streak: StreakSummary | null }) {
       <p>
         {alive ? streak.themeName : 'Sua ofensiva apagou.'} · recorde de {streak.bestStreak} {streak.bestStreak === 1 ? 'dia' : 'dias'}
       </p>
-      {streak.atRisk === true && (
-        <p className="profile-card__warning" role="status">
-          Ainda não jogou hoje: uma partida {streak.themeSlug === undefined ? 'neste tema' : <Link to={`/temas/${streak.themeSlug}`}>em {streak.themeName}</Link>} mantém a chama acesa.
-        </p>
-      )}
     </article>
   );
 }
