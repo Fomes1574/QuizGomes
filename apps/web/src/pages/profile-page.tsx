@@ -10,12 +10,14 @@ import { DeleteAccountDialog } from '../components/delete-account-dialog.js';
 import { Icon } from '../components/icons.js';
 import {
   AchievementsCard,
+  CollectionsCard,
   MissionsCard,
   ModeStatsCard,
   RecentMatchesCard,
   StreakCard,
   ThemeRecordsCard,
   WeeklyMissionsCard,
+  type CollectionSummary,
   type MissionSummary,
   type RecentMatch,
   type StreakSummary,
@@ -48,6 +50,7 @@ interface ProfileSummaryResponse {
   bestTheme: { knowledge: number; name: string; rankedMatches: number; slug: string } | null;
   casualSummary?: MatchSummary;
   categoryAverages: CategoryAverage[];
+  collections?: CollectionSummary[];
   frames?: FrameItem[];
   matchSummary?: MatchSummary;
   missions: MissionSummary[];
@@ -268,6 +271,7 @@ export function ProfilePage() {
         <ModeStatsCard casual={summary?.casualSummary ?? null} ranked={summary?.matchSummary ?? null} />
         <RecentMatchesCard matches={summary?.recentMatches ?? []} />
         <ThemeRecordsCard records={summary?.themeRecords ?? []} />
+        <CollectionsCard collections={summary?.collections ?? []} />
         <AchievementsCard
           achievements={summary?.achievements ?? []}
           busyFrame={busyFrame}

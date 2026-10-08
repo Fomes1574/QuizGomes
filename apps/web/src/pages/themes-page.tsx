@@ -77,6 +77,11 @@ export function ThemesPage() {
     };
   }, [reload, search, selectedCategory]);
 
+  // Destaques só na visão geral: com busca ou categoria escolhida, a pessoa já sabe o que quer.
+  const featured = useMemo(
+    () => (search.trim() === '' && selectedCategory === null ? themes.filter((theme) => theme.featured === true) : []),
+    [search, selectedCategory, themes],
+  );
   const grouped = useMemo(() => categories.map((category) => ({
     category,
     themes: themes.filter((theme) => theme.categoryId === category.id),
@@ -186,6 +191,14 @@ export function ThemesPage() {
       {!loading && !error && grouped.length === 0 ? (
         <EmptyState description="Tente outro nome ou remova o filtro de categoria." title="Nenhum tema por aqui" />
       ) : null}
+      {!error && featured.length > 0 && (
+        <section aria-labelledby="featured-themes" className="theme-group theme-group--featured">
+          <div className="section-heading"><h2 id="featured-themes">Em destaque</h2><span>{featured.length}</span></div>
+          <div className="theme-grid">
+            {featured.map((theme, index) => <ThemeCard index={index} key={theme.id} theme={theme} waiting={totalWaiting(queueActivity, theme.id)} />)}
+          </div>
+        </section>
+      )}
       {!error && grouped.map(({ category, themes: categoryThemes }) => (
         <section className="theme-group" key={category.id}>
           <div className="section-heading"><h2>{category.name}</h2><span>{categoryThemes.length}</span></div>

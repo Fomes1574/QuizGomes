@@ -1677,6 +1677,12 @@ Pedidos do proprietário nesta rodada: limpeza a cada 15 dias (admin 6 meses), X
 - Objetivo: na vitrine, "Quero este" num título bloqueado o fixa no topo com a barra de progresso ("Seu objetivo"); ao conquistar, o cartão avisa para escolher o próximo. Não muda nada competitivo.
 - Trilha do tema: a página do tema mostra os 18 títulos daquele tema em um caminho (do primeiro ao Desafiante), o próximo em destaque com quanto falta e uma estrela no objetivo escolhido.
 
+### 2026-10-08 — temas em destaque e coleções por categoria
+
+- Migration `0024`: `themes.featured_at`. ADMIN põe ou tira um tema do destaque (`POST /api/admin/themes/:id/featured`, registrado no histórico); no máximo 6 ao mesmo tempo, só tema jogável. Ocultar ou desativar tira do destaque. A tela de Temas abre com a fileira "Em destaque" (só na visão geral, sem busca nem filtro).
+- Coleções: o Perfil mostra, por categoria em que a pessoa jogou Rankeada, em quantos temas ela já tem algum título ("3 de 8"), com ✓ quando completa. Só exibição, sem prêmio novo.
+- Decisão pendente: avatares desenhados (leva inicial gratuita, desbloqueáveis e evolução do favorito) dependem de quem vai criar a arte. Nada foi gerado.
+
 ## Critério de saída desta execução
 
 - Milestones 8 e 8.5 aprovados fisicamente e congelados;

@@ -149,6 +149,41 @@ export function WeeklyMissionsCard({ missions, resetAt }: { missions: WeeklyMiss
   );
 }
 
+export interface CollectionSummary {
+  categoryId: string;
+  categoryName: string;
+  total: number;
+  withTitle: number;
+}
+
+/**
+ * Coleções: em quantos temas de cada categoria você já tem título. Só
+ * mostra o caminho; não tem prêmio próprio.
+ */
+export function CollectionsCard({ collections }: { collections: CollectionSummary[] }) {
+  if (collections.length === 0) return null;
+  return (
+    <article className="profile-card profile-card--collections">
+      <span className="eyebrow">Coleções</span>
+      <ul className="collections-list">
+        {collections.map((collection) => {
+          const complete = collection.total > 0 && collection.withTitle >= collection.total;
+          return (
+            <li data-complete={complete} key={collection.categoryId}>
+              <div className="collections-list__row">
+                <span>{complete && <i aria-hidden="true">✓ </i>}{collection.categoryName}</span>
+                <span>{collection.withTitle} de {collection.total}</span>
+              </div>
+              <div className="progress-track"><span style={{ transform: `scaleX(${collection.total === 0 ? 0 : Math.min(1, collection.withTitle / collection.total)})` }} /></div>
+            </li>
+          );
+        })}
+      </ul>
+      <p className="profile-card__hint">Temas da categoria em que você já tem algum título.</p>
+    </article>
+  );
+}
+
 export function StreakCard({ streak }: { streak: StreakSummary | null }) {
   if (streak === null) {
     return (

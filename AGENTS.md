@@ -19,6 +19,8 @@ Estas regras valem para toda alteração neste repositório.
 - Marcos de nível viram títulos (5, 10, 25, 50, 75, 100, 150, 200, 250, 300, 500 e 999), concentrados até o 300; o título vale enquanto o nível existir (nível nunca cai). O objetivo escolhido na vitrine é só um título a perseguir, sem efeito competitivo.
 - Missões semanais (só Rankeada concluída; abandono e anulada não contam): jogar 10, vencer 5 e acertar 40. A semana vira na segunda à 0h de Brasília. Contam uma vez por partida, pela mesma guarda das conquistas de tema.
 - Top do tema: Top 10 por Conhecimento entre quem tem 5+ Rankeadas concluídas e Conhecimento > 0, só em tema com pelo menos 30 qualificados (`TOP_TITLE_MIN_PLAYERS`). Empate divide a posição. Top 1 ouro com coroa, Top 2 prata, Top 3 bronze; brilho animado só em duelo e perfil, nunca em lista. É distinção atual, não conquista: some ao sair do Top 10 e o título volta ao permanente escolhido. "Top automático" mostra o Top do tema da partida. Vitrine com até 3 destaques. O servidor decide o título; o cliente nunca o informa.
+- Temas em destaque: escolha editorial do ADMIN, no máximo 6 ao mesmo tempo, só tema ativo e visível; ocultar ou desativar tira do destaque. Coleções por categoria são só exibição (temas com algum título), sem prêmio próprio.
+- Avatares desenhados (leva gratuita, desbloqueáveis, evolução do favorito) estão aprovados como ideia, mas dependem de definir quem cria a arte: decisão pendente do proprietário. Não gerar arte por conta própria.
 - Empates não têm desempate. Normal (Casual) nunca altera Conhecimento; somente a Rankeada altera.
 - Não inventar regras de jogo, conquistas, cosméticos, monetização ou catálogo editorial.
 

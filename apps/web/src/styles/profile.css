@@ -179,3 +179,9 @@ button.title-slot { cursor: pointer; }
 .title-card--goal { border: 2px solid color-mix(in srgb, #e2a400 60%, var(--border)); }
 .title-card--goal .title-card__aim { border-color: transparent; color: #a87800; background: rgb(255 204 51 / .16); }
 :root[data-theme='dark'] .title-card--goal .title-card__aim { color: #ffcc33; }
+
+/* Coleções por categoria. */
+.collections-list { display: grid; gap: 12px; margin: 12px 0 0; padding: 0; list-style: none; }
+.collections-list__row { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 6px; font-size: .82rem; font-weight: 700; }
+.collections-list__row span:last-child { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.collections-list li[data-complete='true'] .collections-list__row span:first-child { color: var(--correct); }

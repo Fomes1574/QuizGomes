@@ -243,6 +243,36 @@ export class ThemeAchievementRepository {
     return position <= TOP_TITLE_MAX_POSITION ? position : null;
   }
 
+  /**
+   * Coleções por categoria: em quantos temas da categoria a pessoa já tem
+   * algum título. Só categorias em que ela jogou Rankeada; só exibição,
+   * sem recompensa própria.
+   */
+  async collections(userId: string): Promise<Array<{ categoryId: string; categoryName: string; total: number; withTitle: number }>> {
+    const rows = await this.db.prepare(
+      `SELECT c.id AS category_id, c.name AS category_name, COUNT(t.id) AS total,
+              SUM(CASE WHEN EXISTS (
+                SELECT 1 FROM user_theme_achievements a WHERE a.user_id = ?1 AND a.theme_id = t.id
+              ) THEN 1 ELSE 0 END) AS with_title,
+              SUM(CASE WHEN EXISTS (
+                SELECT 1 FROM theme_rankings r WHERE r.user_id = ?1 AND r.theme_id = t.id AND r.ranked_matches > 0
+              ) THEN 1 ELSE 0 END) AS played
+         FROM categories c
+         JOIN themes t ON t.category_id = c.id
+        WHERE ${PLAYABLE_THEME_SQL}
+        GROUP BY c.id, c.name, c.sort_order
+       HAVING played > 0
+        ORDER BY with_title DESC, c.sort_order, c.name
+        LIMIT 30`,
+    ).bind(userId).all<{ category_id: string; category_name: string; played: number; total: number; with_title: number }>();
+    return rows.results.map((row) => ({
+      categoryId: row.category_id,
+      categoryName: row.category_name,
+      total: row.total,
+      withTitle: row.with_title,
+    }));
+  }
+
   private async ownedSet(userId: string): Promise<Set<string>> {
     const rows = await this.db.prepare(
       'SELECT theme_id, achievement_id FROM user_theme_achievements WHERE user_id = ?1 LIMIT 5000',

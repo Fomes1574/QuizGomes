@@ -43,6 +43,8 @@ export interface ThemeSummaryRecord {
   categoryName: string;
   coverImageKey: string | null;
   description: string;
+  /** Presente (true) só quando o ADMIN pôs o tema em destaque. */
+  featured?: true;
   id: string;
   name: string;
   slug: string;
@@ -83,6 +85,7 @@ interface ThemeRow {
   cover_image_key: string | null;
   created_by_user_id?: string | null;
   description: string;
+  featured_at?: string | null;
   hidden_at?: string | null;
   id: string;
   name: string;
@@ -94,7 +97,7 @@ interface ThemeRow {
 }
 
 const THEME_COLUMNS = `t.id, t.slug, t.name, t.description, t.cover_image_key,
-  t.artwork_kind, t.artwork_icon_key, t.artwork_version, t.active_question_count,
+  t.artwork_kind, t.artwork_icon_key, t.artwork_version, t.active_question_count, t.featured_at,
   c.id AS category_id, c.name AS category_name`;
 
 const ADMIN_THEME_COLUMNS = `${THEME_COLUMNS}, t.status, t.revision, t.origin, t.created_by_user_id, t.rejection_note,
@@ -131,6 +134,7 @@ function mapTheme(row: ThemeRow): ThemeSummaryRecord {
     categoryName: row.category_name,
     coverImageKey: row.cover_image_key,
     description: row.description,
+    ...(row.featured_at == null ? {} : { featured: true as const }),
     id: row.id,
     name: row.name,
     slug: row.slug,
@@ -557,9 +561,38 @@ export class ThemeRepository {
     const result = await this.db.prepare(
       `UPDATE themes
           SET hidden_at = CASE WHEN ?1 = 1 THEN COALESCE(hidden_at, CURRENT_TIMESTAMP) ELSE NULL END,
+              featured_at = CASE WHEN ?1 = 1 THEN NULL ELSE featured_at END,
               revision = revision + 1, updated_at = CURRENT_TIMESTAMP
         WHERE id = ?2`,
     ).bind(input.hidden ? 1 : 0, input.themeId).run();
+    if ((result.meta.changes ?? 0) !== 1) throw new ApiError(404, 'THEME_NOT_FOUND', 'Tema não encontrado.');
+    const updated = await this.findThemeForAdmin(input.themeId);
+    if (updated === null) throw new ApiError(404, 'THEME_NOT_FOUND', 'Tema não encontrado.');
+    return updated;
+  }
+
+  /**
+   * Põe ou tira o tema do destaque. Só tema jogável entra; no máximo
+   * `limit` ao mesmo tempo, para o destaque continuar sendo destaque.
+   */
+  async setThemeFeatured(input: { featured: boolean; limit: number; themeId: string }): Promise<AdminThemeSummaryRecord> {
+    if (input.featured) {
+      if (!await this.isPlayable(input.themeId)) {
+        throw new ApiError(409, 'THEME_NOT_PLAYABLE', 'Só dá para destacar um tema ativo e visível.');
+      }
+      const current = await this.db.prepare(
+        'SELECT COUNT(*) AS total FROM themes WHERE featured_at IS NOT NULL AND id <> ?1',
+      ).bind(input.themeId).first<{ total: number }>();
+      if ((current?.total ?? 0) >= input.limit) {
+        throw new ApiError(409, 'FEATURED_LIMIT', `Já há ${input.limit} temas em destaque. Tire um antes de pôr outro.`);
+      }
+    }
+    const result = await this.db.prepare(
+      `UPDATE themes
+          SET featured_at = CASE WHEN ?1 = 1 THEN COALESCE(featured_at, CURRENT_TIMESTAMP) ELSE NULL END,
+              revision = revision + 1, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?2`,
+    ).bind(input.featured ? 1 : 0, input.themeId).run();
     if ((result.meta.changes ?? 0) !== 1) throw new ApiError(404, 'THEME_NOT_FOUND', 'Tema não encontrado.');
     const updated = await this.findThemeForAdmin(input.themeId);
     if (updated === null) throw new ApiError(404, 'THEME_NOT_FOUND', 'Tema não encontrado.');
@@ -574,7 +607,7 @@ export class ThemeRepository {
 
   async deactivateTheme(input: { expectedRevision: number; themeId: string }): Promise<AdminThemeSummaryRecord> {
     const result = await this.db.prepare(
-      `UPDATE themes SET status = 'DISABLED', revision = revision + 1, updated_at = CURRENT_TIMESTAMP
+      `UPDATE themes SET status = 'DISABLED', featured_at = NULL, revision = revision + 1, updated_at = CURRENT_TIMESTAMP
         WHERE id = ?1 AND revision = ?2 AND status = 'ACTIVE'`,
     ).bind(input.themeId, input.expectedRevision).run();
     if ((result.meta.changes ?? 0) !== 1) await this.assertThemeConflictOrMissing(input.themeId);

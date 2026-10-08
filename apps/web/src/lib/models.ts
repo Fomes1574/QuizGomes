@@ -13,6 +13,8 @@ export interface ThemeSummary {
   categoryName: string;
   coverImageKey: string | null;
   description: string;
+  /** Escolhido pelo ADMIN para abrir a tela de Temas. */
+  featured?: boolean;
   id: string;
   name: string;
   slug: string;

@@ -60,6 +60,7 @@ import { parseQuestionsCsv } from './services/question-csv.js';
 import { MAX_PINNED_TITLES, themeTrail, titleShowcase, updateTitleShowcase, type ThemeTrailStep } from './services/title-showcase-service.js';
 import { WeeklyMissionRepository } from './repositories/weekly-mission-repository.js';
 import { playerProfile } from './services/player-profile-service.js';
+import { themeAchievements } from './services/player-title-service.js';
 import { LEADERBOARD_SIZE, RankingRepository } from './repositories/ranking-repository.js';
 import { DirectChallengeService } from './services/direct-challenge-service.js';
 import { inviteLinkPreview, siteLinkPreview, themeLinkPreview } from './http/link-preview.js';
@@ -476,7 +477,7 @@ async function profileSummaryRoute(request: Request, env: Env): Promise<Response
   // Leituras independentes em paralelo: o Perfil abre numa ida e volta só.
   const [
     activeStreak, bestTheme, categoryAverages, matchSummary, missions,
-    achievementList, casualSummary, frames, recentMatches, streakReminder, themeRecords, weeklyMissions,
+    achievementList, casualSummary, frames, recentMatches, streakReminder, themeRecords, weeklyMissions, collections,
   ] = await Promise.all([
     new StreakRepository(env.CORE_DB).activeStreakWithTheme(profile.userId, dayKey),
     repository.bestTheme(profile.userId),
@@ -490,6 +491,7 @@ async function profileSummaryRoute(request: Request, env: Env): Promise<Response
     new StreakReminderRepository(env.CORE_DB).enabled(profile.userId),
     history.themeRecords(profile.userId),
     new WeeklyMissionRepository(env.CORE_DB).list(profile.userId, gameWeekKey(nowMs)),
+    themeAchievements(env).collections(profile.userId),
   ]);
   return json({
     achievements: achievementList,
@@ -497,6 +499,7 @@ async function profileSummaryRoute(request: Request, env: Env): Promise<Response
     bestTheme,
     casualSummary,
     categoryAverages,
+    collections,
     frames,
     matchSummary,
     missions,
@@ -887,6 +890,25 @@ async function adminVisibilityRoute(
   const category = await repository.setCategoryHidden({ hidden: parsed.data.hidden, id });
   await auditLog(env, profile.userId, `${action}_CATEGORY`, 'category', id, { name: category.name });
   return json({ category });
+}
+
+/** Quantos temas cabem no destaque ao mesmo tempo. */
+const FEATURED_THEMES_LIMIT = 6;
+
+/** Põe ou tira um tema do destaque da tela de Temas (só ADMIN). */
+async function adminFeaturedRoute(request: Request, env: Env, themeId: string): Promise<Response> {
+  if (request.method !== 'POST') throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Método não permitido.');
+  const identity = await requireUser(request, env);
+  await requireAdmin(identity, env);
+  const profile = await new UserRepository(env.CORE_DB).findByFirebaseUid(identity.uid);
+  if (profile === null) throw new ApiError(409, 'PROFILE_REQUIRED', 'Conclua seu perfil.');
+  const parsed = z.object({ featured: z.boolean() }).strict().safeParse(await readJson(request));
+  if (!parsed.success) throw validationError(parsed.error);
+  const theme = await new ThemeRepository(env.CORE_DB).setThemeFeatured({
+    featured: parsed.data.featured, limit: FEATURED_THEMES_LIMIT, themeId,
+  });
+  await auditLog(env, profile.userId, parsed.data.featured ? 'FEATURE_THEME' : 'UNFEATURE_THEME', 'theme', themeId, { name: theme.name });
+  return json({ theme });
 }
 
 async function auditLog(
@@ -2240,6 +2262,8 @@ async function apiRoute(request: Request, env: Env, url: URL, context: Execution
     return adminThemeCategoryRoute(request, env, decodeURIComponent(adminThemeCategoryMatch[1]));
   }
 
+  const adminFeaturedMatch = /^\/api\/admin\/themes\/([a-z0-9_-]{1,128})\/featured$/i.exec(url.pathname);
+  if (adminFeaturedMatch?.[1] !== undefined) return adminFeaturedRoute(request, env, decodeURIComponent(adminFeaturedMatch[1]));
   const adminVisibilityMatch = /^\/api\/admin\/(categories|themes)\/([a-z0-9_-]{1,128})\/visibility$/i.exec(url.pathname);
   if (adminVisibilityMatch?.[1] !== undefined && adminVisibilityMatch[2] !== undefined) {
     const kind = adminVisibilityMatch[1].toLowerCase() === 'themes' ? 'theme' : 'category';

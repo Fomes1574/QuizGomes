@@ -243,6 +243,24 @@ export function AdminThemeModerationPanel({
     }
   }
 
+  async function setFeatured(theme: AdminThemeSummary, featured: boolean) {
+    setBusyId(theme.id);
+    setMessage(null);
+    setNotice(null);
+    try {
+      const result = await apiRequest<{ theme: AdminThemeSummary }>(`/api/admin/themes/${encodeURIComponent(theme.id)}/featured`, {
+        body: { featured }, getToken, method: 'POST',
+      });
+      setThemes((current) => current.map((item) => item.id === result.theme.id ? result.theme : item));
+      setNotice(featured ? `“${theme.name}” está em destaque na tela de Temas.` : `“${theme.name}” saiu do destaque.`);
+      onCatalogChanged?.();
+    } catch (featuredError) {
+      setMessage(errorText(featuredError, 'Não foi possível mudar o destaque.'));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   async function setVisibility(kind: 'categories' | 'themes', id: string, hidden: boolean, name: string) {
     setBusyId(id);
     setMessage(null);
@@ -378,6 +396,11 @@ export function AdminThemeModerationPanel({
               <div className="admin-card__actions">
                 {status === 'ACTIVE' ? (
                   <Button disabled={busyId !== null} onClick={() => setPendingAction({ action: 'deactivate', theme })} type="button" variant="ghost">{busyId === theme.id ? 'Aguarde…' : 'Desativar'}</Button>
+                ) : null}
+                {status === 'ACTIVE' ? (
+                  <Button aria-pressed={theme.featured === true} disabled={busyId !== null} onClick={() => void setFeatured(theme, theme.featured !== true)} type="button" variant="ghost">
+                    {busyId === theme.id ? 'Aguarde…' : theme.featured === true ? '★ Tirar do destaque' : 'Destacar'}
+                  </Button>
                 ) : null}
                 <Button disabled={busyId !== null} onClick={() => setPendingAction({ action: 'hide', theme })} type="button" variant="ghost">{busyId === theme.id ? 'Aguarde…' : 'Ocultar'}</Button>
               </div>

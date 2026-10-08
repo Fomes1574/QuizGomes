@@ -260,9 +260,11 @@ function assertFinalSchema(scenario) {
 
   const appliedMigrations = query(scenario, 'SELECT name FROM d1_migrations ORDER BY id');
   assert(
-    appliedMigrations.at(-1)?.name === '0023_weekly_missions_and_goal.sql',
-    `${scenario.name}: 0023 de missões semanais não foi registrada como última migration`,
+    appliedMigrations.at(-1)?.name === '0024_featured_themes.sql',
+    `${scenario.name}: 0024 de temas em destaque não foi registrada como última migration`,
   );
+  const featured = query(scenario, 'PRAGMA table_info(themes)').find(({ name }) => name === 'featured_at');
+  assert(featured !== undefined && featured.notnull === 0, `${scenario.name}: themes.featured_at precisa ser opcional`);
   assertWeeklyMissionsSchema(scenario);
   assertThemeAchievementsSchema(scenario);
   assertHiddenCatalogSchema(scenario);
@@ -1415,6 +1417,10 @@ try {
     migrationNames.includes('0023_weekly_missions_and_goal.sql'),
     'Migration Core 0023 de missões semanais e objetivo ausente',
   );
+  assert(
+    migrationNames.includes('0024_featured_themes.sql'),
+    'Migration Core 0024 de temas em destaque ausente',
+  );
   assert(questionMigrationNames.includes('0003_expand_synthetic_smoke_test.sql'), 'Migration Questions 0003 ausente');
   assert(
     questionMigrationNames.includes('0004_question_editorial_versioning.sql'),
@@ -1484,6 +1490,7 @@ try {
       '0021_hidden_themes_and_categories.sql',
       '0022_theme_achievements_and_titles.sql',
       '0023_weekly_missions_and_goal.sql',
+      '0024_featured_themes.sql',
     ].includes(name)),
   );
   console.log('Validando upgrade D1 exato de 0003 para 0004...');
@@ -1673,6 +1680,16 @@ try {
     (query(upgradeDatabase, 'SELECT COUNT(*) AS total FROM user_profiles WHERE goal_title_id IS NULL')[0]?.total ?? -1) === profilesBefore,
     'upgrade-0023: perfis existentes precisam nascer sem objetivo',
   );
+  console.log('Validando upgrade D1 atual exato de 0023 para 0024 temas em destaque...');
+  await copyFile(
+    join(coreSourceMigrationsDirectory, '0024_featured_themes.sql'),
+    join(upgradeDatabase.migrationsDirectory, '0024_featured_themes.sql'),
+  );
+  applyMigrations(upgradeDatabase);
+  assert(
+    (query(upgradeDatabase, 'SELECT COUNT(*) AS total FROM themes WHERE featured_at IS NOT NULL')[0]?.total ?? -1) === 0,
+    'upgrade-0024: nenhum tema existente pode nascer em destaque',
+  );
   assertFinalSchema(upgradeDatabase);
   console.log('Validando rollback transacional de migration com erro...');
   await assertRollback(upgradeDatabase);
@@ -1785,7 +1802,7 @@ try {
   applyMigrations(upgradeQuestions);
   assertQuestionImageKeyIndex(upgradeQuestions);
 
-  console.log('Migrations D1 aprovadas: parser Wrangler, bancos vazios, upgrades Core 0003→0004→0005→0006→0007→0008→0009→0010→0011→0012→0013→0014→0015→0016→0017→0018→0019→0020→0021→0022→0023 e Questions 0002→0003→0004→0005→0006→0007→0008→0009→0010, invariantes sociais, de desafio, de ledger de conclusão, de denúncia, editoriais, pool único por tema, índices de exportação, de foto e de limpeza, rollback e schemas finais.');
+  console.log('Migrations D1 aprovadas: parser Wrangler, bancos vazios, upgrades Core 0003→0004→0005→0006→0007→0008→0009→0010→0011→0012→0013→0014→0015→0016→0017→0018→0019→0020→0021→0022→0023→0024 e Questions 0002→0003→0004→0005→0006→0007→0008→0009→0010, invariantes sociais, de desafio, de ledger de conclusão, de denúncia, editoriais, pool único por tema, índices de exportação, de foto e de limpeza, rollback e schemas finais.');
 } finally {
   await rm(temporaryRoot, { force: true, recursive: true });
 }
