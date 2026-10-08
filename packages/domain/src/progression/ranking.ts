@@ -148,6 +148,37 @@ export function knowledgeDelta(
   return -LOSS_VALUES[tier];
 }
 
+/** Quanto uma Rankeada vale nesta liga: ganho na vitória e perda na derrota (empate não muda). */
+export function rankedKnowledgeValues(tier: Tier): { loss: number; win: number } {
+  return { loss: LOSS_VALUES[tier], win: WIN_VALUES[tier] };
+}
+
+export type RankChangeKind = 'DIVISION_DOWN' | 'DIVISION_UP' | 'NONE' | 'TIER_DOWN' | 'TIER_UP';
+
+/** O que mudou entre duas posições: subiu de liga, subiu de divisão, caiu ou nada. */
+export function rankChange(knowledgeBefore: number, knowledgeAfter: number): {
+  after: RankSnapshot;
+  before: RankSnapshot;
+  kind: RankChangeKind;
+} {
+  const before = rankForKnowledge(knowledgeBefore);
+  const after = rankForKnowledge(knowledgeAfter);
+  const tierMoved = TIERS.indexOf(after.tier) - TIERS.indexOf(before.tier);
+  const kind: RankChangeKind = after.divisionIndex === before.divisionIndex
+    ? 'NONE'
+    : tierMoved > 0 ? 'TIER_UP'
+      : tierMoved < 0 ? 'TIER_DOWN'
+        : after.divisionIndex > before.divisionIndex ? 'DIVISION_UP' : 'DIVISION_DOWN';
+  return { after, before, kind };
+}
+
+/** Distância até a próxima divisão; `null` no topo (Desafiante I). */
+export function nextDivisionGoal(knowledge: number): { missing: number; target: RankSnapshot } | null {
+  const rank = rankForKnowledge(knowledge);
+  if (rank.nextThreshold === null) return null;
+  return { missing: rank.nextThreshold - rank.knowledge, target: rankForKnowledge(rank.nextThreshold) };
+}
+
 export function resolveKnowledge(
   knowledge: number,
   result: MatchResult,

@@ -1,4 +1,5 @@
 import { rankForKnowledge } from '@quiz-gomes/domain';
+import { RankEmblem } from './rank-emblem.js';
 
 const tierClass: Record<string, string> = {
   Bronze: 'bronze',
@@ -12,6 +13,10 @@ const tierClass: Record<string, string> = {
 };
 
 /** Sufixo da liga usado tanto pelo selo quanto pelo acento cromático do duelo. */
+export function rankTierClass(tier: string): string {
+  return tierClass[tier] ?? 'brass';
+}
+
 export function rankTierSuffix(knowledge: number): string {
   return tierClass[rankForKnowledge(knowledge).tier] ?? 'brass';
 }
@@ -20,7 +25,7 @@ export function RankBadge({ knowledge, showKnowledge = false }: { knowledge: num
   const rank = rankForKnowledge(knowledge);
   return (
     <span className={`rank-badge rank-badge--${tierClass[rank.tier] ?? 'brass'}`}>
-      <span className="rank-badge__gem" aria-hidden="true"><span /></span>
+      <span className="rank-badge__gem" aria-hidden="true"><RankEmblem tier={rank.tier} /></span>
       <span>
         <strong>{rank.tier} {rank.division}</strong>
         {showKnowledge && <small>{rank.knowledge.toLocaleString('pt-BR')} Conhecimento</small>}

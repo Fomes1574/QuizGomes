@@ -70,4 +70,70 @@ describe('apresentação da partida', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Voltar ao tema' }));
     expect(onBack).toHaveBeenCalledOnce();
   });
+
+  it('subir de liga ganha festa com a regra nova; cair é dito sem drama, com o caminho de volta', () => {
+    // 2.450 é Latão I; +75 leva a 2.525, Bronze V.
+    render(<MatchResultScreen
+      knowledgeAfter={2_525}
+      knowledgeDelta={75}
+      onBack={() => undefined}
+      opponent={{ name: 'Ana', result: 'LOSS', score: 42 }}
+      ranked
+      viewer={{ name: 'Gomes', result: 'WIN', score: 67 }}
+      xpDelta={100}
+    />);
+    expect(screen.getByText('Nova liga!')).toBeInTheDocument();
+    expect(screen.getByText('Você chegou a Bronze V')).toBeInTheDocument();
+    expect(screen.getByText('Daqui pra frente, vitória vale +69 e derrota −33.')).toBeInTheDocument();
+    expect(screen.getByText('Faltam 775 para Bronze IV')).toBeInTheDocument();
+    cleanup();
+
+    // Derrota que não muda a divisão: nenhum aviso.
+    render(<MatchResultScreen
+      knowledgeAfter={2_600}
+      knowledgeDelta={-33}
+      onBack={() => undefined}
+      opponent={{ name: 'Ana', result: 'WIN', score: 70 }}
+      ranked
+      viewer={{ name: 'Gomes', result: 'LOSS', score: 40 }}
+      xpDelta={20}
+    />);
+    expect(screen.queryByText('Nova liga!')).toBeNull();
+    expect(document.querySelector('.rank-change')).toBeNull();
+  });
+
+  it('cair de divisão mostra quanto falta para voltar', () => {
+    // 2.520 é Bronze V; −33 leva a 2.487, Latão I.
+    render(<MatchResultScreen
+      knowledgeAfter={2_487}
+      knowledgeDelta={-33}
+      onBack={() => undefined}
+      opponent={{ name: 'Ana', result: 'WIN', score: 70 }}
+      ranked
+      viewer={{ name: 'Gomes', result: 'LOSS', score: 40 }}
+      xpDelta={20}
+    />);
+    expect(screen.getByText('Sua divisão agora é Latão I')).toBeInTheDocument();
+    expect(screen.getByText('Uma vitória já te leva de volta.')).toBeInTheDocument();
+  });
+
+  it('explica o ranking com os valores reais de cada liga', () => {
+    render(<MatchResultScreen
+      knowledgeAfter={150}
+      knowledgeDelta={75}
+      onBack={() => undefined}
+      opponent={{ name: 'Ana', result: 'LOSS', score: 42 }}
+      ranked
+      viewer={{ name: 'Gomes', result: 'WIN', score: 67 }}
+      xpDelta={100}
+    />);
+    fireEvent.click(screen.getByRole('button', { name: 'Como funciona o ranking?' }));
+    expect(screen.getByRole('heading', { name: 'Como funciona o ranking' })).toBeInTheDocument();
+    const latao = screen.getByRole('row', { name: /Latão/ });
+    expect(latao).toHaveTextContent('+75');
+    expect(latao).toHaveTextContent('−30');
+    fireEvent.click(screen.getByRole('button', { name: 'Entendi' }));
+    expect(screen.queryByRole('heading', { name: 'Como funciona o ranking' })).toBeNull();
+  });
 });
+

@@ -1639,6 +1639,14 @@ Pedidos do proprietário nesta rodada: limpeza a cada 15 dias (admin 6 meses), X
 - Estados: já amigos, pedido já enviado, a pessoa já te pediu (vira "Aceitar e virar amigos"), espera para reenviar, o próprio link, código inexistente ou inválido. Quem chega sem conta toca em "Entrar com Google e adicionar": o pedido sai sozinho quando a conta fica pronta (só para o convite tocado).
 - Usa as rotas existentes (busca por ID público, pedido e aceite), com as mesmas regras de bloqueio, limite de 200 amizades e espera. Prévia do link (WhatsApp etc.) só com o código, sem consultar o banco: o link não revela nome a quem não entrou.
 
+### 2026-10-08 — progressão: XP novo, Rankeada só na fila e promoção visível
+
+- Decisão do proprietário: XP de vitória 50 (Normal e desafio) e 100 (Rankeada); derrota ou empate concluídos 10 e 20; anulada e abandono 0. Com 100 Rankeadas por dia e 50% de vitórias, o nível 999 leva ~872 dias.
+- Decisão do proprietário: Rankeada só existe na fila pública contra alguém sorteado. A revanche passa a ser sempre Normal (aviso curto no resultado); desafios entre amigos já eram Normal. Fecha o caminho para dois amigos combinarem resultados no ranking.
+- Resultado da Rankeada: o total de Conhecimento conta do valor anterior até o novo, a barra parte do ponto anterior, e aparece "Faltam X para <próxima divisão>". Subir de liga mostra o selo da liga nova, os novos valores de ganho/perda e confete nas cores da liga; subir de divisão tem um aviso menor; cair é dito sem drama ("Uma vitória já te leva de volta" quando é verdade).
+- "Como funciona o ranking?": regras (só Rankeada conta, empate não muda, sair no meio é derrota, anulada não conta, fila por divisão) e a tabela de ganho/perda de cada liga vinda do domínio. Abre no resultado e na página do tema; o cartão do tema mostra quanto falta para a próxima divisão.
+- Selos por liga com silhuetas distintas (moeda, escudo, escudo com divisa dupla, estrela, hexágono, gema, coroa, coroa com joia), reconhecíveis sem depender da cor.
+
 ## Critério de saída desta execução
 
 - Milestones 8 e 8.5 aprovados fisicamente e congelados;

@@ -1,5 +1,5 @@
-import { rankForKnowledge, type MatchResult } from '@quiz-gomes/domain';
-import { useEffect, type CSSProperties } from 'react';
+import { nextDivisionGoal, rankChange, rankedKnowledgeValues, type MatchResult } from '@quiz-gomes/domain';
+import { useEffect, useState, type CSSProperties } from 'react';
 import { feedback, prefersReducedMotion } from '../lib/feedback.js';
 import type { SeenQuestion } from '../lib/reports.js';
 import { Avatar } from './avatar.js';
@@ -7,6 +7,9 @@ import { AvatarFrame } from './avatar-frame.js';
 import { Button } from './button.js';
 import { Icon } from './icons.js';
 import { Logo } from './logo.js';
+import { rankTierClass } from './rank-badge.js';
+import { RankEmblem } from './rank-emblem.js';
+import { RankingRulesDialog } from './ranking-rules-dialog.js';
 import { InstallInvite } from './install-invite.js';
 import { ShareResultButton } from './share-result-button.js';
 import type { RematchInvite } from '../lib/rematch.js';
@@ -21,7 +24,68 @@ interface ResultParticipant {
 }
 
 interface KnowledgeProgressStyle extends CSSProperties {
+  '--knowledge-from': number;
   '--knowledge-progress': number;
+}
+
+/** Conta de um número até outro (~0,9 s); com movimento reduzido, já mostra o final. */
+function useCountUp(from: number, to: number, delayMs = 480, durationMs = 900): number {
+  const [value, setValue] = useState(() => (prefersReducedMotion() ? to : from));
+  useEffect(() => {
+    if (from === to || prefersReducedMotion()) return undefined;
+    let frame = 0;
+    let started: number | null = null;
+    const timer = window.setTimeout(() => {
+      const step = (now: number) => {
+        started ??= now;
+        const t = Math.min(1, (now - started) / durationMs);
+        const eased = 1 - (1 - t) ** 3;
+        setValue(Math.round(from + (to - from) * eased));
+        if (t < 1) frame = window.requestAnimationFrame(step);
+      };
+      frame = window.requestAnimationFrame(step);
+    }, delayMs);
+    return () => { window.clearTimeout(timer); window.cancelAnimationFrame(frame); };
+  }, [delayMs, durationMs, from, to]);
+  return value;
+}
+
+/**
+ * Subiu ou caiu de divisão nesta partida. Subir de liga ganha festa; cair é
+ * dito sem drama, com o caminho de volta.
+ */
+function RankChangeBanner({ knowledgeAfter, knowledgeBefore }: { knowledgeAfter: number; knowledgeBefore: number }) {
+  const change = rankChange(knowledgeBefore, knowledgeAfter);
+  if (change.kind === 'NONE') return null;
+  const { after } = change;
+  const label = `${after.tier} ${after.division}`;
+  const up = change.kind === 'TIER_UP' || change.kind === 'DIVISION_UP';
+  const values = rankedKnowledgeValues(after.tier);
+  const back = up ? null : nextDivisionGoal(after.knowledge);
+  const copy = change.kind === 'TIER_UP'
+    ? { eyebrow: 'Nova liga!', text: `Daqui pra frente, vitória vale +${values.win} e derrota −${values.loss}.`, title: `Você chegou a ${label}` }
+    : change.kind === 'DIVISION_UP'
+      ? { eyebrow: 'Subiu de divisão', text: 'Continua assim que a próxima já está à vista.', title: label }
+      : {
+        eyebrow: 'Mudou de divisão',
+        text: back === null ? ''
+          : back.missing <= values.win ? 'Uma vitória já te leva de volta.'
+            : `Faltam ${back.missing.toLocaleString('pt-BR')} de Conhecimento para voltar.`,
+        title: `Sua divisão agora é ${label}`,
+      };
+  return (
+    <div
+      className={`rank-change rank-change--${up ? 'up' : 'down'}${change.kind === 'TIER_UP' ? ' rank-change--tier' : ''} rank-badge--${rankTierClass(after.tier)}`}
+      role="status"
+    >
+      <span className="rank-change__emblem"><RankEmblem tier={after.tier} /></span>
+      <span className="rank-change__copy">
+        <small>{copy.eyebrow}</small>
+        <strong>{copy.title}</strong>
+        {copy.text !== '' && <span>{copy.text}</span>}
+      </span>
+    </div>
+  );
 }
 
 const RESULT_LABELS: Record<MatchResult, string> = {
@@ -54,9 +118,10 @@ function resultTagline(viewer: ResultParticipant, opponent: ResultParticipant): 
 
 const CONFETTI_PIECES = 26;
 
-function Confetti() {
+/** Confete da vitória; ao subir de liga, nas cores da liga nova. */
+function Confetti({ tierClass }: { tierClass?: string | undefined }) {
   return (
-    <span aria-hidden="true" className="confetti">
+    <span aria-hidden="true" className={`confetti${tierClass === undefined ? '' : ` confetti--tier rank-badge--${tierClass}`}`}>
       {Array.from({ length: CONFETTI_PIECES }, (_, index) => (
         <i
           key={index}
@@ -152,13 +217,22 @@ export function MatchResultScreen({
   voidReason?: string | undefined;
   xpDelta: number;
 }) {
-  const rank = rankForKnowledge(knowledgeAfter);
-  const knowledgeStyle: KnowledgeProgressStyle = { '--knowledge-progress': rank.progress };
+  const knowledgeBefore = Math.max(0, knowledgeAfter - knowledgeDelta);
+  const change = rankChange(knowledgeBefore, knowledgeAfter);
+  const rank = change.after;
+  const knowledgeStyle: KnowledgeProgressStyle = {
+    '--knowledge-from': change.kind === 'NONE' ? change.before.progress : change.kind.endsWith('UP') ? 0 : 1,
+    '--knowledge-progress': rank.progress,
+  };
+  const shownKnowledge = useCountUp(knowledgeBefore, knowledgeAfter);
+  const goal = nextDivisionGoal(knowledgeAfter);
+  const [rulesOpen, setRulesOpen] = useState(false);
   const resultClass = viewer.result.toLocaleLowerCase();
   const cancelledBeforeStart = viewer.result === 'VOID' && voidReason === 'CANCELLED';
   const tagline = cancelledBeforeStart ? null : resultTagline(viewer, opponent);
   const won = viewer.result === 'WIN';
   const showConfetti = won && !prefersReducedMotion();
+  const rankedResult = ranked !== false && viewer.result !== 'VOID';
 
   useEffect(() => {
     if (won) feedback('win');
@@ -166,7 +240,7 @@ export function MatchResultScreen({
 
   return (
     <main className={`match-result-screen match-result-screen--${resultClass}`}>
-      {showConfetti && <Confetti />}
+      {showConfetti && <Confetti tierClass={rankedResult && change.kind === 'TIER_UP' ? rankTierClass(rank.tier) : undefined} />}
       <Logo />
       <header className="match-result-heading">
         <span>{cancelledBeforeStart ? 'Aviso' : 'Resultado'}</span>
@@ -186,6 +260,7 @@ export function MatchResultScreen({
           <ResultPlayer participant={opponent} relation="Adversário" />
         </section>
       )}
+      {rankedResult && !cancelledBeforeStart && <RankChangeBanner knowledgeAfter={knowledgeAfter} knowledgeBefore={knowledgeBefore} />}
       {viewer.result === 'VOID'
         ? <p>{cancelledBeforeStart && cancelledBy !== undefined
           ? `Partida cancelada por ${cancelledBy.displayName}`
@@ -212,7 +287,7 @@ export function MatchResultScreen({
             </article>
             <article>
               <small>Total no tema</small>
-              <strong>{knowledgeAfter}</strong>
+              <strong aria-label={String(knowledgeAfter)}>{shownKnowledge.toLocaleString('pt-BR')}</strong>
               <span>{rank.tier} {rank.division}</span>
               <span
                 aria-label={`${Math.round(rank.progress * 100)}% da divisão atual`}
@@ -224,11 +299,18 @@ export function MatchResultScreen({
               >
                 <span aria-hidden="true" style={knowledgeStyle} />
               </span>
+              <span className="match-result-progress__goal">
+                {goal === null ? 'Topo do ranking' : `Faltam ${goal.missing.toLocaleString('pt-BR')} para ${goal.target.tier} ${goal.target.division}`}
+              </span>
             </article>
             </>
             )}
           </section>
         )}
+      {rankedResult && !cancelledBeforeStart && ranked === true && (
+        <button className="ranking-rules-link" onClick={() => setRulesOpen(true)} type="button">Como funciona o ranking?</button>
+      )}
+      {rulesOpen && <RankingRulesDialog onClose={() => setRulesOpen(false)} />}
       {onReport !== undefined && questions !== undefined && questions.length > 0 && (
         <section aria-label="Perguntas desta partida" className="match-result-questions">
           <h2>Perguntas desta partida</h2>

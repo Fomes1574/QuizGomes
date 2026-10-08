@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  nextDivisionGoal,
+  rankChange,
+  rankedKnowledgeValues,
   CHALLENGER_I_THRESHOLD,
   DIVISION_THRESHOLDS,
   KNOWLEDGE_CAP,
@@ -95,3 +98,29 @@ describe('ranking por tema', () => {
     expect(rankedMatchmakingDivisionBand(45_000)).toBe(Number.POSITIVE_INFINITY);
   });
 });
+
+describe('mudança de divisão e próxima meta', () => {
+  it('distingue subir de liga, subir de divisão, cair e ficar', () => {
+    const latao1 = DIVISION_THRESHOLDS[4]!; // Latão I
+    const bronze5 = DIVISION_THRESHOLDS[5]!; // Bronze V
+    expect(rankChange(latao1 + 10, bronze5 + 5).kind).toBe('TIER_UP');
+    expect(rankChange(bronze5 + 5, latao1 + 10).kind).toBe('TIER_DOWN');
+    expect(rankChange(0, DIVISION_THRESHOLDS[1]!).kind).toBe('DIVISION_UP');
+    expect(rankChange(DIVISION_THRESHOLDS[1]!, DIVISION_THRESHOLDS[1]! - 1).kind).toBe('DIVISION_DOWN');
+    expect(rankChange(10, 60).kind).toBe('NONE');
+    expect(rankChange(latao1 + 10, bronze5 + 5).after).toMatchObject({ division: 'V', tier: 'Bronze' });
+  });
+
+  it('mostra quanto falta para a próxima divisão e nada no topo', () => {
+    expect(nextDivisionGoal(0)).toMatchObject({ missing: 300, target: { division: 'IV', tier: 'Latão' } });
+    expect(nextDivisionGoal(250)?.missing).toBe(50);
+    expect(nextDivisionGoal(CHALLENGER_I_THRESHOLD)).toBeNull();
+    expect(nextDivisionGoal(KNOWLEDGE_CAP)).toBeNull();
+  });
+
+  it('expõe ganho e perda de cada liga', () => {
+    expect(rankedKnowledgeValues('Latão')).toEqual({ loss: 30, win: 75 });
+    expect(rankedKnowledgeValues('Desafiante')).toEqual({ loss: 54, win: 33 });
+  });
+});
+

@@ -1,4 +1,4 @@
-import { PARTICIPATION_XP, WIN_XP, questionsForMode, type MatchMode } from '@quiz-gomes/domain';
+import { PARTICIPATION_XP, WIN_XP, nextDivisionGoal, questionsForMode, type MatchMode } from '@quiz-gomes/domain';
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { Avatar } from '../components/avatar.js';
@@ -9,6 +9,7 @@ import { Icon } from '../components/icons.js';
 import { FriendChallengeDialog } from '../components/friend-challenge-dialog.js';
 import { MatchmakingDialog } from '../components/matchmaking-dialog.js';
 import { RankBadge } from '../components/rank-badge.js';
+import { RankingRulesDialog } from '../components/ranking-rules-dialog.js';
 import { ThemeArtwork } from '../components/theme-artwork.js';
 import { useAuth } from '../features/auth-context.js';
 import { useFriendPresence, useQueueActivity } from '../features/social-context.js';
@@ -22,6 +23,14 @@ import { busiestOtherTheme, queueCounts, waitingLabel } from '../lib/queue-activ
 import { queueInviteMode, queueInviteUrl, shareQueueInvite } from '../lib/queue-invite.js';
 import { clearChallengeTarget, readChallengeTarget, type ChallengeTarget } from '../lib/challenge-target.js';
 import type { SocialFriend, SocialSnapshot } from '../lib/social.js';
+
+/** "Faltam 120 para Ouro I": o próximo passo concreto no ranking do tema. */
+function personalGoalText(knowledge: number): string {
+  const goal = nextDivisionGoal(knowledge);
+  return goal === null
+    ? 'Você está no topo do ranking deste tema.'
+    : `Faltam ${goal.missing.toLocaleString('pt-BR')} de Conhecimento para ${goal.target.tier} ${goal.target.division}.`;
+}
 
 export function ThemeDetailPage() {
   const { slug = '' } = useParams();
@@ -39,6 +48,7 @@ export function ThemeDetailPage() {
   const consumedAutoPlay = useRef(false);
   const { getToken, profile, signIn } = useAuth();
   const [data, setData] = useState<ThemeDetailResponse | null>(null);
+  const [rulesOpen, setRulesOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<MatchMode>(invitedMode ?? (restored?.mode === 'RANKED' ? 'RANKED' : 'CASUAL'));
   const [shareNotice, setShareNotice] = useState<string | null>(null);
@@ -199,6 +209,7 @@ export function ThemeDetailPage() {
               <p>{mode === 'RANKED'
                 ? `Vitória rende ${WIN_XP.RANKED} XP e mexe no seu Conhecimento deste tema. Terminou sem vencer? Leva ${PARTICIPATION_XP.RANKED} XP.`
                 : `Vitória rende ${WIN_XP.CASUAL} XP, e terminar a partida já vale ${PARTICIPATION_XP.CASUAL}. Seu Conhecimento fica intacto.`}</p>
+              {mode === 'RANKED' && <button className="ranking-rules-link ranking-rules-link--inline" onClick={() => setRulesOpen(true)} type="button">Como funciona o ranking?</button>}
               <ul className="play-deck__facts">
                 {modeRecord !== null && <li className="play-deck__record"><Icon name="crown" />Seu recorde: {modeRecord.toLocaleString('pt-BR')}</li>}
                 {waitingHere > 0 && <li className="play-deck__live"><span aria-hidden="true" className="theme-card__live-dot" />{waitingLabel(waitingHere)} agora</li>}
@@ -278,7 +289,7 @@ export function ThemeDetailPage() {
         </aside>
       </div>
 
-      <article className="personal-theme-card"><div><span className="eyebrow">Seu cartão</span><h2>{profile?.displayName ?? 'Entre para acompanhar'}</h2><p>{profile ? (data.personal?.rankedMatches ? 'Seu ranking neste tema conta só as partidas Rankeadas.' : 'Jogue uma Rankeada para entrar no ranking deste tema.') : 'Entre para ver sua posição e seu Conhecimento aqui.'}</p></div><div className="personal-theme-card__stats"><RankBadge knowledge={data.personal?.knowledge ?? 0} showKnowledge /><span className="discovery-ring" style={{ '--discovered': Math.min(1, discovered / 100) } as CSSProperties}><strong>{discovered.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%</strong><small title="Quanto das perguntas deste tema você já respondeu">das perguntas já vistas</small></span><span><strong>{data.personal?.position ? `#${data.personal.position}` : '—'}</strong><small>posição</small></span></div>{profile !== null && <div className="personal-records" aria-label="Recordes pessoais neste tema"><span><Icon name="crown" /><small>Recorde Normal</small><strong>{records?.CASUAL != null ? records.CASUAL.toLocaleString('pt-BR') : '—'}</strong></span><span><Icon name="crown" /><small>Recorde Rankeada</small><strong>{records?.RANKED != null ? records.RANKED.toLocaleString('pt-BR') : '—'}</strong></span></div>}</article>
+      <article className="personal-theme-card"><div><span className="eyebrow">Seu cartão</span><h2>{profile?.displayName ?? 'Entre para acompanhar'}</h2><p>{profile ? (data.personal?.rankedMatches ? personalGoalText(data.personal.knowledge) : 'Jogue uma Rankeada para entrar no ranking deste tema.') : 'Entre para ver sua posição e seu Conhecimento aqui.'}</p></div><div className="personal-theme-card__stats"><RankBadge knowledge={data.personal?.knowledge ?? 0} showKnowledge /><span className="discovery-ring" style={{ '--discovered': Math.min(1, discovered / 100) } as CSSProperties}><strong>{discovered.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%</strong><small title="Quanto das perguntas deste tema você já respondeu">das perguntas já vistas</small></span><span><strong>{data.personal?.position ? `#${data.personal.position}` : '—'}</strong><small>posição</small></span></div>{profile !== null && <div className="personal-records" aria-label="Recordes pessoais neste tema"><span><Icon name="crown" /><small>Recorde Normal</small><strong>{records?.CASUAL != null ? records.CASUAL.toLocaleString('pt-BR') : '—'}</strong></span><span><Icon name="crown" /><small>Recorde Rankeada</small><strong>{records?.RANKED != null ? records.RANKED.toLocaleString('pt-BR') : '—'}</strong></span></div>}</article>
 
       {challengePickerOpen && mode === 'CASUAL' && (
         <FriendChallengeDialog
@@ -339,6 +350,7 @@ export function ThemeDetailPage() {
           photoUrl: profile.photoUrl,
         }}
       />}
+      {rulesOpen && <RankingRulesDialog onClose={() => setRulesOpen(false)} />}
     </section>
   );
 }
