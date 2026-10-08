@@ -60,6 +60,9 @@ describe('ranking completo', () => {
       theme: { name: 'Lost', slug: 'lost' },
     });
     at('/temas/lost/ranking');
+    // Enquanto carrega, o esqueleto já tem o formato da lista (e avisa o leitor de tela).
+    expect(screen.getByRole('status')).toHaveTextContent('Abrindo o ranking');
+    expect(document.querySelectorAll('.skeleton-row').length).toBeGreaterThan(0);
     expect(await screen.findByRole('link', { name: 'Perfil de Ana Luiza' })).toHaveAttribute('href', '/jogador/QGANA0001');
     expect(screen.getByRole('link', { name: 'Seu perfil' })).toHaveAttribute('href', '/perfil');
     expect(screen.getByText('149')).toBeInTheDocument();

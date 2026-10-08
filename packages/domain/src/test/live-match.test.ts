@@ -149,6 +149,17 @@ describe('partida simultânea autoritativa', () => {
     expect(state.phaseDeadlineMs).toBe(1_105 + LIVE_PREPARATION_MS);
   });
 
+  it('a liga de cada um vai para o placar só na Rankeada', () => {
+    const ranked = startFirstRound('RANKED');
+    const rankedView = projectLiveMatchForSeat(ranked.state, 1, ranked.now);
+    expect(rankedView.viewer.rankKnowledge).toBe(2_500);
+    expect(rankedView.opponent.rankKnowledge).toBe(5_000);
+    const casual = startFirstRound('CASUAL');
+    const casualView = projectLiveMatchForSeat(casual.state, 1, casual.now);
+    expect(casualView.viewer).not.toHaveProperty('rankKnowledge');
+    expect(casualView.opponent).not.toHaveProperty('rankKnowledge');
+  });
+
   it('entrega somente a pergunta pública atual', () => {
     const { now, state } = startFirstRound();
     const projection = projectLiveMatchForSeat(state, 1, now);

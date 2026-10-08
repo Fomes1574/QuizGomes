@@ -1663,6 +1663,12 @@ Pedidos do proprietário nesta rodada: limpeza a cada 15 dias (admin 6 meses), X
 - `GET /api/players/:code`: perfil de outro jogador, só com login. Mostra nível, título atual, destaques escolhidos (só o que a pessoa ainda tem), melhores temas, números da Rankeada, a relação (amigos, pedido enviado/recebido) e "Você × Nome" nos temas que os dois jogam. Bloqueio, conta desativada ou código inexistente respondem 404 iguais.
 - App: `/temas/:slug/ranking` (Top 100 / Amigos) e `/jogador/QGXXXX`. Nomes no Top 5, no ranking e no Social abrem o perfil; o próprio nome leva ao Perfil.
 
+### 2026-10-08 — esqueletos, liga no placar e barra de placar
+
+- Carregamentos do tema, do ranking, do perfil de jogador, das amizades e da vitrine de títulos mostram esqueletos com o formato da tela que vai chegar (com aviso para leitor de tela e sem brilho em movimento reduzido), em vez do círculo girando.
+- Placar da Rankeada: o selo da liga de cada jogador (Conhecimento do início, já público na apresentação) e, para Top 1/2/3 do tema, coroa ou medalha ao lado do nome, pequenos para não competir com a pergunta. A projeção só leva a liga na Rankeada.
+- Depois de cada rodada, o lugar da barra do relógio vira uma barra de placar (adversário à esquerda, você à direita, como no placar) com "Você na frente por X", "Ana na frente por X" ou "Empatados". Some na pergunta seguinte e na primeira metade do desafio assíncrono.
+
 ## Critério de saída desta execução
 
 - Milestones 8 e 8.5 aprovados fisicamente e congelados;

@@ -1925,3 +1925,43 @@ label.button:has(input:focus-visible) { outline: 3px solid var(--focus); outline
   .player-grid { grid-template-columns: 1fr 1fr; }
 }
 
+/* ---------- Esqueletos com o formato da tela ---------- */
+.skeleton-bar { display: block; height: 12px; border-radius: 99px; }
+.skeleton-bar--dot { width: 22px; height: 14px; }
+.skeleton-bar--name { width: 62%; height: 14px; }
+.skeleton-bar--small { width: 40%; height: 10px; }
+.skeleton-bar--chip { width: 70px; height: 18px; }
+.skeleton-bar--title { width: 80%; height: 26px; border-radius: 10px; }
+.skeleton-stack { display: grid; gap: 6px; }
+.skeleton-row { display: grid; grid-template-columns: 38px 40px minmax(0, 1fr) 30px; align-items: center; gap: 10px; min-height: 58px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); }
+.skeleton-row__copy { display: grid; gap: 7px; min-width: 0; }
+.skeleton-avatar { display: block; width: 38px; height: 38px; border-radius: 50%; }
+.skeleton-avatar--large { width: 104px; height: 104px; }
+.skeleton-badge { display: block; width: 27px; height: 30px; border-radius: 9px; }
+.skeleton-card { display: block; min-height: 180px; border-radius: var(--radius-lg); }
+.skeleton-card--short { min-height: 120px; }
+.skeleton-card--tall { min-height: 320px; }
+.skeleton-hero { min-height: 150px; }
+.skeleton-theme { display: grid; gap: 18px; }
+.skeleton-theme__hero { display: block; min-height: 260px; border-radius: var(--radius-lg); }
+.skeleton-theme__grid { display: grid; gap: 18px; }
+.skeleton-showcase { margin-top: 18px; }
+@media (min-width: 900px) { .skeleton-theme__grid { grid-template-columns: minmax(0, 1fr) 360px; } }
+
+/* ---------- Placar: liga e Top discretos ---------- */
+.scoreboard-marks { display: inline-flex; align-items: center; gap: 3px; margin-right: 5px; vertical-align: -0.2em; }
+.scoreboard-marks__rank { display: inline-grid; width: 13px; height: 14px; place-items: center; }
+.scoreboard-marks__rank svg { width: 100%; height: 100%; }
+.scoreboard-marks__top { display: inline-grid; width: 14px; height: 14px; place-items: center; border-radius: 50%; color: #1b1210; font: 900 .55rem/1 var(--font-display); }
+.scoreboard-marks__top svg { width: 14px; height: 14px; fill: #f2b417; }
+.scoreboard-marks__top--silver { background: linear-gradient(135deg, #f4f7fb, #a9b5c4); }
+.scoreboard-marks__top--bronze { background: linear-gradient(135deg, #f3b47b, #a5592a); }
+
+/* ---------- Barra de placar depois da rodada ---------- */
+.score-tug { display: grid; justify-items: center; gap: 4px; width: min(100% - 32px, 420px); margin: 2px auto 0; animation: score-tug-in 260ms var(--ease-out) both; }
+.score-tug__bar { position: relative; display: block; width: 100%; height: 6px; overflow: hidden; border-radius: 99px; background: var(--violet); }
+.score-tug__bar i { position: absolute; inset: 0; border-radius: inherit; background: var(--brand); transform-origin: right; transition: transform 520ms var(--ease-out); }
+.score-tug small { color: var(--text-secondary); font-size: .7rem; font-weight: 750; }
+.score-tug--ahead small { color: var(--correct); }
+@keyframes score-tug-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .score-tug { animation: none; } .score-tug__bar i { transition: none; } }

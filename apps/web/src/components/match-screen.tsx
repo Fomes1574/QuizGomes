@@ -1,9 +1,18 @@
-import { LIVE_ROUND_RESULT_MS, QUESTION_DURATION_MS, displayedSeconds, remainingAt } from '@quiz-gomes/domain';
+import {
+  LIVE_ROUND_RESULT_MS,
+  QUESTION_DURATION_MS,
+  displayedSeconds,
+  rankForKnowledge,
+  remainingAt,
+  type PlayerTitleStyle,
+} from '@quiz-gomes/domain';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { feedback } from '../lib/feedback.js';
 import { playDuelFlip, takeDuelOrigin, type DuelSeat } from '../lib/match-handoff.js';
 import { Avatar } from './avatar.js';
 import { AvatarFrame } from './avatar-frame.js';
+import { rankTierClass } from './rank-badge.js';
+import { RankEmblem } from './rank-emblem.js';
 
 const OPTION_LABELS = ['A', 'B', 'C', 'D'] as const;
 const OPTION_KEYS: Record<string, number> = { 1: 0, 2: 1, 3: 2, 4: 3, a: 0, b: 1, c: 2, d: 3 };
@@ -70,6 +79,56 @@ interface MatchParticipantView {
   frameId?: string | null;
   name: string;
   photoUrl?: string | null;
+  /** Só na Rankeada: a liga de cada um, discreta no placar. */
+  rankKnowledge?: number | undefined;
+  /** Top do tema: coroa (1º) ou medalha (2º e 3º) ao lado do nome. */
+  titleStyle?: PlayerTitleStyle | null | undefined;
+}
+
+/**
+ * Depois de cada rodada: quem está na frente, numa barra só. O lado do
+ * adversário fica à esquerda e o seu à direita, como no placar.
+ */
+function ScoreTug({ opponent, opponentName, player }: { opponent: number; opponentName: string; player: number }) {
+  const total = opponent + player;
+  const share = total === 0 ? 0.5 : player / total;
+  const gap = Math.abs(player - opponent);
+  const first = opponentName.trim().split(/\s+/)[0] ?? opponentName;
+  const text = gap === 0 ? 'Empatados' : player > opponent ? `Você na frente por ${gap}` : `${first} na frente por ${gap}`;
+  return (
+    <div className={`score-tug${player > opponent ? ' score-tug--ahead' : player < opponent ? ' score-tug--behind' : ''}`}>
+      <span aria-hidden="true" className="score-tug__bar">
+        <i style={{ transform: `scaleX(${share})` }} />
+      </span>
+      <small>{text}</small>
+    </div>
+  );
+}
+
+/** Liga e, se houver, a marca do Top: pequenas, para não roubar a pergunta. */
+function ScoreboardMarks({ participant }: { participant: MatchParticipantView }) {
+  const { rankKnowledge, titleStyle } = participant;
+  const podium = titleStyle === 'gold' || titleStyle === 'silver' || titleStyle === 'bronze';
+  if (rankKnowledge === undefined && !podium) return null;
+  const rank = rankKnowledge === undefined ? null : rankForKnowledge(rankKnowledge);
+  return (
+    <span className="scoreboard-marks">
+      {rank !== null && (
+        <span className={`scoreboard-marks__rank rank-badge--${rankTierClass(rank.tier)}`} title={`${rank.tier} ${rank.division}`}>
+          <RankEmblem tier={rank.tier} />
+          <span className="sr-only">{rank.tier} {rank.division}</span>
+        </span>
+      )}
+      {podium && (
+        <span className={`scoreboard-marks__top scoreboard-marks__top--${titleStyle}`}>
+          {titleStyle === 'gold'
+            ? <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m3 7 4.5 4L12 4l4.5 7L21 7l-2 12H5L3 7Z" /></svg>
+            : <span aria-hidden="true">{titleStyle === 'silver' ? 2 : 3}</span>}
+          <span className="sr-only">{titleStyle === 'gold' ? 'Top 1 do tema' : titleStyle === 'silver' ? 'Top 2 do tema' : 'Top 3 do tema'}</span>
+        </span>
+      )}
+    </span>
+  );
 }
 
 interface MatchTimerStyle extends CSSProperties {
@@ -409,7 +468,7 @@ export function MatchScreen({
             <Avatar customUrl={opponent.customAvatarUrl} googleUrl={opponent.photoUrl} name={opponent.name} size="small" />
           </AvatarFrame>
           <span className="match-scoreboard__copy">
-            <small>{opponent.name}</small>
+            <small><ScoreboardMarks participant={opponent} />{opponent.name}</small>
             <strong
               aria-label={opponentPending ? 'Adversário ainda não jogou' : undefined}
               aria-live="polite"
@@ -445,7 +504,7 @@ export function MatchScreen({
         </div>
         <div className="player-chip">
           <span className="match-scoreboard__copy">
-            <small>Você</small>
+            <small><ScoreboardMarks participant={player} />Você</small>
             <strong aria-live="polite" key={displayedScores.player}>{displayedScores.player}</strong>
             {streak >= STREAK_VISIBLE_FROM && (
               <span aria-label={`${streak} acertos seguidos`} className="streak-chip" key={streak}>
@@ -464,7 +523,10 @@ export function MatchScreen({
           </AvatarFrame>
         </div>
       </header>
-      {preparing || reading
+      {/* Rodada resolvida: o relógio já acabou e o lugar dele vira a barra de placar. */}
+      {resolved && !opponentPending && displayedScores.opponent + displayedScores.player > 0
+        ? <ScoreTug opponent={displayedScores.opponent} opponentName={opponent.name} player={displayedScores.player} />
+        : preparing || reading
         ? (
           <div aria-hidden="true" className={`match-timer match-timer--preparing${reading ? ' match-timer--charging' : ''}`}>
             {reading && (

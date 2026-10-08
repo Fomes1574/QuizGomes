@@ -4,12 +4,13 @@ import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { Avatar } from '../components/avatar.js';
 import { AvatarFrame } from '../components/avatar-frame.js';
 import { Button } from '../components/button.js';
-import { ErrorState, LoadingState } from '../components/async-state.js';
+import { ErrorState } from '../components/async-state.js';
 import { Icon } from '../components/icons.js';
 import { FriendChallengeDialog } from '../components/friend-challenge-dialog.js';
 import { MatchmakingDialog } from '../components/matchmaking-dialog.js';
 import { RankBadge } from '../components/rank-badge.js';
 import { RankingRulesDialog } from '../components/ranking-rules-dialog.js';
+import { ThemeDetailSkeleton } from '../components/skeletons.js';
 import { ThemeArtwork } from '../components/theme-artwork.js';
 import { useAuth } from '../features/auth-context.js';
 import { useFriendPresence, useQueueActivity } from '../features/social-context.js';
@@ -138,7 +139,7 @@ export function ThemeDetailPage() {
     return () => controller.abort();
   }, [otherThemes.length, searching, someoneElsewhere]);
 
-  if (data === null && error === null) return <LoadingState label="Abrindo o tema" />;
+  if (data === null && error === null) return <ThemeDetailSkeleton />;
   if (error !== null || data === null) return <ErrorState message={error ?? 'Tema indisponível.'} onRetry={() => setReload((value) => value + 1)} />;
 
   const required = questionsForMode(mode);

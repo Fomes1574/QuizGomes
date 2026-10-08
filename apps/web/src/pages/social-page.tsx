@@ -5,6 +5,7 @@ import { AvatarFrame } from '../components/avatar-frame.js';
 import { EmptyState, LoadingState } from '../components/async-state.js';
 import { Button } from '../components/button.js';
 import { Icon } from '../components/icons.js';
+import { RankingListSkeleton } from '../components/skeletons.js';
 import { SocialConfirmDialog } from '../components/social-confirm-dialog.js';
 import { useAuth } from '../features/auth-context.js';
 import { useChallenges } from '../features/challenge-context.js';
@@ -679,7 +680,7 @@ export function SocialPage() {
             </section>
           ) : null}
 
-          {loading ? <LoadingState label="Carregando amizades" /> : (
+          {loading ? <RankingListSkeleton label="Carregando amizades" rows={4} /> : (
             <>
               <section aria-label="Pedidos recebidos" className={`social-section${snapshot.incoming.length === 0 ? ' social-section--quiet' : ' social-section--incoming'}`} id="pedidos">
                 <div className="section-heading"><h2>Pedidos</h2><span>{snapshot.incoming.length}</span></div>

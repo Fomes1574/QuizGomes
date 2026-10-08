@@ -770,6 +770,8 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
             frameId: projection.opponent.frameId,
             name: projection.opponent.displayName,
             photoUrl: projection.opponent.photoUrl,
+            rankKnowledge: projection.opponent.rankKnowledge,
+            titleStyle: projection.opponent.title?.style ?? null,
           }}
           opponentAnswered={projection.opponent.answered}
           opponentPending={projection.opponentPending ?? false}
@@ -779,6 +781,8 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
             frameId: projection.viewer.frameId,
             name: projection.viewer.displayName,
             photoUrl: projection.viewer.photoUrl,
+            rankKnowledge: projection.viewer.rankKnowledge,
+            titleStyle: projection.viewer.title?.style ?? null,
           }}
           playerScore={projection.viewer.score}
           preparing={preparingQuestion}

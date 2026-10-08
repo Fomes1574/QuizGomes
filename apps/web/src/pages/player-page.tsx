@@ -1,13 +1,14 @@
 import { rankForKnowledge, type PlayerTitle } from '@quiz-gomes/domain';
 import { useEffect, useState, type CSSProperties } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { ErrorState, LoadingState } from '../components/async-state.js';
+import { ErrorState } from '../components/async-state.js';
 import { Avatar } from '../components/avatar.js';
 import { AvatarFrame } from '../components/avatar-frame.js';
 import { Button } from '../components/button.js';
 import { Icon } from '../components/icons.js';
 import { PlayerTitleText } from '../components/player-title.js';
 import { RankBadge } from '../components/rank-badge.js';
+import { PlayerSkeleton } from '../components/skeletons.js';
 import { useAuth } from '../features/auth-context.js';
 import { useSocial } from '../features/social-context.js';
 import { apiRequest } from '../lib/api.js';
@@ -121,7 +122,7 @@ export function PlayerPage() {
     );
   }
   if (state === 'error') return <section className="page page--narrow"><ErrorState message="Não deu para abrir o perfil." onRetry={() => setAttempt((value) => value + 1)} /></section>;
-  if (view === null || state === 'loading') return <section className="page page--narrow"><LoadingState label="Abrindo perfil" /></section>;
+  if (view === null || state === 'loading') return <PlayerSkeleton />;
 
   const { player } = view;
   const name = firstName(player.displayName);

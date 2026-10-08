@@ -8,6 +8,7 @@ import { AvatarFrame } from './avatar-frame.js';
 import { Icon } from './icons.js';
 import { PlayerTitleText } from './player-title.js';
 import { RankEmblem } from './rank-emblem.js';
+import { TitleShowcaseSkeleton } from './skeletons.js';
 
 const FILTERS = [['todos', 'Todos'], ['top', 'Top'], ['ranking', 'Ranking'], ['feitos', 'Feitos']] as const;
 type Filter = (typeof FILTERS)[number][0];
@@ -78,7 +79,7 @@ export function TitleShowcase({ onCurrentChange, viewer }: {
 
   if (failed) return null;
   if (data === null) {
-    return <article aria-busy="true" className="profile-card title-showcase title-showcase--loading"><span className="eyebrow">Títulos</span></article>;
+    return <TitleShowcaseSkeleton />;
   }
 
   const owned = data.titles.filter((title) => title.locked === undefined);

@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { ErrorState, LoadingState } from '../components/async-state.js';
+import { ErrorState } from '../components/async-state.js';
 import { Avatar } from '../components/avatar.js';
 import { AvatarFrame } from '../components/avatar-frame.js';
 import { Icon } from '../components/icons.js';
 import { RankBadge } from '../components/rank-badge.js';
+import { RankingListSkeleton } from '../components/skeletons.js';
 import { useAuth } from '../features/auth-context.js';
 import { apiRequest } from '../lib/api.js';
 import { playerPath } from '../lib/invite-link.js';
@@ -98,7 +99,7 @@ export function ThemeRankingPage() {
         </div>
       )}
       {error !== null ? <ErrorState message={error} onRetry={() => setAttempt((value) => value + 1)} />
-        : data === null ? <LoadingState label="Abrindo o ranking" />
+        : data === null ? <RankingListSkeleton />
           : data.entries.length === 0 ? (
             <p className="ranking-page__empty">{scope === 'friends'
               ? 'Nem você nem seus amigos pontuaram aqui ainda. Uma Rankeada já coloca seu nome na lista.'

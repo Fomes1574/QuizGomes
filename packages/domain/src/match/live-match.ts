@@ -515,6 +515,8 @@ export interface LiveMatchProjection {
     displayName: string;
     frameId: string | null;
     photoUrl: string | null;
+    /** Conhecimento no início, só na Rankeada (o selo discreto do placar). */
+    rankKnowledge?: number;
     score: number;
     title?: PlayerTitle | null;
   };
@@ -550,6 +552,7 @@ export interface LiveMatchProjection {
     displayName: string;
     frameId: string | null;
     photoUrl: string | null;
+    rankKnowledge?: number;
     score: number;
     seat: LiveSeat;
     title?: PlayerTitle | null;
@@ -647,6 +650,10 @@ export function projectLiveMatchForSeat(
       title: viewer.title ?? null,
     },
   };
+  if (state.mode === 'RANKED') {
+    projection.opponent.rankKnowledge = opponent.knowledgeBefore;
+    projection.viewer.rankKnowledge = viewer.knowledgeBefore;
+  }
   if (phaseHasCurrentQuestion(state)) {
     const question = currentQuestion(state);
     projection.question = publicQuestion(question, phaseRevealsOptions(state));

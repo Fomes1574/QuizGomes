@@ -4,6 +4,7 @@ import { AppShell } from './components/app-shell.js';
 import { LoadingState } from './components/async-state.js';
 import { DirectChallengeWaiting } from './components/direct-challenge-waiting.js';
 import { OnboardingDialog } from './components/onboarding-dialog.js';
+import { PlayerSkeleton, RankingListSkeleton } from './components/skeletons.js';
 import { ChallengeProvider } from './features/challenge-context.js';
 import { NotFoundPage } from './pages/not-found-page.js';
 import { ProfilePage } from './pages/profile-page.js';
@@ -38,8 +39,8 @@ export function App() {
           <Route path="criar" element={<Navigate replace to="/" />} />
           <Route path="perfil" element={<ProfilePage />} />
           <Route path="temas/:slug" element={<ThemeDetailRoute />} />
-          <Route path="temas/:slug/ranking" element={<Suspense fallback={<LoadingState label="Abrindo o ranking" />}><ThemeRankingPage /></Suspense>} />
-          <Route path="jogador/:code" element={<Suspense fallback={<LoadingState label="Abrindo perfil" />}><PlayerPage /></Suspense>} />
+          <Route path="temas/:slug/ranking" element={<Suspense fallback={<section className="page page--narrow"><RankingListSkeleton /></section>}><ThemeRankingPage /></Suspense>} />
+          <Route path="jogador/:code" element={<Suspense fallback={<PlayerSkeleton />}><PlayerPage /></Suspense>} />
           <Route path="convite/:code" element={<Suspense fallback={<LoadingState label="Abrindo convite" />}><InvitePage /></Suspense>} />
           <Route path="*" element={<NotFoundPage />} />
         </Route>
