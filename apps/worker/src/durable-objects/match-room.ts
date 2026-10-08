@@ -8,6 +8,7 @@ import {
   type LiveMatchEvent,
   type LiveMatchState,
   type LiveSeat,
+  type MatchThemeRewards,
 } from '@quiz-gomes/domain';
 import type { Env } from '../env.js';
 import { ApiError } from '../http/api-error.js';
@@ -27,6 +28,12 @@ import {
   phaseClock,
   timerDelay,
 } from './phase-clock.js';
+import {
+  recordRankedRewards,
+  resolvePlayerTitle,
+  themeAchievements,
+  type RankedRewardInput,
+} from '../services/player-title-service.js';
 
 interface RoomAttachment {
   seat: LiveSeat;
@@ -52,6 +59,7 @@ interface ClientMessage {
 
 const ROOM_KEY = 'room';
 const RESULT_KEY = 'result';
+const REWARDS_KEY = 'theme-rewards';
 const PRESENCE_CLEANUP_KEY = 'presence-cleanup-pending';
 const REPLACED_SOCKET_CODE = 4_000;
 const FINALIZATION_RETRY_MS = 1_000;
@@ -266,6 +274,7 @@ export class MatchRoom {
     const repository = this.repository();
     const initializeOnce = async (): Promise<LiveMatchState> => {
       const state = await repository.initialize(input);
+      await this.attachTitles(state);
       try {
         await this.save(state);
         await this.syncAlarm(state);
@@ -292,6 +301,26 @@ export class MatchRoom {
     } finally {
       this.initializationInFlight = null;
     }
+  }
+
+  /**
+   * Título sob o nome de cada jogador e a posição no Top do tema no início
+   * (para o resultado dizer se subiu ou caiu). Enfeite: se falhar, a partida
+   * segue sem título.
+   */
+  private async attachTitles(state: LiveMatchState): Promise<void> {
+    await Promise.all(state.players.map(async (player) => {
+      try {
+        player.title = await resolvePlayerTitle(this.env, player.userId, state.themeId);
+        player.themeTopPosition = state.mode === 'RANKED'
+          ? await themeAchievements(this.env).topPosition(player.userId, state.themeId)
+          : null;
+      } catch {
+        player.title = null;
+        player.themeTopPosition = null;
+        console.warn(JSON.stringify({ code: 'PLAYER_TITLE_UNAVAILABLE', matchId: state.matchId }));
+      }
+    }));
   }
 
   private initializationFailure(matchId: string, error: unknown): Response {
@@ -412,8 +441,13 @@ export class MatchRoom {
   private async connectToTerminal(server: WebSocket, state: LiveMatchState): Promise<void> {
     if (state.phase === 'FINISHED' || state.phase === 'VOID') {
       const summary = await this.restoreTerminalSummary(state);
-      if (summary !== null) this.sendTerminal(server, state, summary);
-      else await this.deferTerminal(server, state);
+      if (summary === null) {
+        await this.deferTerminal(server, state);
+        return;
+      }
+      this.sendTerminal(server, state, summary);
+      const rewards = await this.ctx.storage.get<Record<string, MatchThemeRewards>>(REWARDS_KEY);
+      if (rewards !== undefined) this.sendRewards(server, rewards);
       return;
     }
     if (!await this.tryFinalize(state)) await this.deferTerminal(server, state);
@@ -680,7 +714,56 @@ export class MatchRoom {
     await this.reconcileDirectChallenge(state.matchId);
     await this.recordMatchStatistics(state.matchId);
     await this.recordMatchProgress(state, summary);
+    await this.recordThemeRewards(state, summary);
     await this.finishPresenceCleanup();
+  }
+
+  /**
+   * Conquistas e Top do tema depois de uma Rankeada. Chegam num aviso à
+   * parte (MATCH_REWARDS), logo depois do resultado: se falharem, o
+   * resultado já foi entregue e nada competitivo muda.
+   */
+  private async recordThemeRewards(state: LiveMatchState, summary: FinalizedLiveMatch): Promise<void> {
+    if (state.mode !== 'RANKED') return;
+    if (await this.ctx.storage.get(REWARDS_KEY) !== undefined) return;
+    const penalizedSeat = state.pendingOutcome?.kind === 'VOID' ? state.pendingOutcome.penalizedSeat : null;
+    const inputs: RankedRewardInput[] = [];
+    summary.players.forEach((player, index) => {
+      const opponent = summary.players[index === 0 ? 1 : 0];
+      const result = summary.status === 'FINISHED'
+        ? player.result
+        : penalizedSeat === player.seat ? 'ABANDONED' : null;
+      if (opponent === undefined || (result !== 'WIN' && result !== 'LOSS' && result !== 'DRAW' && result !== 'ABANDONED')) return;
+      inputs.push({
+        outcome: {
+          knowledgeAfter: player.knowledgeAfter,
+          knowledgeBefore: player.knowledgeBefore,
+          opponentKnowledgeBefore: opponent.knowledgeBefore,
+          opponentScore: opponent.score,
+          result,
+          score: player.score,
+        },
+        topBefore: state.players[player.seat - 1]?.themeTopPosition ?? null,
+        userId: player.userId,
+      });
+    });
+    if (inputs.length === 0) return;
+    try {
+      const rewards = await recordRankedRewards(this.env, state.matchId, state.themeId, inputs);
+      const stored = Object.fromEntries(rewards);
+      await this.ctx.storage.put(REWARDS_KEY, stored);
+      for (const socket of this.ctx.getWebSockets()) this.sendRewards(socket, stored);
+    } catch {
+      console.error(JSON.stringify({ code: 'THEME_REWARDS_RECORD_FAILED', matchId: state.matchId }));
+    }
+  }
+
+  private sendRewards(socket: WebSocket, rewards: Record<string, MatchThemeRewards>): void {
+    const attachment = readAttachment(socket);
+    const mine = attachment === null ? undefined : rewards[attachment.userId];
+    if (mine === undefined) return;
+    if (mine.achievements.length === 0 && mine.top.after === mine.top.before) return;
+    this.safeSend(socket, { rewards: mine, type: 'MATCH_REWARDS' });
   }
 
   /**

@@ -6,6 +6,7 @@ import {
   type LiveMatchCommand,
   type LiveMatchProjection,
   type LiveMatchState,
+  type MatchThemeRewards,
 } from '@quiz-gomes/domain';
 import { env } from 'cloudflare:workers';
 import { runDurableObjectAlarm, runInDurableObject } from 'cloudflare:test';
@@ -29,7 +30,9 @@ interface TestMessage {
     opponent: { result: string; score: number };
     viewer: { knowledgeAfter: number; knowledgeDelta: number; result: string; score: number; xpDelta: number };
   };
+  rewards?: MatchThemeRewards;
   roomId?: string;
+  viewer?: { title: unknown };
   serverNow?: number;
   timeoutAt?: number;
   type?: string;
@@ -492,7 +495,10 @@ describe('Milestone 8 no runtime Workers simulado', () => {
       frameId: 'frame-matchfound-real',
       knowledge: 0,
       photoUrl: 'https://lh3.googleusercontent.com/matchfound-one',
+      title: null,
     });
+    // Sem título escolhido nem Top: os dois lados chegam sem título.
+    expect(firstFound.viewer).toEqual({ title: null });
     expect(secondSearching.timeoutAt).toBeGreaterThan(Date.now());
     const firstQuestionId = firstFound.preload?.firstQuestion.id;
     expect(firstQuestionId).toMatch(/^matchfound-q-(10|[1-9])$/);
@@ -742,6 +748,13 @@ describe('Milestone 8 no runtime Workers simulado', () => {
     ]);
     expect(firstFinished.result?.viewer).toMatchObject({ knowledgeAfter: 575, knowledgeDelta: 75, result: 'WIN', xpDelta: 100 });
     expect(secondFinished.result?.viewer).toMatchObject({ knowledgeAfter: 470, knowledgeDelta: -30, result: 'LOSS', xpDelta: 20 });
+    // Logo depois do resultado, o aviso à parte com o título novo de quem venceu.
+    const firstRewards = await firstReconnected.waitFor('MATCH_REWARDS');
+    expect(firstRewards.rewards?.achievements.map((achievement) => achievement.id)).toContain('FIRST_WIN');
+    expect(firstRewards.rewards?.top).toEqual({ after: null, before: null });
+    expect(await env.CORE_DB.prepare(
+      'SELECT completed_ranked, win_streak, last_match_id FROM user_theme_progress WHERE user_id = ?1 AND theme_id = ?2',
+    ).bind(fixture.userIds[0], fixture.themeId).first()).toEqual({ completed_ranked: 1, last_match_id: roomId, win_streak: 1 });
 
     const matchRow = await env.CORE_DB.prepare(
       'SELECT status, result_version, winner_user_id FROM matches WHERE id = ?1',

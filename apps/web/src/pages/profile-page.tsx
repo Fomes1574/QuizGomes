@@ -1,6 +1,6 @@
-import { levelProgress, rankForKnowledge } from '@quiz-gomes/domain';
+import { levelProgress, rankForKnowledge, type PlayerTitle } from '@quiz-gomes/domain';
 import '../styles/profile.css';
-import { lazy, Suspense, useEffect, useState, type CSSProperties, type FormEvent } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useState, type CSSProperties, type FormEvent } from 'react';
 import { NavLink } from 'react-router-dom';
 import { Avatar } from '../components/avatar.js';
 import { AvatarFrame } from '../components/avatar-frame.js';
@@ -24,7 +24,9 @@ import { ShareCardButton } from '../components/share-result-button.js';
 import { StreakReminderToggle } from '../components/streak-reminder-toggle.js';
 import { inviteUrl } from '../lib/invite-link.js';
 import { FRAME_RING_COLORS, type AchievementItem, type FrameItem } from '../lib/achievements.js';
+import { PlayerTitleText } from '../components/player-title.js';
 import { RankBadge } from '../components/rank-badge.js';
+import { TitleShowcase } from '../components/title-showcase.js';
 import { SocialConfirmDialog } from '../components/social-confirm-dialog.js';
 import { useAuth } from '../features/auth-context.js';
 import { useSocial } from '../features/social-context.js';
@@ -85,6 +87,8 @@ export function ProfilePage() {
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [summary, setSummary] = useState<ProfileSummaryResponse | null>(null);
   const [busyFrame, setBusyFrame] = useState<string | null>(null);
+  const [currentTitle, setCurrentTitle] = useState<PlayerTitle | null>(null);
+  const showTitle = useCallback((title: PlayerTitle | null) => setCurrentTitle(title), []);
   const progress = levelProgress(profile?.totalXp ?? 0);
   const feedbackPreferences = useFeedbackPreferences();
 
@@ -201,7 +205,7 @@ export function ProfilePage() {
           </AvatarFrame>
           <span aria-hidden="true" className="xp-ring__level">{progress.level}</span>
         </span>
-        <div><span className="eyebrow">{role === 'ADMIN' ? 'Jogador · ADMIN' : 'Jogador'}</span><h1>{profile?.displayName ?? firebaseUser.displayName}</h1><p>{profile?.publicId ?? 'Criando ID público…'}</p></div>
+        <div><span className="eyebrow">{role === 'ADMIN' ? 'Jogador · ADMIN' : 'Jogador'}</span><h1>{profile?.displayName ?? firebaseUser.displayName}</h1>{currentTitle !== null && <span className="profile-hero__title"><PlayerTitleText animated title={currentTitle} /></span>}<p>{profile?.publicId ?? 'Criando ID público…'}</p></div>
         {profile && (
           <div className="profile-hero__actions">
             <ShareCardButton
@@ -241,6 +245,17 @@ export function ProfilePage() {
         </Suspense>
       ) : null}
       {editing && <form className="inline-edit" onSubmit={(event) => void submit(event)}><label className="field"><span>Novo nome</span><input maxLength={32} minLength={2} onChange={(event) => setName(event.target.value)} value={name} /></label><Button type="submit">Salvar</Button></form>}
+      {profile && (
+        <TitleShowcase
+          onCurrentChange={showTitle}
+          viewer={{
+            customAvatarUrl: profile.customAvatarUrl,
+            displayName: profile.displayName,
+            frameId: profile.equippedFrameId,
+            photoUrl: profile.photoUrl,
+          }}
+        />
+      )}
       <div className="profile-grid">
         <article className="level-card"><span>Nível</span><strong>{progress.level}</strong><div className="progress-track"><span style={{ transform: `scaleX(${progress.progress})` }} /></div><small>{progress.nextLevelXp === null ? 'Nível máximo' : `${progress.currentLevelXp} / ${progress.nextLevelXp} XP`}</small></article>
         <StreakCard streak={summary?.activeStreak ?? null} />

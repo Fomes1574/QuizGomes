@@ -135,7 +135,7 @@ describe('orquestração do matchmaking', () => {
     expect(result.current.opponent?.displayName).toBe('Adversária Real');
     expect(mocks.navigate).not.toHaveBeenCalled();
     expect(mocks.preloadMatchPresentationAssets).toHaveBeenCalledWith(
-      foundPayload.opponent,
+      { ...foundPayload.opponent, title: null },
       foundPayload.preload,
     );
 

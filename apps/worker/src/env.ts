@@ -14,6 +14,8 @@ export interface Env {
   QUESTION_IMAGES: R2Bucket;
   QUESTIONS_DB: D1Database;
   SOCIAL_REALTIME_HUB: DurableObjectNamespace;
+  /** Mínimo de jogadores qualificados para um tema ter títulos de Top (padrão 30). */
+  TOP_TITLE_MIN_PLAYERS?: string;
   TICKET_BROKER: DurableObjectNamespace;
   /** Limite por IP só de escrita (POST/PUT/PATCH/DELETE). */
   WRITE_RATE_LIMITER?: RateLimit;

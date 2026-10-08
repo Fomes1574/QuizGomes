@@ -260,9 +260,10 @@ function assertFinalSchema(scenario) {
 
   const appliedMigrations = query(scenario, 'SELECT name FROM d1_migrations ORDER BY id');
   assert(
-    appliedMigrations.at(-1)?.name === '0021_hidden_themes_and_categories.sql',
-    `${scenario.name}: 0021 de temas e categorias ocultos não foi registrada como última migration`,
+    appliedMigrations.at(-1)?.name === '0022_theme_achievements_and_titles.sql',
+    `${scenario.name}: 0022 de conquistas por tema não foi registrada como última migration`,
   );
+  assertThemeAchievementsSchema(scenario);
   assertHiddenCatalogSchema(scenario);
   assertAvatarObjectStorageSchema(scenario);
   assertRetentionAndAchievementsSchema(scenario);
@@ -968,6 +969,37 @@ function assertHiddenCatalogSchema(scenario) {
 }
 
 /** @param {MigrationScenario} scenario */
+function assertThemeAchievementsSchema(scenario) {
+  const progressColumns = query(scenario, 'PRAGMA table_info(user_theme_progress)').map(({ name }) => name);
+  assert(
+    ['user_id', 'theme_id', 'completed_ranked', 'win_streak', 'unbeaten_matches', 'unbeaten_wins', 'best_division', 'last_match_id']
+      .every((column) => progressColumns.includes(column)),
+    `${scenario.name}: colunas de user_theme_progress ausentes`,
+  );
+  const achievementColumns = query(scenario, 'PRAGMA table_info(user_theme_achievements)').map(({ name }) => name);
+  assert(
+    ['user_id', 'theme_id', 'achievement_id', 'unlocked_at'].every((column) => achievementColumns.includes(column)),
+    `${scenario.name}: colunas de user_theme_achievements ausentes`,
+  );
+  const profileColumns = query(scenario, 'PRAGMA table_info(user_profiles)');
+  const auto = profileColumns.find(({ name }) => name === 'top_title_auto');
+  assert(auto !== undefined && auto.notnull === 1 && auto.dflt_value === '1', `${scenario.name}: top_title_auto precisa nascer ligado`);
+  for (const column of ['equipped_top_theme_id', 'pinned_achievements']) {
+    const found = profileColumns.find(({ name }) => name === column);
+    assert(found !== undefined && found.notnull === 0, `${scenario.name}: user_profiles.${column} precisa ser opcional`);
+  }
+  const probeId = `theme-progress-${scenario.name}`;
+  const themeRow = query(scenario, 'SELECT id FROM themes LIMIT 1')[0];
+  const themeId = typeof themeRow?.id === 'string' ? themeRow.id : undefined;
+  if (themeId !== undefined) {
+    executeSql(scenario, `INSERT INTO users (id, firebase_uid) VALUES ('${probeId}', 'firebase-${probeId}');`);
+    executeSql(scenario, `INSERT INTO user_theme_progress (user_id, theme_id, unbeaten_matches, unbeaten_wins) VALUES ('${probeId}', '${themeId}', 1, 2);`, true);
+    executeSql(scenario, `INSERT INTO user_theme_progress (user_id, theme_id, best_division) VALUES ('${probeId}', '${themeId}', 40);`, true);
+    executeSql(scenario, `DELETE FROM users WHERE id = '${probeId}';`);
+  }
+}
+
+/** @param {MigrationScenario} scenario */
 function assertFriendQueueAlertsSchema(scenario) {
   const alertColumns = query(scenario, 'PRAGMA table_info(friend_queue_alerts)').map(({ name }) => name);
   assert(
@@ -1358,6 +1390,10 @@ try {
     migrationNames.includes('0021_hidden_themes_and_categories.sql'),
     'Migration Core 0021 de temas e categorias ocultos ausente',
   );
+  assert(
+    migrationNames.includes('0022_theme_achievements_and_titles.sql'),
+    'Migration Core 0022 de conquistas por tema ausente',
+  );
   assert(questionMigrationNames.includes('0003_expand_synthetic_smoke_test.sql'), 'Migration Questions 0003 ausente');
   assert(
     questionMigrationNames.includes('0004_question_editorial_versioning.sql'),
@@ -1425,6 +1461,7 @@ try {
       '0019_avatar_object_storage.sql',
       '0020_retention_and_achievements.sql',
       '0021_hidden_themes_and_categories.sql',
+      '0022_theme_achievements_and_titles.sql',
     ].includes(name)),
   );
   console.log('Validando upgrade D1 exato de 0003 para 0004...');
@@ -1593,6 +1630,17 @@ try {
     (query(upgradeDatabase, 'SELECT COUNT(*) AS total FROM themes WHERE hidden_at IS NULL')[0]?.total ?? -1) === visibleBefore,
     'upgrade-0021: temas existentes precisam continuar visíveis',
   );
+  console.log('Validando upgrade D1 atual exato de 0021 para 0022 conquistas por tema...');
+  const profilesBefore = query(upgradeDatabase, 'SELECT COUNT(*) AS total FROM user_profiles')[0]?.total ?? 0;
+  await copyFile(
+    join(coreSourceMigrationsDirectory, '0022_theme_achievements_and_titles.sql'),
+    join(upgradeDatabase.migrationsDirectory, '0022_theme_achievements_and_titles.sql'),
+  );
+  applyMigrations(upgradeDatabase);
+  assert(
+    (query(upgradeDatabase, 'SELECT COUNT(*) AS total FROM user_profiles WHERE top_title_auto = 1')[0]?.total ?? -1) === profilesBefore,
+    'upgrade-0022: perfis existentes precisam nascer com Top automático ligado',
+  );
   assertFinalSchema(upgradeDatabase);
   console.log('Validando rollback transacional de migration com erro...');
   await assertRollback(upgradeDatabase);
@@ -1705,7 +1753,7 @@ try {
   applyMigrations(upgradeQuestions);
   assertQuestionImageKeyIndex(upgradeQuestions);
 
-  console.log('Migrations D1 aprovadas: parser Wrangler, bancos vazios, upgrades Core 0003→0004→0005→0006→0007→0008→0009→0010→0011→0012→0013→0014→0015→0016→0017→0018→0019→0020→0021 e Questions 0002→0003→0004→0005→0006→0007→0008→0009→0010, invariantes sociais, de desafio, de ledger de conclusão, de denúncia, editoriais, pool único por tema, índices de exportação, de foto e de limpeza, rollback e schemas finais.');
+  console.log('Migrations D1 aprovadas: parser Wrangler, bancos vazios, upgrades Core 0003→0004→0005→0006→0007→0008→0009→0010→0011→0012→0013→0014→0015→0016→0017→0018→0019→0020→0021→0022 e Questions 0002→0003→0004→0005→0006→0007→0008→0009→0010, invariantes sociais, de desafio, de ledger de conclusão, de denúncia, editoriais, pool único por tema, índices de exportação, de foto e de limpeza, rollback e schemas finais.');
 } finally {
   await rm(temporaryRoot, { force: true, recursive: true });
 }

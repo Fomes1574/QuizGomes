@@ -1,4 +1,10 @@
-import { RECONNECT_GRACE_MS, questionsForMode, type LiveMatchProjection, type MatchResult } from '@quiz-gomes/domain';
+import {
+  RECONNECT_GRACE_MS,
+  questionsForMode,
+  type LiveMatchProjection,
+  type MatchResult,
+  type MatchThemeRewards,
+} from '@quiz-gomes/domain';
 import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { Button } from '../components/button.js';
@@ -46,6 +52,7 @@ interface RoomMessage {
   match?: LiveMatchProjection;
   message?: string;
   result?: TerminalResult;
+  rewards?: MatchThemeRewards;
   type?: string;
   voidReason?: string;
 }
@@ -90,6 +97,7 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
     result: TerminalResult;
     voidReason?: string;
   } | null>(null);
+  const [themeRewards, setThemeRewards] = useState<MatchThemeRewards | null>(null);
   const [countdown, setCountdown] = useState<number | null>(null);
   const [localConnectionState, setLocalConnectionState] = useState<LocalConnectionState>('CONNECTED');
   const [pauseVisual, setPauseVisual] = useState<PauseVisualState | null>(null);
@@ -322,6 +330,10 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
           return;
         }
         setError(payload.message ?? 'A sala rejeitou esta ação.');
+        return;
+      }
+      if (payload.type === 'MATCH_REWARDS') {
+        if (payload.rewards !== undefined) setThemeRewards(payload.rewards);
         return;
       }
       if ((payload.type === 'MATCH_FINISHED' || payload.type === 'MATCH_VOID') && payload.result !== undefined) {
@@ -674,6 +686,7 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
           ? `${window.location.origin}${matchOrigin.returnTo.split('?')[0] ?? ''}`
           : window.location.origin}
         themeName={typeof matchOrigin?.themeName === 'string' ? matchOrigin.themeName.slice(0, 80) : null}
+        themeRewards={themeRewards}
         opponent={{
           customAvatarUrl: projection?.opponent.customAvatarUrl ?? null,
           frameId: projection?.opponent.frameId ?? null,
@@ -681,6 +694,7 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
           photoUrl: projection?.opponent.photoUrl ?? null,
           result: opponent.result,
           score: opponent.score,
+          title: projection?.opponent.title ?? null,
         }}
         questions={seenQuestions}
         viewer={{
@@ -690,6 +704,7 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
           photoUrl: projection?.viewer.photoUrl ?? null,
           result: viewer.result,
           score: viewer.score,
+          title: projection?.viewer.title ?? null,
         }}
         voidReason={terminal.voidReason}
         xpDelta={viewer.xpDelta}
@@ -820,6 +835,7 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
             displayName: lobbyDuel.opponent.displayName,
             frameId: lobbyDuel.opponent.frameId,
             photoUrl: lobbyDuel.opponent.photoUrl,
+            title: lobbyDuel.opponent.title ?? null,
           }}
           roomId={sessionId}
           viewer={{
@@ -827,6 +843,7 @@ export function LiveMatchPage({ variant = 'match' }: { variant?: 'challenge' | '
             displayName: lobbyDuel.viewer.displayName,
             frameId: lobbyDuel.viewer.frameId,
             photoUrl: lobbyDuel.viewer.photoUrl,
+            title: lobbyDuel.viewer.title ?? null,
           }}
         />
       )}

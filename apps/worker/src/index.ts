@@ -57,6 +57,7 @@ import { SocialRepository } from './repositories/social-repository.js';
 import { QuestionImportService } from './services/question-import-service.js';
 import { questionExportCsvHeader, questionExportCsvRow } from './services/question-export.js';
 import { parseQuestionsCsv } from './services/question-csv.js';
+import { MAX_PINNED_TITLES, titleShowcase, updateTitleShowcase } from './services/title-showcase-service.js';
 import { DirectChallengeService } from './services/direct-challenge-service.js';
 import { inviteLinkPreview, siteLinkPreview, themeLinkPreview } from './http/link-preview.js';
 import { ThemeSuggestionRepository } from './repositories/theme-suggestion-repository.js';
@@ -534,6 +535,21 @@ async function profileFrameRoute(request: Request, env: Env): Promise<Response> 
   const equipped = await new AchievementRepository(env.CORE_DB).equipFrame(profile.userId, parsed.data.frameId);
   if (!equipped) throw new ApiError(403, 'FRAME_NOT_OWNED', 'Essa moldura ainda não é sua.');
   return json({ equippedFrameId: parsed.data.frameId });
+}
+
+/** Vitrine de títulos: o que a pessoa tem, o que falta e o que ela escolheu mostrar. */
+async function profileTitlesRoute(request: Request, env: Env): Promise<Response> {
+  const profile = await profileOf(request, env);
+  if (request.method === 'GET') return json(await titleShowcase(env, profile.userId));
+  if (request.method !== 'PUT') throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Método não permitido.');
+  const parsed = z.object({
+    autoTop: z.boolean().optional(),
+    equippedId: z.string().min(3).max(200).nullable().optional(),
+    pins: z.array(z.string().min(3).max(200)).max(MAX_PINNED_TITLES).optional(),
+  }).strict().safeParse(await readJson(request));
+  if (!parsed.success) throw validationError(parsed.error);
+  await updateTitleShowcase(env, profile.userId, parsed.data);
+  return json(await titleShowcase(env, profile.userId));
 }
 
 /** Aviso opcional "sua ofensiva acaba hoje". */
@@ -2170,6 +2186,7 @@ async function apiRoute(request: Request, env: Env, url: URL, context: Execution
   if (url.pathname === '/api/profile/summary') return profileSummaryRoute(request, env);
   if (url.pathname === '/api/profile/celebrations') return profileCelebrationsRoute(request, env);
   if (url.pathname === '/api/profile/frame') return profileFrameRoute(request, env);
+  if (url.pathname === '/api/profile/titles') return profileTitlesRoute(request, env);
   if (url.pathname === '/api/profile/streak-reminder') return profileStreakReminderRoute(request, env);
   if (url.pathname === '/api/profile/avatar') return profileAvatarRoute(request, env);
   if (url.pathname === '/api/profile/account') return profileAccountRoute(request, env);

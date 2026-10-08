@@ -11,6 +11,7 @@ export * from './progression/ranking.js';
 export * from './progression/streak.js';
 export * from './progression/achievements.js';
 export * from './progression/xp.js';
+export * from './progression/theme-achievements.js';
 export * from './questions/pool-state.js';
 export * from './questions/uniform-random.js';
 export * from './reports/report.js';

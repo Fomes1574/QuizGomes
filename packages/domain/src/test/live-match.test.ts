@@ -170,6 +170,7 @@ describe('partida simultânea autoritativa', () => {
       frameId: 'frame-real',
       knowledge: 5_000,
       photoUrl: null,
+      title: null,
     });
     expect(presentation.preload.firstQuestion.id).toBe('q-1');
     expect(JSON.stringify(presentation)).not.toContain('correctOption');

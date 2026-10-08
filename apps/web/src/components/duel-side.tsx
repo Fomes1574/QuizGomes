@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { prefersReducedMotion, type DuelSeat } from '../lib/match-handoff.js';
 import { Avatar } from './avatar.js';
 import { AvatarFrame } from './avatar-frame.js';
+import type { PlayerTitle } from '@quiz-gomes/domain';
+import { PlayerTitleText } from './player-title.js';
 import { RankBadge, rankTierSuffix } from './rank-badge.js';
 
 const KNOWLEDGE_COUNT_MS = 620;
@@ -13,6 +15,7 @@ export interface DuelParticipantView {
   /** Conhecimento do tema; ausente onde a tela não tem valor autoritativo para mostrar. */
   knowledge?: number | undefined;
   photoUrl?: string | null | undefined;
+  title?: PlayerTitle | null | undefined;
 }
 
 function useCountUp(target: number, animated: boolean): number {
@@ -92,6 +95,7 @@ export function DuelSide({
         {headingId === undefined
           ? <strong className="duel-side__name">{participant.displayName}</strong>
           : <h2 className="duel-side__name" id={headingId}>{participant.displayName}</h2>}
+        <PlayerTitleText animated={variant === 'presentation'} compact={variant === 'lobby'} title={participant.title} />
         {knowledge !== undefined && (
           <>
             <RankBadge knowledge={knowledge} />

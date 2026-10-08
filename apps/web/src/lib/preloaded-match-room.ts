@@ -1,4 +1,4 @@
-import type { PublicQuestion } from '@quiz-gomes/domain';
+import type { PlayerTitle, PublicQuestion } from '@quiz-gomes/domain';
 import { apiRequest, websocketUrl } from './api.js';
 
 export interface MatchFoundOpponent {
@@ -7,6 +7,7 @@ export interface MatchFoundOpponent {
   frameId: string | null;
   knowledge: number;
   photoUrl: string | null;
+  title?: PlayerTitle | null;
 }
 
 export interface MatchFoundPreload {

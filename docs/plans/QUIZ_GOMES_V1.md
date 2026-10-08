@@ -1647,6 +1647,16 @@ Pedidos do proprietário nesta rodada: limpeza a cada 15 dias (admin 6 meses), X
 - "Como funciona o ranking?": regras (só Rankeada conta, empate não muda, sair no meio é derrota, anulada não conta, fila por divisão) e a tabela de ganho/perda de cada liga vinda do domínio. Abre no resultado e na página do tema; o cartão do tema mostra quanto falta para a próxima divisão.
 - Selos por liga com silhuetas distintas (moeda, escudo, escudo com divisa dupla, estrela, hexágono, gema, coroa, coroa com joia), reconhecíveis sem depender da cor.
 
+### 2026-10-08 — conquistas por tema, títulos e Top do tema
+
+- Migration `0022`: `user_theme_progress` (Rankeadas concluídas, sequências, maior divisão, última partida contada) e `user_theme_achievements`; no perfil, Top fixado, "Top automático" (ligado por padrão) e até três destaques. O histórico recuperável (Rankeadas concluídas e divisão atual) é preenchido na própria migration; as conquistas que ele prova são gravadas pelo Worker na primeira abertura da vitrine, com as mesmas regras das partidas novas.
+- Catálogo único para todos os temas (tema novo já nasce com ele): estreia vencendo, primeira subida, cada liga, 10/50/100/500 Rankeadas, 5 e 10 vitórias seguidas, invicto (10 sem perder, 5+ vitórias), derrubar gigante (2+ divisões acima) e atropelo (dobro dos pontos, mínimo 100). Abandono zera as sequências e não conta como concluída; anulada por falha da sala não conta.
+- A sala da Rankeada conta a partida uma única vez (`last_match_id`), mede o Top antes e depois e manda `MATCH_REWARDS` logo após o resultado (guardado no DO para quem reconecta). Falha aqui nunca afeta o resultado.
+- Top do tema: Top 10 entre quem tem 5+ Rankeadas concluídas e Conhecimento > 0, só com 30+ qualificados (`TOP_TITLE_MIN_PLAYERS`, configurável). Empate divide a posição. Consultas limitadas (`LIMIT`), nunca varrem o ranking. Com poucos usuários, o Top simplesmente não aparece ainda.
+- Título sob o nome decidido pelo servidor no início da partida: Top do tema da partida (automático) → Top fixado → título permanente → nenhum. Aparece em "Jogador encontrado", no lobby, no resultado e no Perfil. Ouro com coroa, prata e bronze com medalha; a luz passando só onde o título é o assunto (duelo e perfil).
+- Perfil ganhou a vitrine: prévia de como os outros te veem, três destaques (estrela), "Top automático", "X de Y" com anel, "Quase lá" com barras, filtros Todos/Top/Ranking/Feitos e um toque para equipar. API `GET/PUT /api/profile/titles` só aceita o que a pessoa tem agora.
+- Resultado: "Você é o Top 1 em X", "Você subiu para #3 em X", "Sua posição agora é #2 em X", "Você saiu do Top 10 em X" e os títulos liberados na partida.
+
 ## Critério de saída desta execução
 
 - Milestones 8 e 8.5 aprovados fisicamente e congelados;

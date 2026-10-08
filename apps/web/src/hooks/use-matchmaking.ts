@@ -1,4 +1,4 @@
-import type { MatchMode, PublicQuestion } from '@quiz-gomes/domain';
+import { parsePlayerTitle, type MatchMode, type PlayerTitle, type PublicQuestion } from '@quiz-gomes/domain';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../features/auth-context.js';
@@ -65,6 +65,7 @@ interface MatchFoundMessage {
   preload: MatchFoundPreload;
   roomId: string;
   type: 'MATCH_FOUND';
+  viewerTitle: PlayerTitle | null;
 }
 
 interface RealtimeMessage {
@@ -74,6 +75,7 @@ interface RealtimeMessage {
   roomId?: string;
   timeoutAt?: number;
   type?: string;
+  viewer?: { title?: unknown };
 }
 
 interface MatchOrigin {
@@ -114,10 +116,11 @@ function matchFoundMessage(message: RealtimeMessage): MatchFoundMessage | null {
     (opponent.frameId !== null && typeof opponent.frameId !== 'string') ||
     !Number.isFinite(opponent.knowledge) || !isQuestion(firstQuestion)) return null;
   return {
-    opponent,
+    opponent: { ...opponent, title: parsePlayerTitle(opponent.title) },
     preload: { firstQuestion },
     roomId: message.roomId,
     type: 'MATCH_FOUND',
+    viewerTitle: parsePlayerTitle(message.viewer?.title),
   };
 }
 
@@ -138,6 +141,7 @@ export function useMatchmaking() {
   const [timeoutAt, setTimeoutAt] = useState<number | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [opponent, setOpponent] = useState<MatchFoundOpponent | null>(null);
+  const [viewerTitle, setViewerTitle] = useState<PlayerTitle | null>(null);
   const [preparing, setPreparing] = useState(false);
 
   const setStatus = useCallback((next: MatchmakingStatus) => {
@@ -224,6 +228,7 @@ export function useMatchmaking() {
     const generation = ++presentationGenerationRef.current;
     preparedRoomRef.current = message.roomId;
     setOpponent(message.opponent);
+    setViewerTitle(message.viewerTitle);
     setPreparing(false);
     setTimeoutAt(null);
     setStatus('presenting-opponent');
@@ -379,5 +384,5 @@ export function useMatchmaking() {
     void start(last.themeId, last.mode, last.themeSlug, last.themeName, last.rematch === undefined ? {} : { rematch: last.rematch });
   }, [start]);
 
-  return { cancel, elapsedSeconds, error, opponent, paused: status === 'paused', preparing, resume, start, status, timeoutAt };
+  return { cancel, elapsedSeconds, error, opponent, paused: status === 'paused', preparing, resume, start, status, timeoutAt, viewerTitle };
 }

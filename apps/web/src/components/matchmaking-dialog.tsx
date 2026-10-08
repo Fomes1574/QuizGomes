@@ -277,6 +277,7 @@ export function MatchmakingDialog({
                       frameId: opponent.frameId,
                       knowledge: opponent.knowledge,
                       photoUrl: opponent.photoUrl,
+                      title: opponent.title ?? null,
                     }}
                     seat="opponent"
                     tag="Adversário"

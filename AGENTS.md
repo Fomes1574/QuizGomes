@@ -14,6 +14,8 @@ Estas regras valem para toda alteração neste repositório.
 - Rankeada só existe na fila pública simultânea, contra adversário sorteado. Nada que junte amigos (desafio ou revanche) é Rankeado.
 - Revanche imediata: só os dois jogadores de uma partida ao vivo concluída há até 3 min, fila privada da dupla (mesmo tema, sempre Normal mesmo após Rankeada, 30 s, fora da contagem pública da fila).
 - Conquistas (7 dias, cada 100 dias, 365 e 730 dias de ofensiva, dia completo de missões, recorde batido) dão molduras equipáveis; nunca são vendidas nem apagadas.
+- Conquistas por tema (só a Rankeada conta): primeira vitória, primeira subida de divisão, cada liga de Bronze a Desafiante, 10/50/100/500 Rankeadas concluídas, 5 e 10 vitórias seguidas, 10 sem perder com 5+ vitórias, vencer alguém 2+ divisões acima e vencer com o dobro dos pontos (mínimo 100). Cada uma vira título equipável ("Ouro em Lost"); nunca somem. Conquistas gerais também viram título.
+- Top do tema: Top 10 por Conhecimento entre quem tem 5+ Rankeadas concluídas e Conhecimento > 0, só em tema com pelo menos 30 qualificados (`TOP_TITLE_MIN_PLAYERS`). Empate divide a posição. Top 1 ouro com coroa, Top 2 prata, Top 3 bronze; brilho animado só em duelo e perfil, nunca em lista. É distinção atual, não conquista: some ao sair do Top 10 e o título volta ao permanente escolhido. "Top automático" mostra o Top do tema da partida. Vitrine com até 3 destaques. O servidor decide o título; o cliente nunca o informa.
 - Empates não têm desempate. Normal (Casual) nunca altera Conhecimento; somente a Rankeada altera.
 - Não inventar regras de jogo, conquistas, cosméticos, monetização ou catálogo editorial.
 

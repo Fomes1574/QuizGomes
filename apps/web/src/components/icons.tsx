@@ -1,6 +1,6 @@
 import type { ReactNode, SVGProps } from 'react';
 
-export type IconName = 'add' | 'back' | 'bolt' | 'check' | 'close' | 'copy' | 'create' | 'crown' | 'dice' | 'flag' | 'flame' | 'moon' | 'play' | 'profile' | 'search' | 'share' | 'social' | 'sound' | 'sparkle' | 'sun' | 'themes' | 'vibrate';
+export type IconName = 'add' | 'back' | 'bolt' | 'check' | 'close' | 'copy' | 'create' | 'crown' | 'dice' | 'flag' | 'flame' | 'moon' | 'play' | 'profile' | 'search' | 'share' | 'social' | 'sound' | 'sparkle' | 'star' | 'sun' | 'themes' | 'vibrate';
 
 const paths: Record<IconName, ReactNode> = {
   add: <path d="M12 5v14M5 12h14" />,
@@ -22,6 +22,7 @@ const paths: Record<IconName, ReactNode> = {
   social: <><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" /></>,
   sound: <><path d="M4 9.5v5h3.5L12 19V5L7.5 9.5H4Z" /><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11" /></>,
   sparkle: <path d="M12 3c.6 4.5 1.9 6.9 6.5 8-4.6 1.1-5.9 3.5-6.5 8-.6-4.5-1.9-6.9-6.5-8C10.1 9.9 11.4 7.5 12 3Z" />,
+  star: <path d="m12 3.5 2.6 5.4 5.9.8-4.3 4.1 1 5.9-5.2-2.8-5.2 2.8 1-5.9-4.3-4.1 5.9-.8L12 3.5Z" />,
   sun: <><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.66 6.34l1.41-1.41" /></>,
   themes: <><rect x="3" y="3" width="7" height="7" rx="2" /><rect x="14" y="3" width="7" height="7" rx="2" /><rect x="3" y="14" width="7" height="7" rx="2" /><rect x="14" y="14" width="7" height="7" rx="2" /></>,
   vibrate: <><rect x="8" y="3" width="8" height="18" rx="2.5" /><path d="M4 8v8M20 8v8M1.5 10.5v3M22.5 10.5v3" /></>,

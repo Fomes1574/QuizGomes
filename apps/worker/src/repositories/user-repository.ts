@@ -322,10 +322,13 @@ export class UserRepository {
       this.db.prepare('DELETE FROM theme_rankings WHERE user_id = ?1').bind(id),
       this.db.prepare('DELETE FROM theme_personal_records WHERE user_id = ?1').bind(id),
       this.db.prepare('DELETE FROM user_custom_avatars WHERE user_id = ?1').bind(id),
+      this.db.prepare('DELETE FROM user_theme_progress WHERE user_id = ?1').bind(id),
+      this.db.prepare('DELETE FROM user_theme_achievements WHERE user_id = ?1').bind(id),
       this.db.prepare(
         `UPDATE user_profiles
             SET display_name = 'Jogador removido', photo_url = NULL, public_id = ?2,
                 equipped_frame_id = NULL, equipped_title_id = NULL,
+                equipped_top_theme_id = NULL, pinned_achievements = NULL,
                 profile_version = profile_version + 1, updated_at = CURRENT_TIMESTAMP
           WHERE user_id = ?1`,
       ).bind(id, `#DEL${crypto.randomUUID().replaceAll('-', '').slice(0, 12).toUpperCase()}`),

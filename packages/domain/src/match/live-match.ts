@@ -2,6 +2,7 @@ import { RECONNECT_GRACE_MS } from './connection.js';
 import { publicQuestion, type PublicQuestion, type SecretQuestion } from './projection.js';
 import { questionsForMode } from './rules.js';
 import { QUESTION_DURATION_MS, remainingAt, scoreAnswer } from './scoring.js';
+import type { PlayerTitle } from '../progression/theme-achievements.js';
 import type { MatchMode } from '../types.js';
 
 export const LIVE_PREPARATION_MS = 3_000;
@@ -44,6 +45,10 @@ export interface LivePlayer {
   roundReady: boolean;
   score: number;
   seat: LiveSeat;
+  /** Posição no Top do tema desta partida no início (null fora do Top 10). */
+  themeTopPosition?: number | null;
+  /** Título sob o nome, decidido pelo servidor no início da partida. */
+  title?: PlayerTitle | null;
   userId: string;
 }
 
@@ -511,6 +516,7 @@ export interface LiveMatchProjection {
     frameId: string | null;
     photoUrl: string | null;
     score: number;
+    title?: PlayerTitle | null;
   };
   /**
    * Exclusivo da primeira metade do desafio assíncrono: o adversário ainda não
@@ -546,6 +552,7 @@ export interface LiveMatchProjection {
     photoUrl: string | null;
     score: number;
     seat: LiveSeat;
+    title?: PlayerTitle | null;
   };
 }
 
@@ -556,10 +563,13 @@ export interface LiveMatchPresentationProjection {
     frameId: string | null;
     knowledge: number;
     photoUrl: string | null;
+    title?: PlayerTitle | null;
   };
   preload: {
     firstQuestion: PublicQuestion;
   };
+  /** O próprio título, para o lado "Você" da apresentação. */
+  viewer: { title: PlayerTitle | null };
 }
 
 export function projectLiveMatchPresentationForSeat(
@@ -576,9 +586,11 @@ export function projectLiveMatchPresentationForSeat(
       frameId: opponent.frameId,
       knowledge: opponent.knowledgeBefore,
       photoUrl: opponent.photoUrl,
+      title: opponent.title ?? null,
     },
     // Só a foto e o enunciado: as alternativas nunca saem antes da rodada.
     preload: { firstQuestion: publicQuestion(firstQuestion, false) },
+    viewer: { title: state.players[playerIndex(viewerSeat)].title ?? null },
   };
 }
 
@@ -621,6 +633,7 @@ export function projectLiveMatchForSeat(
       frameId: opponent.frameId,
       photoUrl: opponent.photoUrl,
       score: opponent.score,
+      title: opponent.title ?? null,
     },
     phase: state.phase,
     serverNow: nowMs,
@@ -631,6 +644,7 @@ export function projectLiveMatchForSeat(
       photoUrl: viewer.photoUrl,
       score: viewer.score,
       seat: viewerSeat,
+      title: viewer.title ?? null,
     },
   };
   if (phaseHasCurrentQuestion(state)) {

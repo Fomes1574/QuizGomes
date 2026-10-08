@@ -1,4 +1,13 @@
-import { nextDivisionGoal, rankChange, rankedKnowledgeValues, type MatchResult } from '@quiz-gomes/domain';
+import {
+  nextDivisionGoal,
+  rankChange,
+  rankedKnowledgeValues,
+  topChangeMessage,
+  topTitleTier,
+  type MatchResult,
+  type MatchThemeRewards,
+  type PlayerTitle,
+} from '@quiz-gomes/domain';
 import { useEffect, useState, type CSSProperties } from 'react';
 import { feedback, prefersReducedMotion } from '../lib/feedback.js';
 import type { SeenQuestion } from '../lib/reports.js';
@@ -7,6 +16,7 @@ import { AvatarFrame } from './avatar-frame.js';
 import { Button } from './button.js';
 import { Icon } from './icons.js';
 import { Logo } from './logo.js';
+import { PlayerTitleText } from './player-title.js';
 import { rankTierClass } from './rank-badge.js';
 import { RankEmblem } from './rank-emblem.js';
 import { RankingRulesDialog } from './ranking-rules-dialog.js';
@@ -21,6 +31,7 @@ interface ResultParticipant {
   photoUrl?: string | null;
   result: MatchResult;
   score: number;
+  title?: PlayerTitle | null;
 }
 
 interface KnowledgeProgressStyle extends CSSProperties {
@@ -85,6 +96,38 @@ function RankChangeBanner({ knowledgeAfter, knowledgeBefore }: { knowledgeAfter:
         {copy.text !== '' && <span>{copy.text}</span>}
       </span>
     </div>
+  );
+}
+
+/**
+ * O que a Rankeada mudou fora do placar: Top do tema e títulos novos. Chega
+ * um instante depois do resultado, então entra sem empurrar o resto.
+ */
+function ThemeRewardsPanel({ rewards }: { rewards: MatchThemeRewards }) {
+  const topMessage = topChangeMessage(rewards.top, rewards.themeName);
+  if (topMessage === null && rewards.achievements.length === 0) return null;
+  const topStyle = rewards.top.after === null ? null : topTitleTier(rewards.top.after);
+  return (
+    <section aria-live="polite" className="match-rewards">
+      {topMessage !== null && (
+        <p className={`match-rewards__top${topStyle === null ? ' match-rewards__top--out' : ` match-rewards__top--${topStyle}`}`}>
+          {topStyle === null
+            ? topMessage
+            : <PlayerTitleText animated title={{ label: topMessage, style: topStyle }} />}
+        </p>
+      )}
+      {rewards.achievements.length > 0 && (
+        <div className="match-rewards__titles">
+          <small>{rewards.achievements.length === 1 ? 'Título novo' : 'Títulos novos'}</small>
+          <ul>
+            {rewards.achievements.map((achievement) => (
+              <li key={achievement.id}>{achievement.title}</li>
+            ))}
+          </ul>
+          <span>Dá pra usar no Perfil, em Títulos.</span>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -157,6 +200,7 @@ function ResultPlayer({ participant, relation }: {
       </div>
       <small>{relation}</small>
       <strong className="match-result-player__name">{participant.name}</strong>
+      <PlayerTitleText compact title={participant.title} />
       <strong className="match-result-player__score">{participant.score}<small>pontos</small></strong>
     </article>
   );
@@ -181,6 +225,7 @@ export function MatchResultScreen({
   rematch,
   shareUrl,
   themeName,
+  themeRewards,
   viewer,
   voidReason,
   xpDelta,
@@ -213,6 +258,8 @@ export function MatchResultScreen({
   shareUrl?: string | undefined;
   /** Nome do tema, só para a carta de story (texto de exibição). */
   themeName?: string | null | undefined;
+  /** Conquistas e Top do tema desta Rankeada (chega logo depois do resultado). */
+  themeRewards?: MatchThemeRewards | null | undefined;
   viewer: ResultParticipant;
   voidReason?: string | undefined;
   xpDelta: number;
@@ -261,6 +308,7 @@ export function MatchResultScreen({
         </section>
       )}
       {rankedResult && !cancelledBeforeStart && <RankChangeBanner knowledgeAfter={knowledgeAfter} knowledgeBefore={knowledgeBefore} />}
+      {themeRewards != null && !cancelledBeforeStart && <ThemeRewardsPanel rewards={themeRewards} />}
       {viewer.result === 'VOID'
         ? <p>{cancelledBeforeStart && cancelledBy !== undefined
           ? `Partida cancelada por ${cancelledBy.displayName}`

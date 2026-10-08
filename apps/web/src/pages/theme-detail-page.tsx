@@ -348,6 +348,7 @@ export function ThemeDetailPage() {
           frameId: profile.equippedFrameId,
           knowledge: data.personal?.knowledge ?? 0,
           photoUrl: profile.photoUrl,
+          title: matchmaking.viewerTitle,
         }}
       />}
       {rulesOpen && <RankingRulesDialog onClose={() => setRulesOpen(false)} />}
