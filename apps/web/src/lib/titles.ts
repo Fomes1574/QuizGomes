@@ -5,6 +5,8 @@ export interface TitleShowcaseData {
   autoTop: boolean;
   current: PlayerTitle | null;
   equippedId: string | null;
+  /** Título escolhido como objetivo (com o progresso, se ainda não saiu). */
+  goal?: ShowcaseTitle | null;
   owned: number;
   pins: string[];
   possible: number;
@@ -40,6 +42,7 @@ export function titleGlyph(title: Pick<ShowcaseTitle, 'id' | 'position'>):
   | { kind: 'text'; value: string }
   | { kind: 'tier'; tier: Tier } {
   if (title.position !== undefined) return { kind: 'text', value: `#${title.position}` };
+  if (title.id.startsWith('N:')) return { kind: 'text', value: title.id.slice(2) };
   const achievement = title.id.slice(title.id.lastIndexOf(':') + 1);
   const tier = TIER_IDS[achievement];
   if (tier !== undefined && TIERS.includes(tier)) return { kind: 'tier', tier };

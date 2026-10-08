@@ -1965,3 +1965,23 @@ label.button:has(input:focus-visible) { outline: 3px solid var(--focus); outline
 .score-tug--ahead small { color: var(--correct); }
 @keyframes score-tug-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .score-tug { animation: none; } .score-tug__bar i { transition: none; } }
+
+/* ---------- Trilha de títulos do tema ---------- */
+.theme-trail { display: grid; gap: 12px; padding: 18px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); }
+.theme-trail__head { display: flex; align-items: end; justify-content: space-between; gap: 12px; }
+.theme-trail__head h2 { margin: 4px 0 0; font-size: 1.1rem; }
+.theme-trail__count { color: var(--text-secondary); font-size: .78rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+.theme-trail__next { display: grid; gap: 6px; padding: 12px 14px; border: 1px solid color-mix(in srgb, var(--brand) 25%, var(--border)); border-radius: 16px; background: color-mix(in srgb, var(--brand) 5%, var(--surface)); }
+.theme-trail__next small { color: var(--text-secondary); font-size: .72rem; font-weight: 700; }
+.theme-trail__next--done { margin: 0; color: var(--text-secondary); font-weight: 700; }
+.theme-trail__path { display: flex; gap: 0; margin: 0; padding: 4px 2px 6px; overflow-x: auto; list-style: none; scrollbar-width: thin; }
+.theme-trail__step { position: relative; display: grid; flex: 0 0 74px; justify-items: center; gap: 6px; text-align: center; }
+.theme-trail__step::before { position: absolute; top: 13px; left: -50%; width: 100%; height: 3px; background: var(--border); content: ''; }
+.theme-trail__step:first-child::before { display: none; }
+.theme-trail__step.is-done::before, .theme-trail__step.is-next::before { background: var(--brand); }
+.theme-trail__dot { position: relative; z-index: 1; display: grid; width: 28px; height: 28px; place-items: center; border: 2px solid var(--border-strong); border-radius: 50%; color: var(--text-secondary); background: var(--surface); font-size: .8rem; font-weight: 900; }
+.theme-trail__dot svg { width: 15px; height: 15px; color: #e2a400; fill: currentColor; }
+.theme-trail__step.is-done .theme-trail__dot { border-color: var(--brand); color: var(--text-on-brand); background: var(--brand); }
+.theme-trail__step.is-next .theme-trail__dot { border-color: var(--brand); box-shadow: 0 0 0 4px color-mix(in srgb, var(--brand) 18%, transparent); }
+.theme-trail__label { color: var(--text-secondary); font-size: .66rem; font-weight: 700; line-height: 1.2; }
+.theme-trail__step.is-done .theme-trail__label, .theme-trail__step.is-next .theme-trail__label { color: var(--text-primary); }

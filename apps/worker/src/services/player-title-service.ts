@@ -1,5 +1,8 @@
 import {
+  gameWeekKey,
   globalAchievementTitle,
+  levelProgress,
+  levelTitle,
   parseTitleId,
   themeAchievementTitle,
   themeAchievementTitleStyle,
@@ -12,9 +15,11 @@ import {
 import type { Env } from '../env.js';
 import { TOP_TITLE_DEFAULT_MIN_PLAYERS, ThemeAchievementRepository } from '../repositories/theme-achievement-repository.js';
 import { PLAYABLE_THEME_SQL } from '../repositories/theme-repository.js';
+import { WeeklyMissionRepository } from '../repositories/weekly-mission-repository.js';
 
 interface TitlePreferences {
   equipped_title_id: string | null;
+  total_xp: number;
   equipped_top_theme_id: string | null;
   top_title_auto: number;
 }
@@ -59,7 +64,7 @@ export async function resolvePlayerTitle(
 ): Promise<PlayerTitle | null> {
   const db = env.CORE_DB;
   const preferences = await db.prepare(
-    'SELECT equipped_title_id, equipped_top_theme_id, top_title_auto FROM user_profiles WHERE user_id = ?1',
+    'SELECT equipped_title_id, equipped_top_theme_id, top_title_auto, total_xp FROM user_profiles WHERE user_id = ?1',
   ).bind(userId).first<TitlePreferences>();
   if (preferences === null) return null;
   const repository = themeAchievements(env);
@@ -74,6 +79,10 @@ export async function resolvePlayerTitle(
   if (preferences.equipped_title_id === null) return null;
   const parsed = parseTitleId(preferences.equipped_title_id);
   if (parsed === null) return null;
+  if (parsed.kind === 'LEVEL') {
+    const label = levelTitle(parsed.level);
+    return label === null || levelProgress(preferences.total_xp).level < parsed.level ? null : { label, style: 'feat' };
+  }
   if (parsed.kind === 'GLOBAL') {
     const owned = await db.prepare('SELECT 1 FROM user_achievements WHERE user_id = ?1 AND achievement_id = ?2')
       .bind(userId, parsed.achievementId).first();
@@ -89,6 +98,8 @@ export async function resolvePlayerTitle(
 }
 
 export interface RankedRewardInput {
+  /** Acertos desta pessoa na partida (para a missão semanal). */
+  correctAnswers: number;
   outcome: RankedOutcome;
   topBefore: number | null;
   userId: string;
@@ -104,6 +115,7 @@ export async function recordRankedRewards(
   matchId: string,
   themeId: string,
   players: readonly RankedRewardInput[],
+  nowMs = Date.now(),
 ): Promise<Map<string, MatchThemeRewards>> {
   const repository = themeAchievements(env);
   const name = await themeName(env.CORE_DB, themeId);
@@ -113,6 +125,17 @@ export async function recordRankedRewards(
     earned: await repository.recordRanked(player.userId, themeId, matchId, player.outcome),
     player,
   })));
+  // Missões semanais andam junto, pela mesma guarda: partida já contada não volta.
+  const weekKey = gameWeekKey(nowMs);
+  const weekly = new WeeklyMissionRepository(env.CORE_DB);
+  for (const { earned, player } of recorded) {
+    if (earned === null || player.outcome.result === 'ABANDONED') continue;
+    try {
+      await weekly.advance(player.userId, weekKey, { correctAnswers: player.correctAnswers, won: player.outcome.result === 'WIN' });
+    } catch {
+      console.error(JSON.stringify({ code: 'WEEKLY_MISSION_RECORD_FAILED', matchId }));
+    }
+  }
   // O Top depois só faz sentido com as duas partidas já contadas.
   for (const { earned, player } of recorded) {
     if (earned === null) continue;

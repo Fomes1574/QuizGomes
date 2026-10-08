@@ -285,13 +285,48 @@ export function globalAchievementTitle(achievementId: string): string | null {
 }
 
 /**
+ * Marcos de nível que viram título (decisão do proprietário, 2026-10-08):
+ * concentrados até o nível 300, onde a maioria vai chegar; depois disso,
+ * só o 500 e o 999 como prestígio.
+ */
+export const LEVEL_TITLES: ReadonlyArray<{ label: string; level: number }> = [
+  { label: 'Curioso', level: 5 },
+  { label: 'Aprendiz', level: 10 },
+  { label: 'Estudioso', level: 25 },
+  { label: 'Sabichão', level: 50 },
+  { label: 'Erudito', level: 75 },
+  { label: 'Enciclopédia ambulante', level: 100 },
+  { label: 'Mestre do quiz', level: 150 },
+  { label: 'Oráculo', level: 200 },
+  { label: 'Sábio', level: 250 },
+  { label: 'Lenda do QUIZ GOMES', level: 300 },
+  { label: 'Imortal', level: 500 },
+  { label: 'Nível 999', level: 999 },
+];
+
+export function levelTitle(level: number): string | null {
+  return LEVEL_TITLES.find((entry) => entry.level === level)?.label ?? null;
+}
+
+/** O próximo marco de nível acima do atual, ou null depois do 999. */
+export function nextLevelTitle(currentLevel: number): { label: string; level: number } | null {
+  return LEVEL_TITLES.find((entry) => entry.level > currentLevel) ?? null;
+}
+
+/**
  * Identificador de título escolhido pelo jogador: `T:<tema>:<conquista>`
- * para conquista de tema, `G:<conquista>` para conquista geral.
+ * para conquista de tema, `G:<conquista>` para conquista geral e
+ * `N:<nível>` para marco de nível.
  */
 export function parseTitleId(value: string):
   | { achievementId: string; kind: 'GLOBAL' }
   | { achievementId: ThemeAchievementId; kind: 'THEME'; themeId: string }
+  | { kind: 'LEVEL'; level: number }
   | null {
+  if (value.startsWith('N:')) {
+    const level = Number(value.slice(2));
+    return Number.isInteger(level) && levelTitle(level) !== null ? { kind: 'LEVEL', level } : null;
+  }
   if (value.startsWith('G:')) {
     const achievementId = value.slice(2);
     return globalAchievementTitle(achievementId) === null ? null : { achievementId, kind: 'GLOBAL' };
@@ -330,3 +365,13 @@ export function topChangeMessage(top: MatchThemeRewards['top'], themeName: strin
   if (after < before) return `Você subiu para #${after} em ${themeName}`;
   return `Sua posição agora é #${after} em ${themeName}`;
 }
+
+/**
+ * A ordem da trilha do tema: do que costuma sair primeiro ao mais difícil.
+ * Serve só para mostrar o caminho; cada conquista continua independente.
+ */
+export const THEME_TRAIL_ORDER: readonly ThemeAchievementId[] = [
+  'FIRST_WIN', 'FIRST_PROMOTION', 'TIER_BRONZE', 'PLAYED_10', 'TIER_SILVER', 'WIN_STREAK_5',
+  'TIER_GOLD', 'PLAYED_50', 'GIANT_SLAYER', 'ROUT', 'UNBEATEN_10', 'TIER_PLATINUM', 'PLAYED_100',
+  'WIN_STREAK_10', 'TIER_DIAMOND', 'TIER_MASTER', 'PLAYED_500', 'TIER_CHALLENGER',
+];

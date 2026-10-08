@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { discoveredCount, gameDayKey, nextGameDayStartMs, RECONNECT_GRACE_MS, type ChallengeRecord, type FriendPresence } from '@quiz-gomes/domain';
+import { discoveredCount, gameDayKey, gameWeekKey, nextGameDayStartMs, nextGameWeekStartMs, RECONNECT_GRACE_MS, type ChallengeRecord, type FriendPresence } from '@quiz-gomes/domain';
 import { bootstrapAdminUids, hasAdminAccess, requireAdmin, requireUser } from './auth/authorize.js';
 import { ChallengeRoom } from './durable-objects/challenge-room.js';
 import { MatchRoom } from './durable-objects/match-room.js';
@@ -57,7 +57,8 @@ import { SocialRepository } from './repositories/social-repository.js';
 import { QuestionImportService } from './services/question-import-service.js';
 import { questionExportCsvHeader, questionExportCsvRow } from './services/question-export.js';
 import { parseQuestionsCsv } from './services/question-csv.js';
-import { MAX_PINNED_TITLES, titleShowcase, updateTitleShowcase } from './services/title-showcase-service.js';
+import { MAX_PINNED_TITLES, themeTrail, titleShowcase, updateTitleShowcase, type ThemeTrailStep } from './services/title-showcase-service.js';
+import { WeeklyMissionRepository } from './repositories/weekly-mission-repository.js';
 import { playerProfile } from './services/player-profile-service.js';
 import { LEADERBOARD_SIZE, RankingRepository } from './repositories/ranking-repository.js';
 import { DirectChallengeService } from './services/direct-challenge-service.js';
@@ -475,7 +476,7 @@ async function profileSummaryRoute(request: Request, env: Env): Promise<Response
   // Leituras independentes em paralelo: o Perfil abre numa ida e volta só.
   const [
     activeStreak, bestTheme, categoryAverages, matchSummary, missions,
-    achievementList, casualSummary, frames, recentMatches, streakReminder, themeRecords,
+    achievementList, casualSummary, frames, recentMatches, streakReminder, themeRecords, weeklyMissions,
   ] = await Promise.all([
     new StreakRepository(env.CORE_DB).activeStreakWithTheme(profile.userId, dayKey),
     repository.bestTheme(profile.userId),
@@ -488,6 +489,7 @@ async function profileSummaryRoute(request: Request, env: Env): Promise<Response
     history.recentMatches(profile.userId),
     new StreakReminderRepository(env.CORE_DB).enabled(profile.userId),
     history.themeRecords(profile.userId),
+    new WeeklyMissionRepository(env.CORE_DB).list(profile.userId, gameWeekKey(nowMs)),
   ]);
   return json({
     achievements: achievementList,
@@ -503,6 +505,9 @@ async function profileSummaryRoute(request: Request, env: Env): Promise<Response
     recentMatches,
     streakReminder,
     themeRecords,
+    weeklyMissions,
+    // Segunda à 0h de Brasília.
+    weeklyResetAt: new Date(nextGameWeekStartMs(nowMs)).toISOString(),
   });
 }
 
@@ -547,6 +552,7 @@ async function profileTitlesRoute(request: Request, env: Env): Promise<Response>
   const parsed = z.object({
     autoTop: z.boolean().optional(),
     equippedId: z.string().min(3).max(200).nullable().optional(),
+    goalId: z.string().min(3).max(200).nullable().optional(),
     pins: z.array(z.string().min(3).max(200)).max(MAX_PINNED_TITLES).optional(),
   }).strict().safeParse(await readJson(request));
   if (!parsed.success) throw validationError(parsed.error);
@@ -2369,9 +2375,11 @@ async function apiRoute(request: Request, env: Env, url: URL, context: Execution
     let personal: null | {
       discoveredPercentage: number;
       knowledge: number;
+      goalId: string | null;
       position: number | null;
       rankedMatches: number;
       records: { CASUAL: number | null; RANKED: number | null };
+      trail: ThemeTrailStep[];
     } = null;
     if (request.headers.get('Authorization') !== null) {
       const identity = await requireUser(request, env);
@@ -2389,7 +2397,12 @@ async function apiRoute(request: Request, env: Env, url: URL, context: Execution
         ).bind(profile.userId, theme.id).all<{ best_score: number; mode: 'CASUAL' | 'RANKED' }>();
         const records = { CASUAL: null as number | null, RANKED: null as number | null };
         for (const row of recordRows.results) records[row.mode] = row.best_score;
-        personal = { discoveredPercentage, ...ranking, records };
+        const [trail, goal] = await Promise.all([
+          themeTrail(env, profile.userId, theme.id, theme.name),
+          env.CORE_DB.prepare('SELECT goal_title_id FROM user_profiles WHERE user_id = ?1')
+            .bind(profile.userId).first<{ goal_title_id: string | null }>(),
+        ]);
+        personal = { discoveredPercentage, ...ranking, goalId: goal?.goal_title_id ?? null, records, trail };
       }
     }
     return json({ personal, theme, topFive });

@@ -7,6 +7,7 @@ export * from './match/connection.js';
 export * from './match/result-ledger.js';
 export * from './match/live-match.js';
 export * from './progression/missions.js';
+export * from './progression/weekly-missions.js';
 export * from './progression/ranking.js';
 export * from './progression/streak.js';
 export * from './progression/achievements.js';

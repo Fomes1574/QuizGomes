@@ -735,6 +735,7 @@ export class MatchRoom {
         : penalizedSeat === player.seat ? 'ABANDONED' : null;
       if (opponent === undefined || (result !== 'WIN' && result !== 'LOSS' && result !== 'DRAW' && result !== 'ABANDONED')) return;
       inputs.push({
+        correctAnswers: 0,
         outcome: {
           knowledgeAfter: player.knowledgeAfter,
           knowledgeBefore: player.knowledgeBefore,
@@ -749,6 +750,12 @@ export class MatchRoom {
     });
     if (inputs.length === 0) return;
     try {
+      const correct = await this.env.CORE_DB.prepare(
+        'SELECT user_id, SUM(is_correct) AS correct FROM match_answers WHERE match_id = ?1 GROUP BY user_id',
+      ).bind(state.matchId).all<{ correct: number | null; user_id: string }>();
+      for (const input of inputs) {
+        input.correctAnswers = correct.results.find((row) => row.user_id === input.userId)?.correct ?? 0;
+      }
       const rewards = await recordRankedRewards(this.env, state.matchId, state.themeId, inputs);
       const stored = Object.fromEntries(rewards);
       await this.ctx.storage.put(REWARDS_KEY, stored);

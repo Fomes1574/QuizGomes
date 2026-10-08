@@ -12,6 +12,7 @@ import { RankBadge } from '../components/rank-badge.js';
 import { RankingRulesDialog } from '../components/ranking-rules-dialog.js';
 import { ThemeDetailSkeleton } from '../components/skeletons.js';
 import { ThemeArtwork } from '../components/theme-artwork.js';
+import { ThemeTrail } from '../components/theme-trail.js';
 import { useAuth } from '../features/auth-context.js';
 import { useFriendPresence, useQueueActivity } from '../features/social-context.js';
 import { useFriendChallenge } from '../hooks/use-friend-challenge.js';
@@ -295,6 +296,10 @@ export function ThemeDetailPage() {
       </div>
 
       <article className="personal-theme-card"><div><span className="eyebrow">Seu cartão</span><h2>{profile?.displayName ?? 'Entre para acompanhar'}</h2><p>{profile ? (data.personal?.rankedMatches ? personalGoalText(data.personal.knowledge) : 'Jogue uma Rankeada para entrar no ranking deste tema.') : 'Entre para ver sua posição e seu Conhecimento aqui.'}</p></div><div className="personal-theme-card__stats"><RankBadge knowledge={data.personal?.knowledge ?? 0} showKnowledge /><span className="discovery-ring" style={{ '--discovered': Math.min(1, discovered / 100) } as CSSProperties}><strong>{discovered.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%</strong><small title="Quanto das perguntas deste tema você já respondeu">das perguntas já vistas</small></span><span><strong>{data.personal?.position ? `#${data.personal.position}` : '—'}</strong><small>posição</small></span></div>{profile !== null && <div className="personal-records" aria-label="Recordes pessoais neste tema"><span><Icon name="crown" /><small>Recorde Normal</small><strong>{records?.CASUAL != null ? records.CASUAL.toLocaleString('pt-BR') : '—'}</strong></span><span><Icon name="crown" /><small>Recorde Rankeada</small><strong>{records?.RANKED != null ? records.RANKED.toLocaleString('pt-BR') : '—'}</strong></span></div>}</article>
+
+      {data.personal?.trail !== undefined && (
+        <ThemeTrail goalId={data.personal.goalId ?? null} steps={data.personal.trail} themeName={data.theme.name} />
+      )}
 
       {challengePickerOpen && mode === 'CASUAL' && (
         <FriendChallengeDialog

@@ -1,4 +1,4 @@
-import type { ReportContextKind, ReportReason, ReportStatus, ThemeArtwork } from '@quiz-gomes/domain';
+import type { PlayerTitleStyle, ReportContextKind, ReportReason, ReportStatus, ThemeArtwork } from '@quiz-gomes/domain';
 
 export interface Category {
   id: string;
@@ -127,14 +127,25 @@ export interface LeaderboardEntry {
   publicId: string;
 }
 
+export interface ThemeTrailStep {
+  id: string;
+  label: string;
+  progress: { ratio: number; text: string } | null;
+  style: PlayerTitleStyle;
+  unlocked: boolean;
+}
+
 export interface ThemeDetailResponse {
   personal: null | {
     discoveredPercentage: number;
+    /** Título que a pessoa escolheu perseguir no Perfil. */
+    goalId?: string | null;
     knowledge: number;
     position: number | null;
     rankedMatches: number;
     /** Maior pontuação em partida concluída, por modo; ausente em respostas antigas. */
     records?: { CASUAL: number | null; RANKED: number | null };
+    trail?: ThemeTrailStep[];
   };
   theme: ThemeSummary;
   topFive: LeaderboardEntry[];

@@ -98,6 +98,57 @@ export function MissionsCard({ missions, resetAt }: { missions: MissionSummary[]
   );
 }
 
+export interface WeeklyMissionSummary {
+  completedAt: string | null;
+  progress: number;
+  target: number;
+  type: 'CORRECT_RANKED' | 'PLAY_RANKED' | 'WIN_RANKED';
+}
+
+const WEEKLY_LABELS: Record<WeeklyMissionSummary['type'], string> = {
+  CORRECT_RANKED: 'Acerte perguntas na Rankeada',
+  PLAY_RANKED: 'Jogue Rankeadas até o fim',
+  WIN_RANKED: 'Vença Rankeadas',
+};
+
+/** "3 d 4 h" quando falta mais de um dia; senão, igual às diárias. */
+export function weekCountdown(resetAtMs: number, nowMs: number): string {
+  const hours = Math.floor(Math.max(0, resetAtMs - nowMs) / 3_600_000);
+  if (hours < 24) return resetCountdown(resetAtMs, nowMs);
+  const days = Math.floor(hours / 24);
+  const rest = hours % 24;
+  return rest === 0 ? `${days} d` : `${days} d ${rest} h`;
+}
+
+/** Missões da semana: só Rankeada conta, e a semana vira segunda à 0h. */
+export function WeeklyMissionsCard({ missions, resetAt }: { missions: WeeklyMissionSummary[]; resetAt: string | null }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  if (missions.length === 0) return null;
+  const resetMs = resetAt === null ? Number.NaN : Date.parse(resetAt);
+  const done = missions.every((mission) => mission.completedAt !== null);
+  return (
+    <article className="profile-card profile-card--missions profile-card--weekly">
+      <div className="profile-card__head">
+        <span className="eyebrow">Missões da semana</span>
+        {Number.isFinite(resetMs) && <small className="profile-card__meta">Viram em {weekCountdown(resetMs, now)}</small>}
+      </div>
+      <ul className="missions-list">
+        {missions.map((mission) => (
+          <li className="missions-list__item" data-done={mission.completedAt !== null} key={mission.type}>
+            <div className="missions-list__row"><span><i aria-hidden="true" className="missions-list__check">{mission.completedAt !== null ? '✓' : ''}</i>{WEEKLY_LABELS[mission.type]}</span><span>{Math.min(mission.progress, mission.target)}/{mission.target}</span></div>
+            <div className="progress-track"><span style={{ transform: `scaleX(${Math.min(1, mission.progress / mission.target)})` }} /></div>
+          </li>
+        ))}
+      </ul>
+      <p className="profile-card__hint">{done ? 'Semana fechada. As próximas chegam na segunda.' : 'Só a Rankeada conta. A semana vira na segunda, 0h.'}</p>
+    </article>
+  );
+}
+
 export function StreakCard({ streak }: { streak: StreakSummary | null }) {
   if (streak === null) {
     return (

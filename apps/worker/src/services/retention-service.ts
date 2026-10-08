@@ -38,6 +38,7 @@ export interface RetentionReport {
   /** Sobrou trabalho para a próxima execução (lotes cheios até o teto). */
   backlog: boolean;
   dailyMissions: number;
+  weeklyMissions: number;
   importBatches: number;
   matches: number;
   queueAlerts: number;
@@ -85,7 +86,7 @@ export class RetentionService {
   async run(nowMs: number): Promise<RetentionReport> {
     const cutoff = retentionCutoffDay(nowMs);
     const report: RetentionReport = {
-      auditLogs: 0, backlog: false, challenges: 0, dailyMissions: 0, importBatches: 0,
+      auditLogs: 0, backlog: false, challenges: 0, dailyMissions: 0, importBatches: 0, weeklyMissions: 0,
       matches: 0, queueAlerts: 0, reportViews: 0, statisticsReceipts: 0,
     };
     // Cada etapa tem um teto de rodadas para uma fila grande de partidas não
@@ -108,6 +109,12 @@ export class RetentionService {
       this.coreDb,
       `DELETE FROM user_daily_missions WHERE rowid IN (
          SELECT rowid FROM user_daily_missions WHERE day_key < ?1 LIMIT ${ROW_CHUNK})`,
+      [cutoff],
+    );
+    report.weeklyMissions = await this.deleteRows(
+      this.coreDb,
+      `DELETE FROM user_weekly_missions WHERE rowid IN (
+         SELECT rowid FROM user_weekly_missions WHERE week_key < ?1 LIMIT ${ROW_CHUNK})`,
       [cutoff],
     );
     report.queueAlerts = await this.deleteRows(

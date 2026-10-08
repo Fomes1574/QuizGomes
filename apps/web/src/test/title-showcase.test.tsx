@@ -80,10 +80,27 @@ describe('vitrine de títulos', () => {
     expect(mocks.apiRequest).toHaveBeenCalledTimes(1);
   });
 
-  it('sem nenhuma Rankeada, convida para a primeira', async () => {
-    mocks.apiRequest.mockResolvedValueOnce(showcase({ current: null, owned: 0, pins: [], possible: 0, titles: [] }));
+  it('escolher um título bloqueado como objetivo e vê-lo no topo', async () => {
+    mocks.apiRequest.mockResolvedValueOnce(showcase());
     render(<TitleShowcase viewer={viewer} />);
-    expect(await screen.findByRole('heading', { name: 'Seu primeiro título sai na Rankeada' })).toBeInTheDocument();
+    await screen.findByRole('heading', { name: '3 de 20' });
+    const goal = { ...showcase().titles[3]! };
+    mocks.apiRequest.mockResolvedValueOnce(showcase({ goal }));
+    fireEvent.click(screen.getByRole('button', { name: 'Quero este' }));
+    await waitFor(() => expect(mocks.apiRequest).toHaveBeenLastCalledWith('/api/profile/titles', expect.objectContaining({
+      body: { goalId: 'T:lost:WIN_STREAK_10' }, method: 'PUT',
+    })));
+    expect(await screen.findByText('Seu objetivo')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '★ Seu objetivo' })).toBeDisabled();
+  });
+
+  it('sem nenhuma Rankeada, convida para a primeira', async () => {
+    mocks.apiRequest.mockResolvedValueOnce(showcase({
+      current: null, owned: 0, pins: [], possible: 1,
+      titles: [{ group: 'feitos', hint: 'Chegue ao nível 5', id: 'N:5', label: 'Curioso', locked: { ratio: 0, text: 'faltam 415 de XP' }, style: 'feat' }],
+    }));
+    render(<TitleShowcase viewer={viewer} />);
+    expect(await screen.findByRole('heading', { name: 'Seu primeiro título está perto' })).toBeInTheDocument();
   });
 });
 

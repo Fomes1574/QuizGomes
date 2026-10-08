@@ -153,15 +153,15 @@ describe('Top do tema', () => {
     await env.CORE_DB.prepare('UPDATE theme_rankings SET knowledge = 950 WHERE user_id = ?1 AND theme_id = ?2').bind(b.id, themeId).run();
     await env.CORE_DB.prepare('UPDATE theme_rankings SET knowledge = 860 WHERE user_id = ?1 AND theme_id = ?2').bind(a.id, themeId).run();
     const rewards = await recordRankedRewards(SMALL_TOP, matchId, themeId, [
-      { outcome: outcome({ knowledgeAfter: 950, knowledgeBefore: 820 }), topBefore: 2, userId: b.id },
-      { outcome: outcome({ knowledgeAfter: 860, knowledgeBefore: 900, result: 'LOSS' }), topBefore: 1, userId: a.id },
+      { correctAnswers: 6, outcome: outcome({ knowledgeAfter: 950, knowledgeBefore: 820 }), topBefore: 2, userId: b.id },
+      { correctAnswers: 6, outcome: outcome({ knowledgeAfter: 860, knowledgeBefore: 900, result: 'LOSS' }), topBefore: 1, userId: a.id },
     ]);
     expect(rewards.get(b.id)?.top).toEqual({ after: 1, before: 2 });
     expect(rewards.get(b.id)?.achievements.map((achievement) => achievement.id)).toContain('FIRST_WIN');
     expect(rewards.get(a.id)?.top).toEqual({ after: 2, before: 1 });
     // Repetir a finalização não devolve nada de novo.
     expect((await recordRankedRewards(SMALL_TOP, matchId, themeId, [
-      { outcome: outcome(), topBefore: 2, userId: b.id },
+      { correctAnswers: 6, outcome: outcome(), topBefore: 2, userId: b.id },
     ])).size).toBe(0);
   });
 });
@@ -186,7 +186,8 @@ describe('Vitrine de títulos (API)', () => {
     const userId = (await env.CORE_DB.prepare('SELECT id FROM users WHERE firebase_uid = ?1').bind(uid).first<{ id: string }>())?.id ?? '';
 
     const empty = await (await SELF.fetch('https://quiz.test/api/profile/titles', { headers: auth })).json<{ possible: number; titles: unknown[] }>();
-    expect(empty).toMatchObject({ possible: 0, titles: [] });
+    // Conta nova: nada conquistado; o primeiro título à vista é o do nível 5.
+    expect(empty).toMatchObject({ possible: 1, titles: [{ id: 'N:5', label: 'Curioso', locked: { ratio: 0 } }] });
 
     // Histórico de Ouro já registrado no ranking: a vitrine garante as conquistas que ele prova.
     await env.CORE_DB.batch([

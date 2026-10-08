@@ -15,10 +15,12 @@ import {
   RecentMatchesCard,
   StreakCard,
   ThemeRecordsCard,
+  WeeklyMissionsCard,
   type MissionSummary,
   type RecentMatch,
   type StreakSummary,
   type ThemeRecord,
+  type WeeklyMissionSummary,
 } from '../components/profile-sections.js';
 import { ShareCardButton } from '../components/share-result-button.js';
 import { StreakReminderToggle } from '../components/streak-reminder-toggle.js';
@@ -53,6 +55,8 @@ interface ProfileSummaryResponse {
   recentMatches?: RecentMatch[];
   streakReminder?: boolean;
   themeRecords?: ThemeRecord[];
+  weeklyMissions?: WeeklyMissionSummary[];
+  weeklyResetAt?: string;
 }
 
 export function ProfilePage() {
@@ -260,6 +264,7 @@ export function ProfilePage() {
         <article className="level-card"><span>Nível</span><strong>{progress.level}</strong><div className="progress-track"><span style={{ transform: `scaleX(${progress.progress})` }} /></div><small>{progress.nextLevelXp === null ? 'Nível máximo' : `${progress.currentLevelXp} / ${progress.nextLevelXp} XP`}</small></article>
         <StreakCard streak={summary?.activeStreak ?? null} />
         <MissionsCard missions={summary?.missions ?? []} resetAt={summary?.missionsResetAt ?? null} />
+        <WeeklyMissionsCard missions={summary?.weeklyMissions ?? []} resetAt={summary?.weeklyResetAt ?? null} />
         <ModeStatsCard casual={summary?.casualSummary ?? null} ranked={summary?.matchSummary ?? null} />
         <RecentMatchesCard matches={summary?.recentMatches ?? []} />
         <ThemeRecordsCard records={summary?.themeRecords ?? []} />

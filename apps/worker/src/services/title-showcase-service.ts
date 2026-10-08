@@ -1,6 +1,10 @@
 import {
+  LEVEL_TITLES,
   THEME_ACHIEVEMENT_IDS,
+  THEME_TRAIL_ORDER,
   globalAchievementTitle,
+  levelProgress,
+  levelTitle,
   parseTitleId,
   themeAchievementGroup,
   themeAchievementHint,
@@ -10,6 +14,7 @@ import {
   themeTitleId,
   topTitleLabel,
   topTitleTier,
+  totalXpForLevel,
   type PlayerTitle,
   type PlayerTitleStyle,
 } from '@quiz-gomes/domain';
@@ -39,6 +44,8 @@ export interface TitleShowcase {
   /** Título que aparece sob o nome agora (fora de partida). */
   current: PlayerTitle | null;
   equippedId: string | null;
+  /** O título que a pessoa escolheu perseguir, com o progresso atual. */
+  goal: ShowcaseTitle | null;
   owned: number;
   pins: string[];
   /** Conquistáveis nos temas que a pessoa joga (mais os gerais que já tem). */
@@ -49,8 +56,10 @@ export interface TitleShowcase {
 interface ShowcasePreferences {
   equipped_title_id: string | null;
   equipped_top_theme_id: string | null;
+  goal_title_id: string | null;
   pinned_achievements: string | null;
   top_title_auto: number;
+  total_xp: number;
 }
 
 function parsePins(value: string | null): string[] {
@@ -67,7 +76,7 @@ function parsePins(value: string | null): string[] {
 
 async function preferencesOf(db: D1Database, userId: string): Promise<ShowcasePreferences> {
   const row = await db.prepare(
-    `SELECT equipped_title_id, equipped_top_theme_id, pinned_achievements, top_title_auto
+    `SELECT equipped_title_id, equipped_top_theme_id, goal_title_id, pinned_achievements, top_title_auto, total_xp
        FROM user_profiles WHERE user_id = ?1`,
   ).bind(userId).first<ShowcasePreferences>();
   if (row === null) throw new ApiError(404, 'PROFILE_NOT_FOUND', 'Perfil não encontrado.');
@@ -126,9 +135,29 @@ export async function titleShowcase(
     if (label === null) continue;
     titles.push({ group: 'feitos', hint: 'Conquista geral', id: `G:${achievementId}`, label, style: 'feat' });
   }
+  const level = levelProgress(preferences.total_xp).level;
+  const levelLocked: ShowcaseTitle[] = [];
+  for (const milestone of LEVEL_TITLES) {
+    const id = `N:${milestone.level}`;
+    if (level >= milestone.level) {
+      titles.push({ group: 'feitos', hint: `Chegou ao nível ${milestone.level}`, id, label: milestone.label, style: 'feat' });
+    } else if (levelLocked.length === 0) {
+      // Só o próximo marco de nível aparece bloqueado: o resto ainda está longe demais.
+      const target = totalXpForLevel(milestone.level);
+      const missing = Math.max(0, target - preferences.total_xp);
+      levelLocked.push({
+        group: 'feitos',
+        hint: `Chegue ao nível ${milestone.level}`,
+        id,
+        label: milestone.label,
+        locked: { ratio: Math.min(1, preferences.total_xp / target), text: `faltam ${missing.toLocaleString('pt-BR')} de XP` },
+        style: 'feat',
+      });
+    }
+  }
   const ownedCount = titles.length;
 
-  const locked: ShowcaseTitle[] = [];
+  const locked: ShowcaseTitle[] = [...levelLocked];
   for (const theme of played) {
     for (const achievementId of THEME_ACHIEVEMENT_IDS) {
       const id = themeTitleId(theme.themeId, achievementId);
@@ -154,10 +183,15 @@ export async function titleShowcase(
       ? preferences.equipped_title_id
       : null;
   const available = new Set(titles.filter((title) => title.locked === undefined).map((title) => title.id));
+  const goalId = preferences.goal_title_id;
+  const goal = goalId === null
+    ? null
+    : titles.find((title) => title.id === goalId) ?? locked.find((title) => title.id === goalId) ?? null;
   return {
     autoTop: preferences.top_title_auto === 1,
     current: await resolvePlayerTitle(env, userId, null),
     equippedId,
+    goal,
     owned: ownedCount,
     pins: parsePins(preferences.pinned_achievements).filter((id) => available.has(id)),
     possible,
@@ -178,12 +212,18 @@ async function ownsTitle(
   const parsed = parseTitleId(id);
   if (parsed === null) return false;
   if (parsed.kind === 'THEME') return themeAchievements(env).owns(userId, parsed.themeId, parsed.achievementId);
+  if (parsed.kind === 'LEVEL') {
+    const row = await env.CORE_DB.prepare('SELECT total_xp FROM user_profiles WHERE user_id = ?1').bind(userId).first<{ total_xp: number }>();
+    return row !== null && levelProgress(row.total_xp).level >= parsed.level;
+  }
   return await env.CORE_DB.prepare('SELECT 1 FROM user_achievements WHERE user_id = ?1 AND achievement_id = ?2')
     .bind(userId, parsed.achievementId).first() !== null;
 }
 
 export interface TitleShowcaseUpdate {
   autoTop?: boolean | undefined;
+  /** Título a perseguir (precisa ser um título que existe); null tira. */
+  goalId?: string | null | undefined;
   /** null tira o título escolhido. */
   equippedId?: string | null | undefined;
   pins?: string[] | undefined;
@@ -222,6 +262,12 @@ export async function updateTitleShowcase(
     }
   }
   if (update.autoTop !== undefined) set('top_title_auto', update.autoTop ? 1 : 0);
+  if (update.goalId !== undefined) {
+    if (update.goalId !== null && parseTitleId(update.goalId) === null) {
+      throw new ApiError(400, 'GOAL_INVALID', 'Esse objetivo não existe.');
+    }
+    set('goal_title_id', update.goalId);
+  }
   if (update.pins !== undefined) {
     const pins = [...new Set(update.pins)];
     if (pins.length > MAX_PINNED_TITLES) throw new ApiError(400, 'TOO_MANY_PINS', `Dá pra destacar até ${MAX_PINNED_TITLES}.`);
@@ -271,6 +317,10 @@ async function describeOwnedTitle(
   }
   const parsed = parseTitleId(id);
   if (parsed === null) return null;
+  if (parsed.kind === 'LEVEL') {
+    const label = levelTitle(parsed.level);
+    return label === null ? null : { group: 'feitos', hint: '', id, label, style: 'feat' };
+  }
   if (parsed.kind === 'GLOBAL') {
     const label = globalAchievementTitle(parsed.achievementId);
     return label === null ? null : { group: 'feitos', hint: '', id, label, style: 'feat' };
@@ -283,4 +333,60 @@ async function describeOwnedTitle(
     label: themeAchievementTitle(parsed.achievementId, name),
     style: themeAchievementTitleStyle(parsed.achievementId),
   };
+}
+
+export interface ThemeTrailStep {
+  id: string;
+  label: string;
+  progress: { ratio: number; text: string } | null;
+  style: PlayerTitleStyle;
+  unlocked: boolean;
+}
+
+/**
+ * Trilha de um tema para quem está olhando: cada conquista no caminho, o que
+ * já saiu e quanto falta para a próxima. Quem nunca jogou o tema vê a trilha
+ * inteira começando do zero.
+ */
+export async function themeTrail(
+  env: Pick<Env, 'CORE_DB' | 'TOP_TITLE_MIN_PLAYERS'>,
+  userId: string,
+  themeId: string,
+  themeName: string,
+): Promise<ThemeTrailStep[]> {
+  const repository = themeAchievements(env);
+  const [row, owned] = await Promise.all([
+    env.CORE_DB.prepare(
+      `SELECT r.knowledge, r.wins, p.best_division, p.completed_ranked, p.unbeaten_matches, p.unbeaten_wins, p.win_streak
+         FROM theme_rankings r
+         LEFT JOIN user_theme_progress p ON p.user_id = r.user_id AND p.theme_id = r.theme_id
+        WHERE r.user_id = ?1 AND r.theme_id = ?2`,
+    ).bind(userId, themeId).first<{
+      best_division: number | null; completed_ranked: number | null; knowledge: number;
+      unbeaten_matches: number | null; unbeaten_wins: number | null; wins: number; win_streak: number | null;
+    }>(),
+    repository.list(userId),
+  ]);
+  const have = new Set(owned.filter((record) => record.themeId === themeId).map((record) => record.achievementId));
+  const context = {
+    knowledge: row?.knowledge ?? 0,
+    progress: {
+      bestDivision: row?.best_division ?? 0,
+      completedRanked: row?.completed_ranked ?? 0,
+      unbeatenMatches: row?.unbeaten_matches ?? 0,
+      unbeatenWins: row?.unbeaten_wins ?? 0,
+      winStreak: row?.win_streak ?? 0,
+    },
+    wins: row?.wins ?? 0,
+  };
+  return THEME_TRAIL_ORDER.map((achievementId) => {
+    const unlocked = have.has(achievementId);
+    return {
+      id: themeTitleId(themeId, achievementId),
+      label: themeAchievementTitle(achievementId, themeName),
+      progress: unlocked ? null : themeAchievementProgress(achievementId, context),
+      style: themeAchievementTitleStyle(achievementId),
+      unlocked,
+    };
+  });
 }

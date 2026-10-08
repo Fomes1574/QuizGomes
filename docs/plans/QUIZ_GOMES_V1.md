@@ -1669,6 +1669,14 @@ Pedidos do proprietário nesta rodada: limpeza a cada 15 dias (admin 6 meses), X
 - Placar da Rankeada: o selo da liga de cada jogador (Conhecimento do início, já público na apresentação) e, para Top 1/2/3 do tema, coroa ou medalha ao lado do nome, pequenos para não competir com a pergunta. A projeção só leva a liga na Rankeada.
 - Depois de cada rodada, o lugar da barra do relógio vira uma barra de placar (adversário à esquerda, você à direita, como no placar) com "Você na frente por X", "Ana na frente por X" ou "Empatados". Some na pergunta seguinte e na primeira metade do desafio assíncrono.
 
+### 2026-10-08 — missões semanais, títulos de nível, objetivo e trilha do tema
+
+- Migration `0023`: `user_weekly_missions` (semana = segunda de Brasília, `week_key`) e `user_profiles.goal_title_id`. A limpeza automática apaga semanas antigas como já fazia com os dias; excluir a conta apaga as missões e o objetivo.
+- Missões semanais da Rankeada: jogar 10 até o fim, vencer 5 e acertar 40. Avançam na finalização da sala, junto com as conquistas de tema e pela mesma guarda (`last_match_id`), então uma partida nunca conta duas vezes; abandono não conta. Perfil mostra o cartão com "Viram em 3 d 7 h".
+- Títulos de nível: Curioso (5), Aprendiz (10), Estudioso (25), Sabichão (50), Erudito (75), Enciclopédia ambulante (100), Mestre do quiz (150), Oráculo (200), Sábio (250), Lenda do QUIZ GOMES (300), Imortal (500) e Nível 999. Ficam equipáveis na vitrine; só o próximo marco aparece bloqueado, com o XP que falta.
+- Objetivo: na vitrine, "Quero este" num título bloqueado o fixa no topo com a barra de progresso ("Seu objetivo"); ao conquistar, o cartão avisa para escolher o próximo. Não muda nada competitivo.
+- Trilha do tema: a página do tema mostra os 18 títulos daquele tema em um caminho (do primeiro ao Desafiante), o próximo em destaque com quanto falta e uma estrela no objetivo escolhido.
+
 ## Critério de saída desta execução
 
 - Milestones 8 e 8.5 aprovados fisicamente e congelados;

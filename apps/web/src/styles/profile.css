@@ -165,3 +165,17 @@ button.title-slot { cursor: pointer; }
   .title-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 @media (prefers-reduced-motion: reduce) { .title-preview__duel { animation: none; } }
+
+/* Objetivo escolhido na vitrine. */
+.title-goal { position: relative; display: grid; gap: 6px; padding: 14px 16px; border: 2px solid color-mix(in srgb, #e2a400 55%, var(--border)); border-radius: 16px; background: linear-gradient(160deg, rgb(255 204 51 / .12), var(--surface) 70%); }
+.title-goal__label { display: inline-flex; align-items: center; gap: 5px; color: #a87800; font-size: .72rem; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+:root[data-theme='dark'] .title-goal__label { color: #ffcc33; }
+.title-goal__label svg { width: 14px; height: 14px; fill: currentColor; }
+.title-goal small { color: var(--text-secondary); font-size: .74rem; }
+.title-goal__clear { justify-self: start; min-height: 32px; padding: 0; border: 0; color: var(--text-secondary); background: none; font-size: .74rem; font-weight: 700; text-decoration: underline; cursor: pointer; }
+.title-goal--done { border-color: var(--correct); }
+.title-card__aim { justify-self: start; min-height: 32px; margin-top: 2px; padding: 0 12px; border: 1px solid var(--border-strong); border-radius: 99px; color: var(--text-primary); background: var(--surface); font-size: .72rem; font-weight: 800; cursor: pointer; }
+.title-card__aim:disabled { cursor: default; }
+.title-card--goal { border: 2px solid color-mix(in srgb, #e2a400 60%, var(--border)); }
+.title-card--goal .title-card__aim { border-color: transparent; color: #a87800; background: rgb(255 204 51 / .16); }
+:root[data-theme='dark'] .title-card--goal .title-card__aim { color: #ffcc33; }

@@ -62,7 +62,7 @@ export function TitleShowcase({ onCurrentChange, viewer }: {
     if (data !== null) onCurrentChange?.(data.current);
   }, [data, onCurrentChange]);
 
-  async function save(body: { autoTop?: boolean; equippedId?: string | null; pins?: string[] }, optimistic?: PlayerTitle | null) {
+  async function save(body: { autoTop?: boolean; equippedId?: string | null; goalId?: string | null; pins?: string[] }, optimistic?: PlayerTitle | null) {
     setBusy(true);
     setMessage(null);
     if (optimistic !== undefined) setPreview(optimistic);
@@ -84,7 +84,7 @@ export function TitleShowcase({ onCurrentChange, viewer }: {
 
   const owned = data.titles.filter((title) => title.locked === undefined);
   const almost = data.titles
-    .filter((title) => title.locked !== undefined && title.locked.ratio > 0 && title.locked.ratio < 1)
+    .filter((title) => title.locked !== undefined && title.locked.ratio > 0 && title.locked.ratio < 1 && title.id !== data.goal?.id)
     .slice(0, 3);
   const visible = data.titles.filter((title) => filter === 'todos' || title.group === filter);
   const pinned = data.pins
@@ -102,12 +102,13 @@ export function TitleShowcase({ onCurrentChange, viewer }: {
     void save({ pins: isPinned ? data.pins.filter((id) => id !== title.id) : [...data.pins, title.id] });
   }
 
-  if (data.possible === 0) {
+  // Conta nova: só o primeiro marco de nível existe ainda. Melhor um convite do que uma vitrine vazia.
+  if (data.owned === 0 && data.titles.every((title) => title.id.startsWith('N:'))) {
     return (
       <article className="profile-card title-showcase title-showcase--empty">
         <span className="eyebrow">Títulos</span>
-        <h2>Seu primeiro título sai na Rankeada</h2>
-        <p>Vença uma Rankeada em qualquer tema e ele já aparece aqui, pronto para usar sob o seu nome.</p>
+        <h2>Seu primeiro título está perto</h2>
+        <p>Chegue ao nível 5 ou vença uma Rankeada em qualquer tema. Ele aparece aqui, pronto para usar sob o seu nome.</p>
       </article>
     );
   }
@@ -183,6 +184,22 @@ export function TitleShowcase({ onCurrentChange, viewer }: {
           </span>
         </header>
 
+        {data.goal != null && (
+          <div className={`title-goal${data.goal.locked === undefined ? ' title-goal--done' : ''}`}>
+            <span className="title-goal__label"><Icon name="star" />Seu objetivo</span>
+            <PlayerTitleText title={data.goal} />
+            {data.goal.locked === undefined
+              ? <small>Conquistado! Escolha o próximo entre os bloqueados.</small>
+              : (
+                <>
+                  <span className="title-bar"><i style={{ transform: `scaleX(${data.goal.locked.ratio})` }} /></span>
+                  <small>{data.goal.locked.text}</small>
+                </>
+              )}
+            <button className="title-goal__clear" disabled={busy} onClick={() => void save({ goalId: null })} type="button">Tirar objetivo</button>
+          </div>
+        )}
+
         {almost.length > 0 && (
           <div className="title-almost">
             <span className="title-almost__label">Quase lá</span>
@@ -212,13 +229,21 @@ export function TitleShowcase({ onCurrentChange, viewer }: {
                 const equipped = title.id === data.equippedId;
                 const isPinned = data.pins.includes(title.id);
                 if (title.locked !== undefined) {
+                  const isGoal = data.goal?.id === title.id;
                   return (
                     <li key={title.id}>
-                      <div className="title-card title-card--locked">
+                      <div className={`title-card title-card--locked${isGoal ? ' title-card--goal' : ''}`}>
                         <PlayerTitleText title={title} />
                         <small>{title.hint}</small>
                         <span className="title-bar"><i style={{ transform: `scaleX(${title.locked.ratio})` }} /></span>
                         <small className="title-card__progress">{title.locked.text}</small>
+                        <button
+                          aria-pressed={isGoal}
+                          className="title-card__aim"
+                          disabled={busy || isGoal}
+                          onClick={() => void save({ goalId: title.id })}
+                          type="button"
+                        >{isGoal ? '★ Seu objetivo' : 'Quero este'}</button>
                       </div>
                     </li>
                   );
