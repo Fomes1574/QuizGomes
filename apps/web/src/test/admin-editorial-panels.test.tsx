@@ -127,6 +127,67 @@ describe('Ocultar e mover no catálogo', () => {
     })));
   });
 
+  it('apaga as perguntas de um tema oculto só com o nome digitado, em partes, sem apagar o tema', async () => {
+    const hiddenTheme = { ...activeTheme, hidden: true };
+    const steps = [
+      { deletedImages: 3, deletedQuestions: 40, remaining: 5 },
+      { deletedImages: 1, deletedQuestions: 5, remaining: 0 },
+    ];
+    mocks.apiRequest.mockImplementation((path: string, options?: { method?: string }) => {
+      if (path === '/api/admin/themes') return Promise.resolve({ themes: [] });
+      if (path === '/api/admin/themes?hidden=1') return Promise.resolve({ themes: [hiddenTheme] });
+      if (path === '/api/admin/categories') return Promise.resolve({ categories });
+      if (path === '/api/admin/categories?hidden=1') return Promise.resolve({ categories: [] });
+      if (path === '/api/admin/themes/theme-9/questions/purge' && options?.method === 'POST') return Promise.resolve(steps.shift());
+      return Promise.resolve({ ok: true });
+    });
+    render(<AdminThemeModerationPanel getToken={mocks.getToken} />);
+    fireEvent.click(await screen.findByRole('tab', { name: 'Ocultos (1)' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Apagar perguntas' }));
+
+    const dialog = await screen.findByRole('dialog', { hidden: true });
+    expect(within(dialog).getByText(/O tema continua/)).toBeInTheDocument();
+    const confirm = within(dialog).getByRole('button', { hidden: true, name: 'Apagar todas as perguntas' });
+    expect(confirm).toBeDisabled();
+    const input = within(dialog).getByLabelText('Para confirmar, digite o nome do tema');
+    fireEvent.change(input, { target: { value: 'tema errado' } });
+    expect(confirm).toBeDisabled();
+    fireEvent.change(input, { target: { value: '  tema ativo ' } });
+    expect(confirm).toBeEnabled();
+    fireEvent.click(confirm);
+
+    expect(await screen.findByText(/45 perguntas apagadas de “Tema Ativo”, com 4 fotos\. O tema continua oculto/)).toBeInTheDocument();
+    const purgeCalls = mocks.apiRequest.mock.calls.filter(([path]) => path === '/api/admin/themes/theme-9/questions/purge');
+    expect(purgeCalls).toHaveLength(2);
+    expect(purgeCalls[0]?.[1]).toMatchObject({ body: { confirmName: '  tema ativo ' }, method: 'POST' });
+    expect(mocks.apiRequest).not.toHaveBeenCalledWith('/api/admin/themes/theme-9/visibility', expect.anything());
+  });
+
+  it('se o servidor recusa, a janela continua aberta com o motivo e o que já saiu', async () => {
+    let call = 0;
+    mocks.apiRequest.mockImplementation((path: string, options?: { method?: string }) => {
+      if (path === '/api/admin/themes') return Promise.resolve({ themes: [] });
+      if (path === '/api/admin/themes?hidden=1') return Promise.resolve({ themes: [{ ...activeTheme, hidden: true }] });
+      if (path.startsWith('/api/admin/categories')) return Promise.resolve({ categories: [] });
+      if (path.endsWith('/questions/purge') && options?.method === 'POST') {
+        call += 1;
+        return call === 1
+          ? Promise.resolve({ deletedImages: 0, deletedQuestions: 40, remaining: 10 })
+          : Promise.reject(new Error('Ainda tem partida acontecendo neste tema. Tente de novo em alguns minutos.'));
+      }
+      return Promise.resolve({ ok: true });
+    });
+    render(<AdminThemeModerationPanel getToken={mocks.getToken} />);
+    fireEvent.click(await screen.findByRole('tab', { name: 'Ocultos (1)' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Apagar perguntas' }));
+    const dialog = await screen.findByRole('dialog', { hidden: true });
+    fireEvent.change(within(dialog).getByLabelText('Para confirmar, digite o nome do tema'), { target: { value: 'Tema Ativo' } });
+    fireEvent.click(within(dialog).getByRole('button', { hidden: true, name: 'Apagar todas as perguntas' }));
+    expect(await within(dialog).findByRole('alert', { hidden: true })).toHaveTextContent(
+      'Ainda tem partida acontecendo neste tema. Tente de novo em alguns minutos. 40 já foram apagadas; tentar de novo continua de onde parou.',
+    );
+  });
+
   it('move o tema para outra categoria com a revisão esperada', async () => {
     mocks.apiRequest.mockImplementation((path: string) => {
       if (path === '/api/admin/themes') return Promise.resolve({ themes: [activeTheme] });
@@ -183,7 +244,7 @@ describe('AdminQuestionEditorialPanel', () => {
 
   it('busca tema, lista perguntas em revisão e aprova', async () => {
     mocks.apiRequest.mockImplementation((path: string) => {
-      if (path.startsWith('/api/admin/themes')) return Promise.resolve({ themes: [theme] });
+      if (path.startsWith('/api/admin/themes')) return Promise.resolve({ themes: path.endsWith('hidden=1') ? [] : [theme] });
       if (path.startsWith('/api/editorial/themes/theme-1/questions')) return Promise.resolve({ nextCursor: null, questions: [question] });
       if (path === '/api/editorial/questions/question-1/approve') return Promise.resolve({ ok: true });
       return Promise.resolve({ ok: true });
@@ -201,7 +262,7 @@ describe('AdminQuestionEditorialPanel', () => {
 
   it('seleciona a página revisada e aprova o lote por uma única rota', async () => {
     mocks.apiRequest.mockImplementation((path: string) => {
-      if (path.startsWith('/api/admin/themes')) return Promise.resolve({ themes: [theme] });
+      if (path.startsWith('/api/admin/themes')) return Promise.resolve({ themes: path.endsWith('hidden=1') ? [] : [theme] });
       if (path.startsWith('/api/editorial/themes/theme-1/questions?')) return Promise.resolve({ nextCursor: null, questions: [question] });
       if (path === '/api/editorial/themes/theme-1/questions/approve') return Promise.resolve({ approvedQuestionIds: ['question-1'], failed: [] });
       return Promise.resolve({ ok: true });
@@ -223,7 +284,7 @@ describe('AdminQuestionEditorialPanel', () => {
 
   it('abre uma pergunta em revisão para correção e salva o mesmo rascunho', async () => {
     mocks.apiRequest.mockImplementation((path: string) => {
-      if (path.startsWith('/api/admin/themes')) return Promise.resolve({ themes: [theme] });
+      if (path.startsWith('/api/admin/themes')) return Promise.resolve({ themes: path.endsWith('hidden=1') ? [] : [theme] });
       if (path.startsWith('/api/editorial/themes/theme-1/questions?')) return Promise.resolve({ nextCursor: null, questions: [question] });
       if (path === '/api/editorial/questions/question-1') return Promise.resolve({ question: { ...question, prompt: 'Pergunta corrigida?' } });
       return Promise.resolve({ ok: true });
@@ -244,7 +305,7 @@ describe('AdminQuestionEditorialPanel', () => {
 
   it('importa CSV para o tema selecionado com chave de idempotência', async () => {
     mocks.apiRequest.mockImplementation((path: string) => {
-      if (path.startsWith('/api/admin/themes')) return Promise.resolve({ themes: [theme] });
+      if (path.startsWith('/api/admin/themes')) return Promise.resolve({ themes: path.endsWith('hidden=1') ? [] : [theme] });
       if (path.startsWith('/api/editorial/themes/theme-1/questions')) return Promise.resolve({ nextCursor: null, questions: [] });
       return Promise.resolve({ ok: true });
     });
@@ -267,7 +328,7 @@ describe('AdminQuestionEditorialPanel', () => {
 
   it('arquivo grande sobe em partes de 100, com chave por parte, e soma puladas', async () => {
     mocks.apiRequest.mockImplementation((path: string) => {
-      if (path.startsWith('/api/admin/themes')) return Promise.resolve({ themes: [theme] });
+      if (path.startsWith('/api/admin/themes')) return Promise.resolve({ themes: path.endsWith('hidden=1') ? [] : [theme] });
       if (path.startsWith('/api/editorial/themes/theme-1/questions')) return Promise.resolve({ nextCursor: null, questions: [] });
       return Promise.resolve({ ok: true });
     });
@@ -295,7 +356,7 @@ describe('AdminQuestionEditorialPanel', () => {
     const pending = Array.from({ length: 60 }, (_, index) => ({ ...question, id: `q-${index}`, prompt: `Pendente ${index}?` }));
     const approveCalls: string[][] = [];
     mocks.apiRequest.mockImplementation((path: string, options?: { body?: { questionIds?: string[] } }) => {
-      if (path.startsWith('/api/admin/themes')) return Promise.resolve({ themes: [theme] });
+      if (path.startsWith('/api/admin/themes')) return Promise.resolve({ themes: path.endsWith('hidden=1') ? [] : [theme] });
       if (path.endsWith('/questions/approve')) {
         const ids = options?.body?.questionIds ?? [];
         approveCalls.push(ids);
@@ -321,7 +382,7 @@ describe('AdminQuestionEditorialPanel', () => {
 
   it('fotos só podem ser escolhidas depois do arquivo de perguntas', async () => {
     mocks.apiRequest.mockImplementation((path: string) => {
-      if (path.startsWith('/api/admin/themes')) return Promise.resolve({ themes: [theme] });
+      if (path.startsWith('/api/admin/themes')) return Promise.resolve({ themes: path.endsWith('hidden=1') ? [] : [theme] });
       return Promise.resolve({ nextCursor: null, questions: [] });
     });
     render(<AdminQuestionEditorialPanel getToken={mocks.getToken} />);
@@ -333,7 +394,7 @@ describe('AdminQuestionEditorialPanel', () => {
 
   it('importa CSV com fotos: resumo antes, foto só na pergunta criada pela linha que a cita', async () => {
     mocks.apiRequest.mockImplementation((path: string) => {
-      if (path.startsWith('/api/admin/themes')) return Promise.resolve({ themes: [theme] });
+      if (path.startsWith('/api/admin/themes')) return Promise.resolve({ themes: path.endsWith('hidden=1') ? [] : [theme] });
       return Promise.resolve({ nextCursor: null, questions: [] });
     });
     mocks.apiUpload.mockImplementation((path: string) => {
@@ -374,7 +435,7 @@ describe('AdminQuestionEditorialPanel', () => {
 
   it('não prende foto em pergunta repetida ou que já tem foto', async () => {
     mocks.apiRequest.mockImplementation((path: string) => {
-      if (path.startsWith('/api/admin/themes')) return Promise.resolve({ themes: [theme] });
+      if (path.startsWith('/api/admin/themes')) return Promise.resolve({ themes: path.endsWith('hidden=1') ? [] : [theme] });
       return Promise.resolve({ nextCursor: null, questions: [] });
     });
     mocks.apiUpload.mockResolvedValue({ imported: 0, rows: [{ acceptsImage: false, questionId: 'q-antiga' }], skipped: 1, status: 'APPLIED' });
@@ -392,7 +453,7 @@ describe('AdminQuestionEditorialPanel', () => {
 
   it('na revisão de uma pergunta em revisão, a foto pode ser trocada no próprio formulário', async () => {
     mocks.apiRequest.mockImplementation((path: string) => {
-      if (path.startsWith('/api/admin/themes')) return Promise.resolve({ themes: [theme] });
+      if (path.startsWith('/api/admin/themes')) return Promise.resolve({ themes: path.endsWith('hidden=1') ? [] : [theme] });
       return Promise.resolve({ nextCursor: null, questions: [{ ...question, imageUrl: '/api/question-images/questions/x/v1.webp' }] });
     });
     render(<AdminQuestionEditorialPanel getToken={mocks.getToken} />);
@@ -408,7 +469,7 @@ describe('AdminQuestionEditorialPanel', () => {
     Object.assign(URL, { createObjectURL, revokeObjectURL: vi.fn() });
     const active = { ...question, id: 'question-ativa', imageUrl: '/api/question-images/questions/x/v1.webp', prompt: 'Pergunta publicada?', status: 'ACTIVE' as const };
     mocks.apiRequest.mockImplementation((path: string) => {
-      if (path.startsWith('/api/admin/themes')) return Promise.resolve({ themes: [theme] });
+      if (path.startsWith('/api/admin/themes')) return Promise.resolve({ themes: path.endsWith('hidden=1') ? [] : [theme] });
       if (path === '/api/editorial/questions/question-ativa') return Promise.resolve({ draftId: 'draft-1' });
       return Promise.resolve({ nextCursor: null, questions: [active] });
     });

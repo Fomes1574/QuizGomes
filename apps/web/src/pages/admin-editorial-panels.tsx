@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Button } from '../components/button.js';
 import { ConfirmDialog } from '../components/confirm-dialog.js';
+import { PurgeQuestionsDialog } from '../components/purge-questions-dialog.js';
 import { QuestionImageField } from '../components/question-image-field.js';
 import { ThemePicker } from '../components/theme-picker.js';
 import { withRateLimitRetry } from '../lib/rate-limit-retry.js';
@@ -13,6 +14,7 @@ import {
   IMPORT_CHUNK_SIZE,
   IMPORT_FILE_MAX_BYTES,
 } from '../lib/import-chunks.js';
+import { buildExportZip, type ExportedQuestion } from '../lib/question-export-zip.js';
 import { processQuestionImage } from '../lib/question-image-processing.js';
 import {
   type PhotoLibrary, type PhotoPlan, type PhotoRow,
@@ -27,6 +29,43 @@ type GetToken = (forceRefresh?: boolean) => Promise<string | null>;
 function errorText(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
+
+function saveBlob(blob: Blob, filename: string): void {
+  const href = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.download = filename;
+  link.href = href;
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(href), 0);
+}
+
+/**
+ * Baixa o tema inteiro num .zip: `perguntas.csv` no formato da importação e
+ * `fotos/`. Devolve o resumo para a mensagem do painel.
+ */
+async function downloadThemeZip(
+  themeId: string,
+  getToken: GetToken,
+  onProgress: (done: number, total: number) => void,
+): Promise<string> {
+  const response = await apiDownload(`/api/admin/themes/${encodeURIComponent(themeId)}/questions/json`, { getToken });
+  const payload = await response.json() as { questions?: ExportedQuestion[] };
+  const questions = Array.isArray(payload.questions) ? payload.questions : [];
+  const result = await buildExportZip(questions, async (key) => {
+    const photo = await fetch(`/api/question-images/${key}`);
+    return photo.ok ? photo.blob() : null;
+  }, onProgress);
+  saveBlob(result.blob, `quiz-gomes-${themeId}-com-fotos.zip`);
+  const photos = result.photos === 1 ? '1 foto' : `${result.photos} fotos`;
+  const missing = result.missingPhotos === 0 ? '' : ` ${result.missingPhotos} não ${result.missingPhotos === 1 ? 'veio' : 'vieram'} do servidor; essas linhas ficaram sem foto.`;
+  return `${result.questions} ${result.questions === 1 ? 'pergunta' : 'perguntas'} e ${photos} no .zip.${missing}`;
+}
+
+const PURGE_ERRORS: Record<string, string> = {
+  CONFIRMATION_MISMATCH: 'O nome digitado não é o nome deste tema.',
+  THEME_IN_PLAY: 'Tem partida acontecendo neste tema agora. Espere uns minutos e tente de novo.',
+  THEME_NOT_HIDDEN: 'Oculte o tema antes de apagar as perguntas dele.',
+};
 
 export function AdminCategoriesPanel({ getToken, onCatalogChanged }: { getToken: GetToken; onCatalogChanged?: () => void }) {
   const [categories, setCategories] = useState<CategoryAdmin[]>([]);
@@ -199,6 +238,11 @@ export function AdminThemeModerationPanel({
   const [busyId, setBusyId] = useState<string | null>(null);
   const [note, setNote] = useState<Record<string, string>>({});
   const [pendingAction, setPendingAction] = useState<{ action: 'deactivate' | 'hide' | 'reject'; theme: AdminThemeSummary } | null>(null);
+  const [purgeTarget, setPurgeTarget] = useState<AdminThemeSummary | null>(null);
+  const [purging, setPurging] = useState(false);
+  const [purgeProgress, setPurgeProgress] = useState<number | null>(null);
+  const [purgeError, setPurgeError] = useState<string | null>(null);
+  const [zipThemeId, setZipThemeId] = useState<string | null>(null);
 
   function load() {
     setLoading(true);
@@ -299,6 +343,53 @@ export function AdminThemeModerationPanel({
     }
   }
 
+  async function exportZip(theme: AdminThemeSummary) {
+    setZipThemeId(theme.id);
+    setMessage(null);
+    setNotice(null);
+    try {
+      setNotice(await downloadThemeZip(theme.id, getToken, () => undefined));
+    } catch (exportError) {
+      setMessage(errorText(exportError, 'Não foi possível baixar a cópia com fotos.'));
+    } finally {
+      setZipThemeId(null);
+    }
+  }
+
+  async function purge(theme: AdminThemeSummary, typedName: string) {
+    setPurging(true);
+    setPurgeError(null);
+    setPurgeProgress(0);
+    let deleted = 0;
+    let photos = 0;
+    try {
+      // O servidor apaga em partes pequenas; repetimos até não sobrar nada.
+      for (;;) {
+        const step = await withRateLimitRetry(() => apiRequest<{ deletedImages: number; deletedQuestions: number; remaining: number }>(
+          `/api/admin/themes/${encodeURIComponent(theme.id)}/questions/purge`,
+          { body: { confirmName: typedName }, getToken, method: 'POST' },
+        ));
+        deleted += step.deletedQuestions;
+        photos += step.deletedImages;
+        setPurgeProgress(deleted);
+        if (step.remaining === 0 || step.deletedQuestions === 0) break;
+      }
+      setPurgeTarget(null);
+      setNotice(deleted === 0
+        ? `“${theme.name}” já não tinha perguntas.`
+        : `${deleted} ${deleted === 1 ? 'pergunta apagada' : 'perguntas apagadas'} de “${theme.name}”${photos > 0 ? `, com ${photos} ${photos === 1 ? 'foto' : 'fotos'}` : ''}. O tema continua oculto: importe as corrigidas em Perguntas por tema e mostre o tema de novo quando estiver pronto.`);
+      load();
+      onCatalogChanged?.();
+    } catch (purgeFailure) {
+      const code = purgeFailure instanceof ClientApiError ? purgeFailure.code : undefined;
+      const partial = deleted > 0 ? ` ${deleted} já ${deleted === 1 ? 'foi apagada' : 'foram apagadas'}; tentar de novo continua de onde parou.` : '';
+      setPurgeError(`${(code !== undefined ? PURGE_ERRORS[code] : undefined) ?? errorText(purgeFailure, 'Não foi possível apagar as perguntas.')}${partial}`);
+    } finally {
+      setPurging(false);
+      setPurgeProgress(null);
+    }
+  }
+
   const movableCategories = categories.filter((category) => category.status === 'ACTIVE');
   const visible = status === 'HIDDEN' ? [] : themes.filter((theme) => theme.status === status);
 
@@ -342,11 +433,23 @@ export function AdminThemeModerationPanel({
             {hiddenThemes.length === 0 ? <p className="inline-notice">Nenhum tema oculto.</p> : (
               <ul className="admin-list">
                 {hiddenThemes.map((theme) => (
-                  <li className="admin-list__row admin-list__row--hidden" key={theme.id}>
+                  <li className="admin-list__row admin-list__row--hidden admin-list__row--hidden-theme" key={theme.id}>
                     <div><strong>{theme.name}</strong><small> · {theme.categoryName} · {THEME_STATUS_LABEL[theme.status]}</small></div>
-                    <Button disabled={busyId !== null} onClick={() => void setVisibility('themes', theme.id, false, theme.name)} type="button" variant="ghost">
-                      {busyId === theme.id ? 'Aguarde…' : 'Mostrar de novo'}
-                    </Button>
+                    <div className="admin-list__actions">
+                      <Button disabled={busyId !== null || purging} onClick={() => void setVisibility('themes', theme.id, false, theme.name)} type="button" variant="ghost">
+                        {busyId === theme.id ? 'Aguarde…' : 'Mostrar de novo'}
+                      </Button>
+                      <Button disabled={zipThemeId !== null || purging} onClick={() => void exportZip(theme)} type="button" variant="ghost">
+                        {zipThemeId === theme.id ? 'Preparando…' : 'Baixar com fotos'}
+                      </Button>
+                      <Button
+                        className="admin-list__danger"
+                        disabled={busyId !== null || purging}
+                        onClick={() => { setPurgeError(null); setPurgeTarget(theme); }}
+                        type="button"
+                        variant="ghost"
+                      >Apagar perguntas</Button>
+                    </div>
                   </li>
                 ))}
               </ul>
@@ -424,6 +527,18 @@ export function AdminThemeModerationPanel({
             else void act(theme, action);
           }}
           title={`${pendingAction.action === 'hide' ? 'Ocultar' : pendingAction.action === 'deactivate' ? 'Desativar' : 'Rejeitar'} “${pendingAction.theme.name}”?`}
+        />
+      )}
+      {purgeTarget !== null && (
+        <PurgeQuestionsDialog
+          busy={purging}
+          error={purgeError}
+          exporting={zipThemeId === purgeTarget.id}
+          onCancel={() => setPurgeTarget(null)}
+          onConfirm={(typedName) => void purge(purgeTarget, typedName)}
+          onExport={() => void exportZip(purgeTarget)}
+          progress={purgeProgress}
+          themeName={purgeTarget.name}
         />
       )}
     </section>
@@ -580,16 +695,21 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
   const [revisionPhoto, setRevisionPhoto] = useState<{ blob: Blob; kind: 'replace'; url: string } | { kind: 'keep' | 'remove' }>({ kind: 'keep' });
   const [revisionPhotoBusy, setRevisionPhotoBusy] = useState(false);
   const [revisionPhotoError, setRevisionPhotoError] = useState<string | null>(null);
-  const [exporting, setExporting] = useState<'csv' | 'json' | null>(null);
+  const [exporting, setExporting] = useState<'csv' | 'json' | 'zip' | null>(null);
+  const [zipProgress, setZipProgress] = useState<{ done: number; total: number } | null>(null);
 
   useEffect(() => {
-    // Catálogo inteiro (sem ocultos) uma vez: a busca acontece no seletor.
+    // Catálogo inteiro uma vez: a busca acontece no seletor. Ocultos entram
+    // marcados, para corrigir e reimportar perguntas antes de mostrar o tema.
     const delay = window.setTimeout(() => {
-      void apiRequest<{ themes: AdminThemeSummary[] }>('/api/admin/themes', { getToken })
-        .then((result) => {
-          setThemeOptions(result.themes);
-          // Tema escolhido que foi ocultado deixa de ser uma opção.
-          setThemeId((current) => result.themes.some((theme) => theme.id === current) ? current : '');
+      void Promise.all([
+        apiRequest<{ themes: AdminThemeSummary[] }>('/api/admin/themes', { getToken }),
+        apiRequest<{ themes: AdminThemeSummary[] }>('/api/admin/themes?hidden=1', { getToken }),
+      ])
+        .then(([visible, hidden]) => {
+          const all = [...(visible.themes ?? []), ...(hidden.themes ?? []).map((theme) => ({ ...theme, hidden: true }))];
+          setThemeOptions(all);
+          setThemeId((current) => all.some((theme) => theme.id === current) ? current : '');
         })
         .catch((searchError: unknown) => {
           setThemeOptions([]);
@@ -1019,17 +1139,27 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
         `/api/admin/themes/${encodeURIComponent(themeId)}/questions/${format}`,
         { getToken },
       );
-      const href = URL.createObjectURL(await response.blob());
-      const link = document.createElement('a');
-      link.download = `quiz-gomes-${themeId}-perguntas.${format}`;
-      link.href = href;
-      link.click();
-      window.setTimeout(() => URL.revokeObjectURL(href), 0);
+      saveBlob(await response.blob(), `quiz-gomes-${themeId}-perguntas.${format}`);
       setMessage({ kind: 'success', text: `Relatório ${format.toUpperCase()} baixado.` });
     } catch (exportError) {
       setMessage({ kind: 'error', text: errorText(exportError, 'Não foi possível exportar as perguntas.') });
     } finally {
       setExporting(null);
+    }
+  }
+
+  async function exportZip() {
+    if (themeId === '') return;
+    setExporting('zip');
+    setMessage(null);
+    try {
+      const summary = await downloadThemeZip(themeId, getToken, (done, total) => setZipProgress({ done, total }));
+      setMessage({ kind: 'success', text: summary });
+    } catch (exportError) {
+      setMessage({ kind: 'error', text: errorText(exportError, 'Não foi possível montar o .zip.') });
+    } finally {
+      setExporting(null);
+      setZipProgress(null);
     }
   }
 
@@ -1040,7 +1170,9 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
         onChange={setThemeId}
         options={themeOptions.map((theme) => ({
           categoryName: theme.categoryName, id: theme.id, name: theme.name,
-          ...(theme.status === 'ACTIVE' ? {} : { note: THEME_STATUS_LABEL[theme.status] }),
+          ...(theme.hidden === true
+            ? { note: theme.status === 'ACTIVE' ? 'Oculto' : `Oculto · ${THEME_STATUS_LABEL[theme.status]}` }
+            : theme.status === 'ACTIVE' ? {} : { note: THEME_STATUS_LABEL[theme.status] }),
         }))}
         value={themeId}
       />
@@ -1302,9 +1434,15 @@ export function AdminQuestionEditorialPanel({ getToken, refreshKey = 0 }: { getT
             </div>
           </section>
           <section className="form-card" aria-labelledby="admin-question-export-title">
-            <h3 id="admin-question-export-title">Exportar relatório completo</h3>
-            <p>Baixe todas as perguntas deste tema, inclusive as que estão em revisão, rejeitadas ou desativadas. O JSON preserva a estrutura completa; o CSV abre em planilhas.</p>
+            <h3 id="admin-question-export-title">Exportar perguntas</h3>
+            <p>Todas as perguntas do tema, em qualquer situação. O .zip traz o CSV no formato da importação e a pasta de fotos.</p>
+            <small className="import-photos__hint">Para trazer de volta: corrija o perguntas.csv, escolha-o em “Importar perguntas” e escolha o mesmo .zip no campo de fotos.</small>
             <div className="admin-card__actions">
+              <Button disabled={exporting !== null} onClick={() => void exportZip()} type="button">
+                {exporting === 'zip'
+                  ? zipProgress !== null && zipProgress.total > 0 ? `Fotos: ${zipProgress.done} de ${zipProgress.total}…` : 'Preparando .zip…'
+                  : 'Exportar com fotos (.zip)'}
+              </Button>
               <Button disabled={exporting !== null} onClick={() => void exportQuestions('csv')} type="button" variant="ghost">
                 {exporting === 'csv' ? 'Preparando CSV…' : 'Exportar CSV'}
               </Button>

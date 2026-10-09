@@ -55,6 +55,8 @@ Estas regras valem para toda alteração neste repositório.
 - Migrations D1 são versionadas e nunca reescritas depois de aplicadas.
 - O dia do jogo (missões, ofensiva, avisos) é o dia de Brasília (America/Sao_Paulo, UTC−3).
 - Limpeza automática (Cron de hora em hora): detalhes de partida/desafio encerrados, recibos de denúncia e de estatística vencem em 15 dias (denúncia só vale nesse prazo); histórico de administração vence em 6 meses, exceto concessão/remoção de ADMIN. Partidas, placares, perfis, Conhecimento, recordes, ofensivas e conquistas nunca vencem.
+- Apagar as perguntas de um tema: só ADMIN, com o nome do tema digitado, tema oculto e nenhuma partida em andamento nele. Sai na hora, sem rastro, tudo o que é da pergunta: alternativas, fontes, estatísticas, denúncias, cópias seladas em partidas e desafios antigos e a foto no armazenamento (se nenhuma outra pergunta a usa). Nunca apaga o tema, placares, Conhecimento, rankings nem títulos.
+- A exportação por tema tem também a versão com fotos: um .zip com `perguntas.csv` no formato da importação (coluna `foto`) e a pasta `fotos/`, que volta pela importação normal.
 
 ## Interface e acessibilidade
 

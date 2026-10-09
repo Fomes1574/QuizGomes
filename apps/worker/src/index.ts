@@ -60,6 +60,7 @@ import { parseQuestionsCsv } from './services/question-csv.js';
 import { MAX_PINNED_TITLES, themeTrail, titleShowcase, updateTitleShowcase, type ThemeTrailStep } from './services/title-showcase-service.js';
 import { WeeklyMissionRepository } from './repositories/weekly-mission-repository.js';
 import { playerProfile } from './services/player-profile-service.js';
+import { purgeThemeQuestions } from './services/theme-question-purge-service.js';
 import { themeAchievements } from './services/player-title-service.js';
 import { LEADERBOARD_SIZE, RankingRepository } from './repositories/ranking-repository.js';
 import { DirectChallengeService } from './services/direct-challenge-service.js';
@@ -890,6 +891,28 @@ async function adminVisibilityRoute(
   const category = await repository.setCategoryHidden({ hidden: parsed.data.hidden, id });
   await auditLog(env, profile.userId, `${action}_CATEGORY`, 'category', id, { name: category.name });
   return json({ category });
+}
+
+/**
+ * Apaga de vez as perguntas de um tema oculto, em partes (só ADMIN). O
+ * painel chama de novo enquanto `remaining` for maior que zero. O tema
+ * em si nunca é apagado.
+ */
+async function adminPurgeQuestionsRoute(request: Request, env: Env, themeId: string): Promise<Response> {
+  if (request.method !== 'POST') throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Método não permitido.');
+  const identity = await requireUser(request, env);
+  await requireAdmin(identity, env);
+  const profile = await new UserRepository(env.CORE_DB).findByFirebaseUid(identity.uid);
+  if (profile === null) throw new ApiError(409, 'PROFILE_REQUIRED', 'Conclua seu perfil.');
+  const parsed = z.object({ confirmName: z.string().min(1).max(120) }).strict().safeParse(await readJson(request));
+  if (!parsed.success) throw validationError(parsed.error);
+  const step = await purgeThemeQuestions(env, { confirmName: parsed.data.confirmName, themeId });
+  if (step.deletedQuestions > 0) {
+    await auditLog(env, profile.userId, 'PURGE_THEME_QUESTIONS', 'theme', themeId, {
+      images: step.deletedImages, questions: step.deletedQuestions,
+    });
+  }
+  return json(step);
 }
 
 /** Quantos temas cabem no destaque ao mesmo tempo. */
@@ -2262,6 +2285,8 @@ async function apiRoute(request: Request, env: Env, url: URL, context: Execution
     return adminThemeCategoryRoute(request, env, decodeURIComponent(adminThemeCategoryMatch[1]));
   }
 
+  const adminPurgeMatch = /^\/api\/admin\/themes\/([a-z0-9_-]{1,128})\/questions\/purge$/i.exec(url.pathname);
+  if (adminPurgeMatch?.[1] !== undefined) return adminPurgeQuestionsRoute(request, env, decodeURIComponent(adminPurgeMatch[1]));
   const adminFeaturedMatch = /^\/api\/admin\/themes\/([a-z0-9_-]{1,128})\/featured$/i.exec(url.pathname);
   if (adminFeaturedMatch?.[1] !== undefined) return adminFeaturedRoute(request, env, decodeURIComponent(adminFeaturedMatch[1]));
   const adminVisibilityMatch = /^\/api\/admin\/(categories|themes)\/([a-z0-9_-]{1,128})\/visibility$/i.exec(url.pathname);

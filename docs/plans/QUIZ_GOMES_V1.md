@@ -1688,6 +1688,27 @@ Pedidos do proprietário nesta rodada: limpeza a cada 15 dias (admin 6 meses), X
 - Saiu a barra de diferença de pontos depois de cada rodada (o relógio volta a ocupar o lugar dela). O placar com os dois números já diz quem está na frente.
 - Saiu o aviso "Ainda não jogou hoje: uma partida … mantém a chama acesa" do cartão de ofensiva no Perfil. A ofensiva em risco continua indicada só pelo ícone da chama pulsando.
 
+### 2026-10-09 — exportar com fotos e apagar as perguntas de um tema
+
+- Fluxo pedido pelo proprietário: exportar, apagar, corrigir o arquivo e reimportar.
+- **Exportar com fotos (.zip)**: botão no painel "Perguntas por tema" e "Baixar com fotos" no tema oculto. Monta o .zip no navegador, sem custo novo no servidor:
+  - lê o JSON de exportação e busca cada foto em `/api/question-images/…`;
+  - o .zip traz `perguntas.csv` no formato da importação (coluna `foto` mais `status` informativo; a importação ignora a coluna `status`) e `fotos/pergunta-NNNN.webp`;
+  - para reimportar, escolha o CSV corrigido e o mesmo .zip no campo de fotos.
+  - Gerador próprio: `apps/web/src/lib/zip-writer.ts`, arquivos guardados sem compressão com CRC-32. Verificado contra o leitor do painel, o `zipfile` do Python e o `unzip`.
+- **Apagar perguntas** (`POST /api/admin/themes/:id/questions/purge`, só ADMIN, em partes de 40, `apps/worker/src/services/theme-question-purge-service.ts`):
+  - exige o nome do tema digitado, o tema oculto e nenhuma partida em andamento nele;
+  - desafios ainda vivos no tema são cancelados.
+- O que sai na hora, de cada pergunta:
+  - texto, alternativas, fontes e estatísticas;
+  - denúncias e recibos de "vista";
+  - as cópias seladas nas partidas e desafios antigos, com as respostas daquelas rodadas;
+  - a foto no R2, se nenhuma outra pergunta usa a mesma foto.
+- Ao esvaziar, o pool zera e muda de versão, e a descoberta dos jogadores naquele pool recomeça.
+- O que fica: o tema, os placares, Conhecimento, rankings e títulos.
+- O histórico guarda `PURGE_THEME_QUESTIONS` só com as contagens.
+- "Perguntas por tema" passou a listar também os temas ocultos (marcados "Oculto"), para importar e aprovar as perguntas corrigidas antes de mostrar o tema de novo.
+
 ## Critério de saída desta execução
 
 - Milestones 8 e 8.5 aprovados fisicamente e congelados;

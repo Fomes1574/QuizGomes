@@ -54,6 +54,26 @@
 .admin-hidden-group { display: grid; gap: 10px; }
 .admin-hidden-group h3 { margin: 0; font-size: .9rem; }
 .admin-list__row--hidden { grid-template-columns: 1fr auto; }
+/* Tema oculto: nome em cima quando falta espaço, ações juntas à direita. */
+.admin-list__row--hidden-theme { grid-template-columns: minmax(0, 1fr); }
+.admin-list__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.admin-list__actions .button { min-height: 40px; padding-inline: 12px; font-size: .74rem; }
+.admin-list__danger { color: var(--incorrect); }
+.admin-list__danger:hover:not(:disabled), .admin-list__danger:focus-visible { background: color-mix(in srgb, var(--incorrect) 10%, transparent); }
+@media (min-width: 720px) {
+  .admin-list__row--hidden-theme { grid-template-columns: minmax(0, 1fr) auto; }
+}
+/* Celular: as duas ações seguras lado a lado; apagar fica sozinho, separado. */
+@media (max-width: 719px) {
+  .admin-list__row--hidden-theme .admin-list__actions { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+  .admin-list__row--hidden-theme .admin-list__danger { grid-column: 1 / -1; border-top: 1px solid var(--border); border-radius: 0 0 10px 10px; }
+}
+/* Apagar perguntas: texto mais compacto e campo do nome em destaque. */
+.purge-dialog { gap: 14px; }
+.purge-dialog h1 { margin: 0; font-size: 1.2rem; line-height: 1.25; }
+.purge-dialog p { margin: 0; color: var(--text-secondary); font-size: .84rem; line-height: 1.5; }
+.purge-dialog .field input { width: 100%; }
+.purge-dialog .dialog__actions { margin-top: 4px; }
 .admin-card__move { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; }
 .admin-card__move .field { flex: 1 1 180px; }
 .admin-card__move select { height: 44px; }
