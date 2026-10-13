@@ -211,7 +211,7 @@ export function ThemeDetailPage() {
               <strong>{mode === 'RANKED' ? 'Vale Conhecimento' : 'Sem pressão no ranking'}</strong>
               <p>{mode === 'RANKED'
                 ? `Vitória rende ${WIN_XP.RANKED} XP e mexe no seu Conhecimento deste tema. Terminou sem vencer? Leva ${PARTICIPATION_XP.RANKED} XP.`
-                : `Vitória rende ${WIN_XP.CASUAL} XP, e terminar a partida já vale ${PARTICIPATION_XP.CASUAL}. Seu Conhecimento fica intacto.`}</p>
+                : `Vencer dá ${WIN_XP.CASUAL} XP; perder ou empatar, ${PARTICIPATION_XP.CASUAL}. Não conta para o ranking.`}</p>
               {mode === 'RANKED' && <button className="ranking-rules-link ranking-rules-link--inline" onClick={() => setRulesOpen(true)} type="button">Como funciona o ranking?</button>}
               <ul className="play-deck__facts">
                 {modeRecord !== null && <li className="play-deck__record"><Icon name="crown" />Seu recorde: {modeRecord.toLocaleString('pt-BR')}</li>}
