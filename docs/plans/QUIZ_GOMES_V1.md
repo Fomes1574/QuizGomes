@@ -1709,6 +1709,22 @@ Pedidos do proprietário nesta rodada: limpeza a cada 15 dias (admin 6 meses), X
 - O histórico guarda `PURGE_THEME_QUESTIONS` só com as contagens.
 - "Perguntas por tema" passou a listar também os temas ocultos (marcados "Oculto"), para importar e aprovar as perguntas corrigidas antes de mostrar o tema de novo.
 
+### 2026-11-10 — propostas V2 aprovadas (estudo de arquitetura, sem implementação)
+
+- O proprietário aprovou as propostas de front-end, de divulgação e de novidades
+  apresentadas em maquete, **exceto o selo de "virada" no placar, rejeitado**.
+  Treino solo e pergunta do dia ficaram fora a pedido dele.
+- O estudo de como construir cada item está em
+  `docs/plans/PROPOSTAS_V2_ARQUITETURA.md`: fases, tabelas, Durable Objects
+  novos (`PartyRoom`, `TournamentHub`), custo no plano gratuito e a regra de não
+  tocar no motor do duelo (efeitos pós-finalização com guarda própria).
+- Nenhum código, migration ou regra de `AGENTS.md` mudou. Temporadas, sala
+  privada, torneio, placar entre amigos e estatísticas só viram regra quando as
+  decisões pendentes listadas no §9 daquele documento forem respondidas.
+- Achado registrado: a pontuação de desafios assíncronos só existe em
+  `challenge_answers` e vence em 15 dias; placar entre amigos e tempo médio de
+  resposta precisam de agregado permanente para não perder histórico.
+
 ## Critério de saída desta execução
 
 - Milestones 8 e 8.5 aprovados fisicamente e congelados;
